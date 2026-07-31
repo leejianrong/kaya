@@ -117,9 +117,17 @@ jobs:
         run: uv run ruff check .
       - working-directory: kaya-cli
         run: uv run pytest -q
+      # ADR 0007: the guard diffs against the merge-base with main, not the remote
+      # tip. The existence check is in the shell rather than the `if:` expression,
+      # because `hashFiles` is not usable in a conditional.
       - name: Version-bump guard (vs merge-base, not remote tip)
-        if: github.event_name == 'pull_request' && hashFiles('scripts/check-version-bump.sh') != ''
-        run: scripts/check-version-bump.sh
+        if: github.event_name == 'pull_request'
+        run: |
+          if [ -x scripts/check-version-bump.sh ]; then
+            scripts/check-version-bump.sh
+          else
+            echo "guard not implemented yet (KAN-544)"
+          fi
 
   mcp:
     name: MCP (lint + unit)
@@ -190,13 +198,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: |
-          results='${{ join(needs.*.result, " ") }}'
-          echo "upstream results: $results"
-          for r in $results; do
-            case "$r" in
-              success|skipped) ;;
-              *) echo "✗ an upstream job reported '$r'"; exit 1 ;;
-            esac
-          done
-          echo "✓ all applicable jobs passed"
+          echo "✗ an upstream job failed or was cancelled"
+          exit 1
+      - name: Pass
+        run: echo "✓ all applicable jobs passed or were skipped"
