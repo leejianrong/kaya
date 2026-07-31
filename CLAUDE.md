@@ -1,0 +1,138 @@
+# CLAUDE.md — agent brief for `kaya`
+
+## Build status, stated honestly
+
+**Nothing is built. This repo contains the plan and the engineering foundation, and no application
+code.** There is no `backend/`, no `frontend/`, no `kaya-client/`, no `kaya-cli/`, no `mcp/`. If a
+command below refers to a directory that doesn't exist yet, that is expected and it means the slice
+that creates it hasn't landed.
+
+**Trust the code over the docs.** When this file and the repository disagree, the repository is right
+and this file is stale — fix it in the same PR. That rule applies with extra force right now, because
+every command in §Commands is a *plan* rather than an observation.
+
+## What this project is
+
+A cloud-hosted markdown notes app, API-first and agent-drivable, and the docs half of the `kayatoast`
+suite. Its sibling is [pandan](https://github.com/leejianrong/pandan), the kanban board. Read
+[`docs/PLAN.md`](docs/PLAN.md) before doing anything substantial; it is the live spec.
+
+Work is tracked on **pandan board 18** ("kaya — Notes (MVP)"), 7 epics matching the 7 slices in
+[`docs/SLICES.md`](docs/SLICES.md). Use the `pandan` CLI to read and move cards.
+
+## How the docs relate
+
+A deliberate chain, not scratch notes. Treat it as the spec for intended behaviour:
+
+[`docs/kaya-vision.md`](docs/kaya-vision.md) (settled intent) → [`docs/PLAN.md`](docs/PLAN.md) +
+[`docs/adr/`](docs/adr/) → [`docs/SLICES.md`](docs/SLICES.md), with
+[`docs/QUESTIONS.md`](docs/QUESTIONS.md) as the decision register.
+
+- **`PLAN.md`** absorbs what pandan splits across FRAME / PRD / CONTEXT / SHAPING / BREADBOARD, so
+  nothing can drift between them. One narrative document with sections.
+- **`QUESTIONS.md`** tells a **decision** from a **default**. A row marked `ASSUMED` is a default
+  taken on the maintainer's behalf — correct it if it's wrong rather than treating it as settled.
+- **`docs/adr/`** (0001–0010) is the *why*. Do not re-litigate an accepted ADR; amend it.
+- **"pandan ADR NNNN"** always means an ADR in the pandan repo. Bare "ADR NNNN" means this repo's.
+
+## The five decisions you will trip over if you don't know them
+
+Read these before writing code. Each one is a place where the obvious implementation is wrong.
+
+1. **Payload shaping lives in `kaya-client`, never in an adapter** ([ADR 0004](docs/adr/0004-shaping-lives-in-the-shared-client.md)).
+   Projection, truncation, aggregates and serialization go through one `render()` seam in the shared
+   client. The CLI and the MCP server both call it. A projection or truncation rule appearing in
+   `kaya-cli/` or `mcp/` is a bug, not a local optimisation. This exists because pandan put shaping in
+   its CLI, so its MCP adapter inherited none of it and one `list_cards` call costs 44,902 tokens
+   against 2,689 for the equivalent CLI read.
+2. **Kaya has no token format and no prefix logic** ([ADR 0002](docs/adr/0002-identity-pandan-as-provider.md)).
+   Authentication forwards the bearer to pandan's `GET /api/v1/me` and caches the answer keyed on
+   `sha256(token)`. Do not add a `startswith` guard: pandan still accepts pre-rebrand `kanban_pat_…`
+   tokens, and that exact guard is the bug pandan ADR 0018 had to correct. Never log or cache a raw
+   token.
+3. **The output layer's signature lands before behaviour goes inside it** ([ADR 0005](docs/adr/0005-born-agent-conformant.md)).
+   V2a builds the seam; V2b fills it. If a V2b-or-later change needs to alter `render()`'s signature,
+   stop — that's the signal the sequencing was violated, not a reason to push through.
+4. **Nothing in kaya may block on pandan** ([ADR 0003](docs/adr/0003-cross-linking-one-way-soft.md)).
+   A note must save, render and appear in search with pandan completely down. Wikilink resolution is a
+   cached read that degrades to an unresolved link. Adding a feature that makes a save depend on
+   pandan being reachable breaks the design, however reasonable it looks in isolation.
+5. **A note's identity is its `NOTE-n` ref, never its path or title** ([ADR 0008](docs/adr/0008-note-identity.md)).
+   `path` is mutable metadata; moving a note is a `PATCH` to one column with no link rewriting.
+   Resolve refs centrally, not per call site.
+
+## Commands
+
+*(Planned. None of these work until the slice that creates them lands — `make help` is the source of
+truth once a `Makefile` with real targets exists.)*
+
+Backend uses **`uv`** (Python 3.12), frontend uses **`npm`** (Node 20+). Run backend commands from
+`backend/`, frontend from `frontend/`.
+
+```bash
+make help              # list every target
+make up                # whole stack: db + app image serving the SPA
+make dev               # native hot-reload loop
+make test              # the fast, no-infra layer (what pre-push runs)
+make test-integration  # real Postgres via testcontainers (needs Docker)
+make test-e2e          # boots the stack itself
+make lint              # ruff + eslint + type-check
+make hooks             # install the pre-push gate — run this once after cloning
+make k3d               # apply the k8s manifests to a local cluster
+make docs-links        # check internal doc links (works today)
+```
+
+## Two inherited traps, written down so they aren't rediscovered
+
+Both cost the sibling project real time. They are not hypothetical.
+
+- **Keep every `import app.*` inside a test or fixture body in the integration layer, never at module
+  top.** A top-level app import runs at pytest collection, before the database fixture sets
+  `DATABASE_URL`, so the engines bind to the wrong database. It passes locally against a dev Postgres
+  and fails in CI. This is pandan's "PR #17 trap".
+- **Alembic autogenerate needs models imported in `env.py`**, or it will cheerfully generate a
+  migration that drops your tables.
+
+## Conventions
+
+**Branching.** One branch per slice off fresh `main`. PR-only; `main` is protected. Use worktrees for
+parallel work, and **give each worktree its own database** — worktrees share a filesystem, so one
+branch's migration stamps a revision the others don't have and their apps then fail to boot.
+
+**Tests.** Layered by cost ([`docs/PLAN.md`](docs/PLAN.md) §Testing approach). A fast layer with no
+infrastructure, a heavier layer that needs real Postgres, and e2e that boots the stack. A slow check
+never gates a local push.
+
+**Every bug and flake becomes a test**, written failing first. A fixed bug without a test is a bug
+waiting to come back.
+
+**Prove a guard by watching it fail.** For anything marked `[mutate]` in `SLICES.md`: break the
+protected thing, confirm the failure names the right thing, then restore. Restore with
+`git apply -R` or `git stash`, **never `git checkout -- <file>` or `git restore <file>`** — those
+overwrite from the index and silently destroy uncommitted work that no reflog can recover.
+
+**Versioning.** A behavioural change to a shipped package bumps its version in the same PR
+([ADR 0007](docs/adr/0007-release-provenance-from-the-first-release.md)). The guard diffs against the
+**merge-base with `main`**, not the remote tip.
+
+**Measurements go in the PR body.** Several slices require a number rather than an assertion:
+introspection latency (V1), the `toon` delta (V2a), the CodeMirror bundle size (V3), and the MCP
+per-read payload cost (V6). "It's fast" is not an acceptance criterion; a number is.
+
+**Docs.** Ban the phrase **"full parity"** from this repo. State the direction (`MCP ⊆ CLI`) and cite
+the test that proves it. Pandan's skill asserted full parity in bold while contradicting itself forty
+lines below, and the false claim reached a roadmap card where it nearly justified deleting a working
+surface.
+
+## Board access
+
+The `pandan` CLI drives board 18. **Never print or paste the PAT** — it lives in
+`~/.config/pandan/config.toml` and `pandan` finds it on its own. `pandan config show` redacts it and
+is safe to run.
+
+```bash
+pandan warmup                        # the API scales to zero; wake it first
+pandan list --board 18 --column todo
+pandan next --board 18               # highest-priority unblocked card
+pandan get KAN-530
+```

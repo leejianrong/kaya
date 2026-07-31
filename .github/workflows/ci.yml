@@ -1,0 +1,202 @@
+name: CI
+
+# One job per concern, run in parallel, with lockfile-frozen installs and caching
+# (dev-playbook §7). Language jobs are gated on the package actually existing, so
+# this workflow is honest about a repo that is currently plan-only: it runs the
+# checks that apply and skips the rest instead of going red for being unbuilt.
+#
+# Action pins: bump these when the runner flags a Node runtime deprecation, and
+# check composite wrappers for transitive pins at the same time.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Directory existence rather than a changed-paths filter: it needs no third-party
+  # action, works identically on push and pull_request, and has no base-ref edge case
+  # on a first commit.
+  detect:
+    name: Detect packages
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.d.outputs.backend }}
+      client: ${{ steps.d.outputs.client }}
+      cli: ${{ steps.d.outputs.cli }}
+      mcp: ${{ steps.d.outputs.mcp }}
+      frontend: ${{ steps.d.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: d
+        run: |
+          for p in backend client cli mcp frontend; do
+            case $p in
+              client) dir=kaya-client ;;
+              cli)    dir=kaya-cli ;;
+              *)      dir=$p ;;
+            esac
+            if [ -d "$dir" ]; then echo "$p=true" >> "$GITHUB_OUTPUT"; else echo "$p=false" >> "$GITHUB_OUTPUT"; fi
+          done
+          cat "$GITHUB_OUTPUT"
+
+  docs:
+    name: Docs and secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # secret-scan uses git grep across the tree
+      - name: Internal doc links
+        run: scripts/check-docs-links.sh
+      - name: Secret scan
+        run: scripts/secret-scan.sh
+
+  backend:
+    name: Backend (lint + unit)
+    needs: detect
+    if: needs.detect.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - working-directory: backend
+        run: uv sync --frozen --all-extras
+      - working-directory: backend
+        run: uv run ruff check .
+      - working-directory: backend
+        run: uv run pytest tests/unit -q
+
+  client:
+    name: Client (lint + unit)
+    needs: detect
+    if: needs.detect.outputs.client == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: kaya-client/uv.lock
+      - working-directory: kaya-client
+        run: uv sync --frozen --all-extras
+      - working-directory: kaya-client
+        run: uv run ruff check .
+      # ADR 0004: render() is the seam both adapters go through, so its own suite is
+      # where projection, truncation and format guarantees are actually proven.
+      - working-directory: kaya-client
+        run: uv run pytest -q
+
+  cli:
+    name: CLI (lint + unit)
+    needs: detect
+    if: needs.detect.outputs.cli == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the version-bump guard needs the merge-base with main
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: kaya-cli/uv.lock
+      - working-directory: kaya-cli
+        run: uv sync --frozen --all-extras
+      - working-directory: kaya-cli
+        run: uv run ruff check .
+      - working-directory: kaya-cli
+        run: uv run pytest -q
+      - name: Version-bump guard (vs merge-base, not remote tip)
+        if: github.event_name == 'pull_request' && hashFiles('scripts/check-version-bump.sh') != ''
+        run: scripts/check-version-bump.sh
+
+  mcp:
+    name: MCP (lint + unit)
+    needs: detect
+    if: needs.detect.outputs.mcp == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: mcp/uv.lock
+      - working-directory: mcp
+        run: uv sync --frozen --all-extras
+      - working-directory: mcp
+        run: uv run ruff check .
+      # ADR 0006: the frozen tool set, the tool count and the MCP ⊆ CLI parity check
+      # all live in this suite. A new tool without a CLI verb must fail here.
+      - working-directory: mcp
+        run: uv run pytest -q
+
+  frontend:
+    name: Frontend (lint + unit + build)
+    needs: detect
+    if: needs.detect.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci
+      - working-directory: frontend
+        run: npm run lint --if-present
+      - working-directory: frontend
+        run: npm test --if-present
+      - working-directory: frontend
+        run: npm run build
+
+  integration:
+    name: Integration (real Postgres)
+    needs: detect
+    if: needs.detect.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - working-directory: backend
+        run: uv sync --frozen --all-extras
+      # Self-provisioning via testcontainers (dev-playbook §A6) — no hand-managed DB
+      # service block, so the same command works locally and here.
+      - working-directory: backend
+        run: uv run pytest tests/integration -q
+
+  # A single stable required status check. Without this, branch protection has to name
+  # every job, and a legitimately SKIPPED job (a package that doesn't exist yet) leaves
+  # a required check permanently pending and blocks every PR.
+  ci-gate:
+    name: CI gate
+    needs: [detect, docs, backend, client, cli, mcp, frontend, integration]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any job failed or was cancelled
+        run: |
+          results='${{ join(needs.*.result, " ") }}'
+          echo "upstream results: $results"
+          for r in $results; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "✗ an upstream job reported '$r'"; exit 1 ;;
+            esac
+          done
+          echo "✓ all applicable jobs passed"

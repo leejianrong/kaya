@@ -1,0 +1,49 @@
+# --- secrets: never commit these (dev-playbook §13) ---
+.env
+.env.*
+!.env.example
+.mcp.json
+!.mcp.json.example
+*.pem
+*.key
+secrets/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# --- Node ---
+node_modules/
+.svelte-kit/
+frontend/dist/
+frontend/build/
+*.tsbuildinfo
+npm-debug.log*
+
+# --- Playwright ---
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# --- editors / OS ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- local scratch ---
+/tmp/
+*.local
