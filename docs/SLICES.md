@@ -305,10 +305,15 @@ coupling soft, and it gets a guard rather than a promise.
 
 **Build plan**
 
-1. **Before building:** check whether pandan can batch a card read. A note with forty `[[KAN-n]]` refs is
-   forty round trips otherwise. If there is no batch endpoint, decide deliberately between a second small ask
-   on pandan and a bounded concurrent fetch, and record the decision in the slice. This is PLAN's open risk
-   and it is settled here, before the slice commits.
+1. ~~**Before building:** check whether pandan can batch a card read.~~ **DONE — settled ahead of the slice
+   by [spike 0001](./spikes/0001-wikilink-ref-batching.md), and the answer is not what this slice assumed.**
+   Read it before writing the resolver. There is no fan-out to choose between, because a wikilink carries a
+   ticket ref and **no pandan route accepts one**. The resolver does **one bounded, cached page walk of
+   `GET /api/v1/cards?limit=200` per batch**, one request in flight, caching every card returned rather than
+   only the referenced ones — ~3s per request, ~8s total deadline, five-page cap so a large board degrades to
+   partially resolved. No `ThreadPoolExecutor`, no async client, no async engine (a fan-out would hold a kaya
+   Postgres connection per in-flight request and take down note *saving*, and would hit pandan's
+   `hard_limit = 40` on one instance). V5 does **not** wait on pandan issue 254.
 2. A `[[…]]` parser extracting links on save. Parse `KAN-` and `EPIC-`, **not** `PAN-` (ADR 0003).
 3. Migration: `note_link` (source note id, target kind, target ref, resolved target id nullable).
 4. Note→note resolution by title, with the resolved id recorded so a later rename doesn't break the edge.
@@ -339,7 +344,7 @@ error).
 
 #### Integration
 
-- A note with forty `[[KAN-n]]` refs resolves within the batching decision from step 1, and the test asserts the **number of upstream calls**, not just the result. **[mutate]**
+- **Upstream requests scale with pages, not refs** (spike 0001): a forty-ref note issues at most three upstream requests, and a **second** render of it issues none. The test asserts the upstream call *count*, not just the result — a resolver that works correctly one ref at a time passes every result assertion and is the thing being ruled out. **[mutate]**
 - Resolution uses the caller's PAT: a note referencing a card the reader cannot see renders unresolved rather than leaking the title. **[mutate]**
 - Editing a note reconciles `note_link` — removed links disappear, added ones appear, unchanged ones aren't churned.
 - `PAN-1` is not parsed as a ticket ref; `KAN-1` and `EPIC-1` are.
