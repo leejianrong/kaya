@@ -47,3 +47,9 @@ Thumbs.db
 # --- local scratch ---
 /tmp/
 *.local
+
+# --- agent tooling ---
+# Coding agents create isolated worktrees inside the repo. They are ephemeral and
+# must never be committed — a worktree is a full second checkout.
+.claude/worktrees/
+.claude/settings.local.json
