@@ -5,9 +5,11 @@ half of the `kayatoast` suite, sibling to [pandan](https://github.com/leejianron
 board. Where pandan tracks *work*, kaya holds the *knowledge*: specs, notes, runbooks, meeting notes,
 cross-linked to the board.
 
-> **Status: planned, not built.** This repo currently contains the plan and nothing else. No backend,
-> no frontend, no CLI, no MCP server. See [`docs/PLAN.md`](docs/PLAN.md) for what is being built and
-> [`docs/SLICES.md`](docs/SLICES.md) for the order. Work is tracked on pandan board 18.
+> **Status: skeleton, not a product.** All five packages exist and boot — a FastAPI backend with a
+> health endpoint, the shared client, the `kaya` CLI, the MCP package and a Svelte 5 SPA shell —
+> and none of them can store a note yet. See [`docs/PLAN.md`](docs/PLAN.md) for what is being built,
+> [`docs/SLICES.md`](docs/SLICES.md) for the order, and [`CLAUDE.md`](CLAUDE.md) for what is
+> genuinely in each package today. Work is tracked on pandan board 18.
 
 ## What it will do
 
@@ -36,15 +38,20 @@ between them they carry most of what makes this project different from a generic
 
 ## Development
 
-Nothing to run yet. When there is, the entry points will be:
+Needs `uv` (Python 3.12), Node 20.19+ and Docker.
 
 ```bash
-make help          # every target
-make up            # the whole stack in one command
-make dev           # native hot-reload loop
-make test          # the fast, no-infra layer
 make hooks         # install the pre-push gate (do this once)
+make install       # uv sync every Python package, npm ci the SPA
+make dev           # Postgres, backend on :8000, SPA on :5173
+make test          # the fast, no-infra layer
+make check         # everything pre-push runs
+make help          # every target, including the ones still stubbed
 ```
+
+Five packages in one repo — `backend/`, `frontend/`, `kaya-client/`, `kaya-cli/`, `mcp/` — with the
+dependency arrow pointing one way: adapters depend on the client, and nothing depends on an adapter
+([ADR 0001](docs/adr/0001-stack-inherited-from-pandan.md)).
 
 Conventions, commands and the traps worth knowing live in [`CLAUDE.md`](CLAUDE.md), which is written
 for coding agents and is equally the fastest orientation for a person.

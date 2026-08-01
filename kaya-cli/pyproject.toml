@@ -1,0 +1,45 @@
+[project]
+# PLAN §Naming: the PyPI *distribution* name is `kaya-notes` — bare `kaya` is an abandoned stub
+# (pandan ADR 0018 §Package-name reality). That constrains the distribution name only. The console
+# script is `kaya`, and there is exactly one of them (Q39).
+name = "kaya-notes"
+version = "0.1.0"
+description = "kaya — the notes CLI"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = [
+    "kaya-client",
+]
+
+[project.scripts]
+kaya = "kaya_cli.__main__:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.9",
+]
+
+[tool.uv.sources]
+# The dependency arrow points one way: an adapter depends on the client, never the reverse
+# (ADR 0004). A path source keeps that arrow real in-tree without a release cycle between them.
+kaya-client = { path = "../kaya-client", editable = true }
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kaya_cli"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers"
+testpaths = ["tests"]

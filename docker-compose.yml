@@ -1,0 +1,38 @@
+# Local Postgres. Nothing else lives here yet: the app image that serves the built SPA from one
+# origin arrives with KAN-538, and `make up` says so rather than pretending.
+#
+# The project name and the published port are overridable because of a rule in CLAUDE.md that
+# costs an hour when it's missed: parallel worktrees share a filesystem, so they must NOT share a
+# database. One branch's migration stamps a revision the others don't have, and their apps then
+# fail to boot. In a second worktree:
+#
+#     COMPOSE_PROJECT_NAME=kaya-myfeature KAYA_DB_PORT=5433 make db
+#
+# and point that tree's DATABASE_URL at 5433.
+name: ${COMPOSE_PROJECT_NAME:-kaya}
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kaya
+      POSTGRES_PASSWORD: kaya
+      POSTGRES_DB: kaya
+      # Deterministic collation, so an index built here sorts the way it will in production.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    ports:
+      - "${KAYA_DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # `-U kaya` matters: without it pg_isready probes as root and reports healthy while the
+      # application user is still being created during first init.
+      test: ["CMD-SHELL", "pg_isready -U kaya -d kaya"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  pgdata:

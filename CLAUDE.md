@@ -2,10 +2,22 @@
 
 ## Build status, stated honestly
 
-**Nothing is built. This repo contains the plan and the engineering foundation, and no application
-code.** There is no `backend/`, no `frontend/`, no `kaya-client/`, no `kaya-cli/`, no `mcp/`. If a
-command below refers to a directory that doesn't exist yet, that is expected and it means the slice
-that creates it hasn't landed.
+**The skeleton is up; there is no product yet.** All five packages exist and all five are green in
+CI, but they hold almost nothing (KAN-531):
+
+| Package | What's actually in it |
+|---|---|
+| `backend/` | FastAPI app that boots, `GET /health`, one sync engine, Alembic wired up with **zero revisions** |
+| `kaya-client/` | An importable package and a version. No `KayaClient`, no `render()` — those are V2a |
+| `kaya-cli/` | The `kaya` console script, one entry point, **no verbs** |
+| `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
+| `frontend/` | Svelte 5 + Vite + TS toolchain, a shell page, and the dev proxy for `/api` |
+
+Not built yet: the `note` model and migration `0001` (KAN-533), the principal resolver (KAN-534),
+anything under `/api/v1` (KAN-535/536), the container image and manifests (KAN-538).
+
+CI gates each language job on its **directory existing**, so all five now run on every PR. A
+package that can't be made green does not belong in the tree.
 
 **Trust the code over the docs.** When this file and the repository disagree, the repository is right
 and this file is stale — fix it in the same PR. That rule applies with extra force right now, because
@@ -63,24 +75,37 @@ Read these before writing code. Each one is a place where the obvious implementa
 
 ## Commands
 
-*(Planned. None of these work until the slice that creates them lands — `make help` is the source of
-truth once a `Makefile` with real targets exists.)*
-
-Backend uses **`uv`** (Python 3.12), frontend uses **`npm`** (Node 20+). Run backend commands from
-`backend/`, frontend from `frontend/`.
+`make help` is the source of truth. Python packages use **`uv`** (3.12), the SPA uses **`npm`**
+(Node 20.19+). Every target runs from the repo root.
 
 ```bash
-make help              # list every target
-make up                # whole stack: db + app image serving the SPA
-make dev               # native hot-reload loop
+make hooks             # install the pre-push gate — run this once after cloning
+make install           # uv sync every Python package + npm ci
+make db                # Postgres 17 via docker compose, waits for healthy
+make dev               # db, then backend :8000 and SPA :5173 together
 make test              # the fast, no-infra layer (what pre-push runs)
 make test-integration  # real Postgres via testcontainers (needs Docker)
-make test-e2e          # boots the stack itself
-make lint              # ruff + eslint + type-check
-make hooks             # install the pre-push gate — run this once after cloning
-make k3d               # apply the k8s manifests to a local cluster
-make docs-links        # check internal doc links (works today)
+make lint              # ruff × 4 packages + eslint + svelte-check
+make check             # docs-links + secret-scan + lint + test
+make build             # SPA into frontend/dist
 ```
+
+Still stubs, and they say which card unblocks them: `make up` (KAN-538), `make k3d` (KAN-538),
+`make test-e2e` (KAN-552).
+
+Per-package, if you want the loop tighter:
+
+```bash
+cd backend && uv run pytest tests/unit -q       # also: tests/integration, needs Docker
+cd backend && uv run uvicorn app.main:app --reload
+cd frontend && npm run dev                      # /api proxies to :8000
+```
+
+**Adding a package directory turns on its CI jobs**, gated on the directory existing rather than on
+a changed-paths filter. So a new package needs, from its first commit: a committed `uv.lock`
+(CI runs `uv sync --frozen`), ruff passing, and at least one real test — `pytest` exits non-zero on
+"no tests collected". The frontend equivalent is a committed `package-lock.json` and a working
+`npm run build`.
 
 ## Two inherited traps, written down so they aren't rediscovered
 
@@ -97,7 +122,10 @@ Both cost the sibling project real time. They are not hypothetical.
 
 **Branching.** One branch per slice off fresh `main`. PR-only; `main` is protected. Use worktrees for
 parallel work, and **give each worktree its own database** — worktrees share a filesystem, so one
-branch's migration stamps a revision the others don't have and their apps then fail to boot.
+branch's migration stamps a revision the others don't have and their apps then fail to boot. The
+compose file takes `COMPOSE_PROJECT_NAME` and `KAYA_DB_PORT` for exactly this:
+`COMPOSE_PROJECT_NAME=kaya-myfeature KAYA_DB_PORT=5433 make db`, then point that tree's
+`DATABASE_URL` at 5433.
 
 **Tests.** Layered by cost ([`docs/PLAN.md`](docs/PLAN.md) §Testing approach). A fast layer with no
 infrastructure, a heavier layer that needs real Postgres, and e2e that boots the stack. A slow check
