@@ -51,4 +51,4 @@ for coding agents and is equally the fastest orientation for a person.
 
 ## Licence
 
-Not yet chosen. Add one before the first release.
+Apache License 2.0. The full text is in [`LICENSE`](LICENSE).
