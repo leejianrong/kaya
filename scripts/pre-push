@@ -39,6 +39,13 @@ if [ -d kaya-cli ] && command -v uv >/dev/null 2>&1; then
   fi
 fi
 
+if [ -d mcp ] && command -v uv >/dev/null 2>&1; then
+  run "mcp lint"               bash -c 'cd mcp && uv run ruff check .'
+  # ADR 0006: the frozen tool set and the tool count live here. A widened MCP surface fails
+  # locally rather than in review.
+  run "mcp unit tests"         bash -c 'cd mcp && uv run pytest -q'
+fi
+
 if [ -d frontend ] && [ -f frontend/package.json ]; then
   run "frontend lint"          bash -c 'cd frontend && npm run lint --if-present'
   run "frontend unit tests"    bash -c 'cd frontend && npm test --if-present'

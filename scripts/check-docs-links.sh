@@ -32,7 +32,18 @@ while IFS= read -r file; do
       broken=$((broken + 1))
     fi
   done <<< "$targets"
-done < <(find . -name '*.md' -not -path './node_modules/*' -not -path './.git/*' | sort)
+# `*/node_modules/*` rather than `./node_modules/*`: the SPA's dependencies live in
+# frontend/node_modules, and a root-anchored pattern misses them entirely — which means scanning
+# thousands of vendored READMEs and reporting their broken links as ours. Same for the uv virtual
+# environments under each Python package.
+done < <(find . \
+  -name '*.md' \
+  -not -path '*/node_modules/*' \
+  -not -path '*/.venv/*' \
+  -not -path '*/dist/*' \
+  -not -path './.git/*' \
+  -not -path './.claude/worktrees/*' \
+  | sort)
 
 if [ "$broken" -gt 0 ]; then
   printf '✗ %d broken internal link(s)\n' "$broken"
