@@ -1,0 +1,188 @@
+# Automated dependency update PRs. KAN-699.
+#
+# WHY DEPENDABOT AND NOT RENOVATE. Renovate is the more capable tool in the abstract, and it is the
+# wrong one here for a reason specific to this repo's shape. `kaya-cli` and `mcp` each declare a
+# `[tool.uv.sources]` path dependency on `../kaya-client` (ADR 0004's one-way arrow, made real
+# in-tree without a release cycle). Renovate resolves those paths — it clones the whole repo — but
+# renovatebot/renovate#36121 is open: it updates the *shared* package's lockfile and leaves the
+# *consumer's* stale, so `kaya-cli/uv.lock` and `mcp/uv.lock` would silently miss transitive
+# updates. Dependabot's failure mode on the same layout is loud rather than silent (see the risk
+# note on the second uv block), and `uv sync --frozen` in CI catches a desynced lock either way.
+# Loud beats quiet. Dependabot also needs no third-party app installation, which matches the
+# reasoning in ci.yml for using a pinned gitleaks binary over gitleaks-action.
+#
+# WHAT THIS DOES NOT DO. It does not scan for vulnerabilities on a schedule of its own — that is
+# `scripts/dependency-audit.sh`, run weekly by `.github/workflows/dependency-audit.yml`. The two
+# halves divide cleanly: Dependabot raises a PR for every advisory that *has* a fix, and the audit
+# job names the residue that does not. Neither one blocks a merge.
+#
+# ENABLEMENT IS NOT JUST THIS FILE. Version updates also need the repo toggle at
+# Settings → Advanced Security → "Dependabot version updates". Committing the YAML alone is not
+# sufficient, and the symptom is silence rather than an error.
+
+version: 2
+
+updates:
+  # ---------------------------------------------------------------------- Python (uv), safe half
+  #
+  # Dependabot's `uv` ecosystem is its own value, NOT `pip` — pipenv/poetry/pip-compile all fold
+  # into `pip`, uv does not. Version updates went GA 2025-03-13, security updates 2025-12-16, and
+  # it regenerates `uv.lock` rather than only bumping constraints in `pyproject.toml`.
+  #
+  # These two packages declare no `[tool.uv.sources]`, so nothing outside their own directory has
+  # to be fetched for `uv lock` to succeed. Kept in a block of their own precisely so that the two
+  # packages below cannot take them down with them.
+  - package-ecosystem: "uv"
+    directories:
+      - "/backend"
+      - "/kaya-client"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Singapore"
+    # The default is 5, shared across every directory in the block. Two directories × a grouped
+    # minor/patch PR each, plus room for majors arriving individually, needs more than that.
+    open-pull-requests-limit: 10
+    groups:
+      # One PR per block for the boring half of the traffic. Majors are deliberately left
+      # ungrouped so each arrives on its own and gets read.
+      python-minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # ------------------------------------------------------- Python (uv), the two with path sources
+  #
+  # RISK, UNVERIFIED — WATCH THE FIRST RUN ON THESE TWO. `kaya-cli/pyproject.toml` and
+  # `mcp/pyproject.toml` both declare:
+  #
+  #     [tool.uv.sources]
+  #     kaya-client = { path = "../kaya-client", editable = true }
+  #
+  # which points ABOVE the configured directory. Reading dependabot-core: its uv file fetcher does
+  # parse those entries (`uv_sources_path_dependencies`), and its `path_within_repo?` guard that
+  # rejects `../` gates only licence and version-source fetching, not path deps. But the only
+  # mechanism that legitimately pulls a sibling `pyproject.toml` into the job's temp directory is
+  # `WorkspaceFetcher`, which reads `tool.uv.workspace.members` only — and this repo has no
+  # `[tool.uv.workspace]`. Dependabot writes the files it fetched into a temp dir rather than
+  # cloning, so a sibling it did not fetch is simply absent.
+  #
+  # What could NOT be established: whether the base class resolves `../kaya-client` from the repo
+  # root (works) or from the configured directory (fails). There is no public report of uv plus a
+  # `path = "../sibling"` above `directory` either succeeding or failing. Precedent leans towards
+  # failure — dependabot-core#8428 broke on a path *below* the directory — and the expected symptom
+  # is a job error reading:
+  #
+  #     The following path based dependencies could not be retrieved: ../kaya-client
+  #
+  # An `ignore` rule would not prevent it: ignore filtering runs AFTER file fetch
+  # (dependabot-core#1959, closed not-planned; the later fix in PR #14435 is Bundler-only).
+  #
+  # If it does fail, the fix is NOT to add `[tool.uv.workspace]`. Four independent lockfiles and the
+  # one-way dependency arrow are a deliberate design (ADR 0004, and dev-playbook's monorepo note);
+  # trading them for a bot's fetch convenience is an architectural change that needs an ADR, not a
+  # config edit. Deleting these two directories from this file is the cheap, honest response, and
+  # it costs only what it says it costs: no automated updates for two packages whose entire
+  # dependency set is currently `pytest`, `ruff` and each other.
+  - package-ecosystem: "uv"
+    directories:
+      - "/kaya-cli"
+      - "/mcp"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Singapore"
+    open-pull-requests-limit: 10
+    groups:
+      adapters-minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      adapters-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # ------------------------------------------------------------------------------------ npm (SPA)
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Singapore"
+    open-pull-requests-limit: 10
+    groups:
+      npm-minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # -------------------------------------------------------------------------------- GitHub Actions
+  #
+  # `directory` MUST be "/" — that is where Dependabot looks for `.github/workflows`, not
+  # "/.github/workflows". This is the half of KAN-699 that pays for itself soonest: KAN-582 (the
+  # Node 20 runtime deprecation) was found by a human reading check annotations by hand, and a bot
+  # PR is the mechanism that removes that from anyone's job.
+  #
+  # PIN DISCIPLINE, WHICH A BOT MUST NOT UNDO. ci.yml carries two deliberate pin styles:
+  # `actions/*` on floating major tags, and `astral-sh/setup-uv` on an exact patch tag, because
+  # upstream stopped publishing major and minor tags at v8 (astral-sh/setup-uv#830) and `@v9` fails
+  # the run outright as an unresolvable action. Dependabot updates an exact semver tag the same way
+  # it updates a floating one, so `@v9.0.0` will be offered `@v9.0.1` — it will not rewrite the pin
+  # into a floating `@v9`. Review any actions PR against that rule anyway; a floating setup-uv tag
+  # is a red run, not a subtle regression, but it is cheaper to catch in review.
+  #
+  # Not covered by this block: container base images. Those are pinned by digest and enforced by
+  # `scripts/check-image-pins.sh`; adding a `docker` ecosystem here would raise PRs that replace a
+  # digest with a tag and fail that guard. Base image bumps stay manual until KAN-538 settles the
+  # image story.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Singapore"
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ["*"]
+
+# ---------------------------------------------------------------------------------------- notes
+#
+# NO `commit-message` BLOCK, ON PURPOSE. Dependabot's default subject — "Bump nanoid from 3.3.16 to
+# 3.3.18" — is already this repo's imperative sentence style. A `prefix:` would import a
+# conventional-commits convention the rest of the history does not use.
+#
+# NO `cooldown` BLOCK, ON PURPOSE. Since 2026-07-14 a 3-day package cooldown is Dependabot's
+# default with no configuration, which is the right amount of delay for a repo this size. An
+# explicit block would now be an override rather than a necessity, and `github-actions` does not
+# support the option at all.
+#
+# HOW THESE PRs MEET ADR 0007's VERSION-BUMP GUARD. The guard is not implemented yet — CI prints
+# "guard not implemented yet (KAN-544)" — so nothing here fails today. When KAN-544 lands it must
+# classify by WHICH TABLE changed, not by filename, or every bot PR into `kaya-client`, `kaya-cli`
+# or `mcp` becomes a red check somebody has to hand-fix:
+#
+#   * `uv.lock` alone      → the development and CI environment for that package. It is not in the
+#                            wheel and a consumer resolving from PyPI never sees it. NOT
+#                            behavioural, no bump. This is what Dependabot produces for a
+#                            transitive bump, and it will be the common case.
+#   * `[project.dependencies]`
+#                          → becomes `Requires-Dist` in the built wheel, so it changes what a
+#                            consumer installs. Behavioural, bump required. A human has to add the
+#                            bump commit to the bot's branch; that friction is correct and rare.
+#   * `[project.optional-dependencies].dev`
+#                          → also wheel metadata, but only reachable via `pip install pkg[dev]`,
+#                            i.e. the test toolchain. Judgement call, recorded here as NOT
+#                            behavioural: a `pytest` bump is not a release.
+#
+# This note is recorded on KAN-544 as well, so it is not lost if this file is rewritten.

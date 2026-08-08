@@ -194,6 +194,18 @@ and stores only `sha256` digests in the cache, so a heap dump or a log line cann
 (Q33). `KAYA_PANDAN_URL` is configuration, not a secret. `.env` and `.mcp.json` are ignored and
 scanned.
 
+**Dependencies.** Lockfiles committed and installs frozen, which kaya had from the first commit;
+automated updates and a vulnerability report, which it did not until KAN-699. Updates come from
+**Dependabot** — one weekly window across the four uv packages, the SPA and `github-actions` — chosen
+over renovate because `kaya-cli` and `mcp` declare `[tool.uv.sources]` path dependencies on
+`../kaya-client`, and renovate's open bug on that layout updates the shared package's lockfile while
+leaving the consumer's stale. Vulnerabilities are a **report, not a gate**: `make audit` runs
+`npm audit` and `pip-audit` over the committed lockfiles, and a weekly workflow writes what it finds
+into a single issue. The gate stays out because an advisory arrives on a third party's timetable — a
+transitive dev advisory nobody can fix would otherwise redden every open PR, which is how a gate gets
+bypassed rather than satisfied, and the same argument that keeps the history secret scan on demand.
+Dependabot raises a PR for everything fixable; the issue names the residue.
+
 **Config.** Per-app prefix, each key resolved independently from the first source that supplies it:
 environment → user config file → nearest `.mcp.json`. `KAYA_API_URL`, `KAYA_TOKEN`,
 `KAYA_PANDAN_URL`, `KAYA_MAX_TEXT_CHARS`. No legacy fallback tier, because kaya has no legacy.
