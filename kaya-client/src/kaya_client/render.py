@@ -43,15 +43,29 @@ adapter-facing — it lives in ``AdapterFormat``, not in the user-facing ``Forma
 ``--format`` value and cannot become one by someone iterating the wrong enum for an argparse
 ``choices`` list. See `serialization`'s module docstring for why it exists at all. Both halves are
 pinned in ``tests/test_serialization.py``.
+
+### ``render_error``, the other half of the contract
+
+ADR 0005's context section records why V43 (structured errors) had to land before V44–V47: "an error
+is an output, and an output layer that only shapes successes is half a contract". So the failure
+path leaves this module too, through ``render_error``, over the same format vocabulary and returning
+the same ``str | dict`` union.
+
+It is a **second function rather than a fifth parameter**, and that is the sequencing rule being
+obeyed rather than an aesthetic. ``render``'s signature is fixed by ADR 0004; a failure has no
+``fields`` to project, no prose to truncate and no set to aggregate over, so routing one through
+``render`` would mean three arguments that must be ignored and a branch at the top of a function ADR
+0004 already flags as an incipient god function.
 """
 
 from collections.abc import Sequence
 from typing import Any
 
 from kaya_client.aggregates import attach_summary
+from kaya_client.errors import error_payload
 from kaya_client.payloads import Payload
 from kaya_client.projection import project
-from kaya_client.serialization import Format, serialize
+from kaya_client.serialization import Format, serialize, serialize_error
 from kaya_client.truncation import DEFAULT_TEXT_LIMIT, truncate
 
 
@@ -77,3 +91,17 @@ def render(
     truncated = truncate(projected, text_limit)
     shaped = attach_summary(truncated)
     return serialize(shaped, fmt)
+
+
+def render_error(failure: BaseException, *, fmt: str = Format.HUMAN) -> str | dict[str, Any]:
+    """A failure as output: ``error<TAB>code<TAB>message<TAB>arg``, or the ``{"error": {…}}``.
+
+    The one way a failure leaves this package as text, and the reason `kaya-cli` and `mcp` both
+    report a refusal identically without either of them owning a formatting rule (ADR 0004).
+
+    What the **caller** still owns is the stream and the process: ADR 0005 §contract 3 puts this
+    string on **stdout** and the human ``usage:`` text on stderr, and the exit number comes from
+    `kaya_cli.failures`. Neither is decidable here — MCP has no stdout to choose and no exit code to
+    return.
+    """
+    return serialize_error(error_payload(failure), fmt)

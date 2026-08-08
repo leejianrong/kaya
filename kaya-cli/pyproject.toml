@@ -3,10 +3,13 @@
 # (pandan ADR 0018 §Package-name reality). That constrains the distribution name only. The console
 # script is `kaya`, and there is exactly one of them (Q39).
 name = "kaya-notes"
+# 0.3.0 — KAN-542: a failure is a structured row on stdout plus argparse's usage on stderr, and
+# `failures.py` publishes ADR 0005's exit-code table. Behavioural: argv that used to exit with
+# argparse's own `2` now exits with this repository's `2`, from a table a test pins.
 # 0.2.0 — KAN-543 gives the CLI argument parsing and ADR 0007's build-stamped `--version`. A
 # behavioural change to a shipped package bumps it in the same PR (ADR 0007 §3, CLAUDE.md
 # §Conventions §Versioning).
-version = "0.2.0"
+version = "0.3.0"
 description = "kaya — the notes CLI"
 readme = "README.md"
 license = "Apache-2.0"

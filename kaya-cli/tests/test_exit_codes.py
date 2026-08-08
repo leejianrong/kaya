@@ -1,0 +1,190 @@
+"""ADR 0005 §contract 4, pinned by **literal values** so a renumber cannot be quiet.
+
+Every assertion here is written ``== 5``, never ``== EXIT_FOR_CODE["not_found"]``. A test derived
+from the table it is testing passes for any table, which is the failure mode SLICES marks this
+`[mutate]` for: the numbers came from pandan verbatim precisely so that an operator scripting both
+tools never has to remember which is which, and the only thing standing between that promise and a
+tidy-minded refactor is a test that says the number out loud.
+
+The table is **add-only**. That is a property of a diff rather than of a value, so it is tested as
+one: each shipped row is pinned individually and the table is checked as a *superset*, so adding a
+row reddens nothing and changing one reddens exactly the row that moved.
+"""
+
+import pytest
+from kaya_client import ApiError, KayaError, TransportError, UnknownFormat, UsageError
+
+from kaya_cli.failures import (
+    EXIT_FOR_CODE,
+    EXIT_FOR_STATUS,
+    EXIT_FORBIDDEN,
+    EXIT_NOT_FOUND,
+    EXIT_OK,
+    EXIT_RUNTIME,
+    EXIT_UNAUTHENTICATED,
+    EXIT_USAGE,
+    exit_code_for,
+)
+
+# ------------------------------------------------------------ the six numbers
+
+
+def test_ok_is_zero() -> None:
+    assert EXIT_OK == 0
+
+
+def test_runtime_is_one() -> None:
+    assert EXIT_RUNTIME == 1
+
+
+def test_usage_is_two() -> None:
+    """Argparse's own number. It is `2` because argparse says `2`, not because it is tidy."""
+    assert EXIT_USAGE == 2
+
+
+def test_unauthenticated_is_three() -> None:
+    assert EXIT_UNAUTHENTICATED == 3
+
+
+def test_forbidden_is_four() -> None:
+    assert EXIT_FORBIDDEN == 4
+
+
+def test_not_found_is_five() -> None:
+    assert EXIT_NOT_FOUND == 5
+
+
+def test_the_six_meanings_are_six_distinct_numbers() -> None:
+    """Two meanings sharing a number is the same bug as a renumber, arriving from the other side."""
+    numbers = [
+        EXIT_OK,
+        EXIT_RUNTIME,
+        EXIT_USAGE,
+        EXIT_UNAUTHENTICATED,
+        EXIT_FORBIDDEN,
+        EXIT_NOT_FOUND,
+    ]
+
+    assert numbers == [0, 1, 2, 3, 4, 5]
+    assert len(set(numbers)) == 6
+
+
+# ---------------------------------------------------------- the named-code table
+
+SHIPPED_ROWS = {
+    "usage": 2,
+    "unreachable": 1,
+    "runtime": 1,
+}
+"""Every row as shipped, written as literals. Adding a code adds a row *here* too — that is the
+add-only rule expressed as the smallest possible chore, and it is what makes the diff say so."""
+
+
+@pytest.mark.parametrize(("code", "number"), sorted(SHIPPED_ROWS.items()))
+def test_each_shipped_row_maps_to_its_documented_number(code: str, number: int) -> None:
+    assert EXIT_FOR_CODE[code] == number
+
+
+def test_the_table_is_add_only_not_replace_only() -> None:
+    """A superset check, so a *new* code is not a red test.
+
+    Written as a superset on purpose. An equality check here would make adding a meaning — which is
+    free and expected, KAN-541 and V2b both do it — indistinguishable from renumbering one, which is
+    the thing that must never happen quietly.
+    """
+    assert SHIPPED_ROWS.items() <= dict(EXIT_FOR_CODE).items()
+
+
+def test_no_row_maps_outside_the_published_range() -> None:
+    """A new row still has to name one of the six meanings. `7` is not a meaning anybody has."""
+    assert set(EXIT_FOR_CODE.values()) <= {0, 1, 2, 3, 4, 5}
+
+
+def test_the_table_cannot_be_mutated_at_runtime() -> None:
+    """A verb registering a code by writing to the table would be a contract changed at import time
+    and visible in no diff. Adding one is editing `failures.py`, where a reviewer sees it."""
+    with pytest.raises(TypeError):
+        EXIT_FOR_CODE["improvised"] = 9  # type: ignore[index]
+
+
+def test_every_client_side_failure_class_has_a_row() -> None:
+    """The tripwire for "a new failure class arrived without a meaning".
+
+    Without this, a class added to `kaya_client.errors` with a fresh ``code`` silently exits `1`,
+    and the first person to notice is whoever wrote a script around the number it should have had.
+    """
+    codes = {cls.code for cls in (KayaError, UsageError, UnknownFormat, TransportError)}
+
+    assert codes <= set(EXIT_FOR_CODE)
+
+
+# ------------------------------------------------------------- status → meaning
+
+
+def test_the_three_status_rows_map_to_their_documented_numbers() -> None:
+    """Literals again, and the reason `errors.py` says the table is keyed on meaning for these."""
+    assert EXIT_FOR_STATUS[401] == 3
+    assert EXIT_FOR_STATUS[403] == 4
+    assert EXIT_FOR_STATUS[404] == 5
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "expected"),
+    [
+        (401, "authentication_required", 3),
+        (401, "invalid_token", 3),
+        (403, "note_forbidden", 4),
+        (404, "note_not_found", 5),
+        (404, "not_found", 5),
+    ],
+)
+def test_a_refusal_is_keyed_on_its_status_not_on_the_apis_code_string(
+    status: int, code: str, expected: int
+) -> None:
+    """The backend's code vocabulary grows without this package's knowledge — four different
+    strings above already mean the same three things — and a new `404` code must still exit `5`.
+    Keying on the status is the only version of that which cannot go stale."""
+    failure = ApiError(status, {"error": {"code": code, "message": "no"}})
+
+    assert exit_code_for(failure) == expected
+
+
+@pytest.mark.parametrize("status", [400, 409, 422, 500, 503])
+def test_a_refusal_with_no_row_is_runtime_not_usage(status: int) -> None:
+    """`1`, not `2`. A failure the table has no row for is not evidence that argv was wrong, and
+    reporting "usage" for a server-side `422` sends a caller to re-read the manual over a refusal
+    that had nothing to do with what they typed."""
+    failure = ApiError(status, {"error": {"code": "something_new", "message": "no"}})
+
+    assert exit_code_for(failure) == 1
+
+
+# ------------------------------------------------------- meaning → number, end to end
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        (UsageError("unrecognized arguments: --nope"), 2),
+        (UnknownFormat("unknown format 'hunan'"), 2),
+        (TransportError("https://kaya.example is unreachable"), 1),
+        (KayaError("something"), 1),
+        (ApiError(401, {"error": {"code": "invalid_token", "message": "no"}}), 3),
+        (ApiError(403, {"error": {"code": "note_forbidden", "message": "no"}}), 4),
+        (ApiError(404, {"error": {"code": "note_not_found", "message": "no"}}), 5),
+    ],
+)
+def test_each_failure_class_reaches_its_number(failure: BaseException, expected: int) -> None:
+    """The whole table as one parametrised assertion, with literal numbers on the right.
+
+    These are the failure classes KAN-541's verbs will be the first to produce for real. Proven here
+    at the seam because there is no verb yet to produce them end to end — which is the sequencing
+    working, not a gap: when 541 lands, its assertions check the wiring and this file still owns the
+    numbers.
+    """
+    assert exit_code_for(failure) == expected
+
+
+def test_an_unrecognised_exception_is_runtime() -> None:
+    """Nothing should reach here that is not a ``KayaError``. Something eventually will."""
+    assert exit_code_for(RuntimeError("the disk is on fire")) == 1

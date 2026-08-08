@@ -1,9 +1,11 @@
 [project]
 name = "kaya-client"
+# 0.4.0 — KAN-542 adds the failure half of the output layer: `error_payload()`, `render_error()`,
+# and a `code` on every exception class. New public API and a new `UsageError`, so a minor bump.
 # 0.3.0 — KAN-543 adds `provenance`, the build stamp both adapters read. 0.2.0 was KAN-540's
 # `KayaClient` and `render()` seam. A behavioural change to a shipped package bumps it in the same
 # PR (ADR 0007 §3, CLAUDE.md §Conventions §Versioning).
-version = "0.3.0"
+version = "0.4.0"
 description = "The shared core for kaya: the API client and the one payload-shaping seam"
 readme = "README.md"
 license = "Apache-2.0"

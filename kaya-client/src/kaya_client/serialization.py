@@ -60,14 +60,27 @@ Pandan's decomposition found pretty-printing was 16% of a 44,902-token payload. 
 format a person reads; ``json`` is the format a script or an agent reads, and it goes to ``jq`` or
 to a parser either way. Sixteen percent for whitespace nobody looks at is the wrong trade in a
 package whose entire reason for existing is that number.
+
+### Errors serialize here too, over the same vocabulary
+
+ADR 0005 §contract 3 is an *output* contract, and V43's record in ADR 0005's context section is
+explicit that "an output layer that only shapes successes is half a contract". So a failure renders
+through ``serialize_error`` against ``_ERROR_SERIALIZERS`` — a second registry, keyed on exactly the
+same format names. ``tests/test_error_contract.py`` asserts the two registries have identical keys,
+which is what stops KAN-541 from teaching ``toon`` to render a note list and not a `404`.
+
+Two registries rather than one, because the two are not the same function: a successful ``human``
+render is an aligned table, and a failed one is ``error<TAB>code<TAB>message<TAB>arg`` — a row a
+program reads, on stdout, next to nothing else. One dispatcher with an ``if is_error`` inside it
+would have to be handed a union type that no step of ADR 0004's pipeline produces.
 """
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from enum import StrEnum
 from typing import Any
 
-from kaya_client.errors import UnknownFormat
+from kaya_client.errors import ARG_KEY, CODE_KEY, MESSAGE_KEY, UnknownFormat
 from kaya_client.payloads import Kind, Shaped
 
 COLUMN_GAP = "  "
@@ -218,3 +231,91 @@ CLI_FORMATS: tuple[str, ...] = tuple(fmt.value for fmt in Format)
 
 Derived from ``Format`` rather than written out again, so the enum stays the single place the
 published vocabulary is decided. This is what KAN-541 hands to argparse's ``choices``."""
+
+
+# --------------------------------------------------------------------------- errors
+
+ERROR_MARKER = "error"
+"""The first column of the human error row, and the envelope key of the structured one.
+
+One word for both, so "did this fail?" is the same question in either format: ``line.startswith
+("error\\t")`` or ``"error" in body``. It is also what makes the row unambiguous on stdout next to a
+successful render — no note row begins with it, because column one of a note row is its ``ref``.
+"""
+
+ROW_SEPARATOR = "\t"
+"""Tab, per ADR 0005 §contract 3. Not two spaces like ``COLUMN_GAP``: a success row is aligned for a
+human to read down, and an error row is parsed by whatever caught it. A tab survives ``cut -f2``
+and ``split("\\t")``; alignment padding does not."""
+
+ROW_FIELDS: tuple[str, ...] = (CODE_KEY, MESSAGE_KEY, ARG_KEY)
+"""The row after its marker, in order. The same three keys ``CONTRACT_KEYS`` guarantees, so the two
+renderings of one failure carry the same facts and a consumer can move between them."""
+
+
+def serialize_error(payload: Mapping[str, Any], fmt: str) -> str | dict[str, Any]:
+    """Render an ``error_payload`` result in ``fmt``. The failure half of ADR 0005 §contract 3.
+
+    Takes the built ``{"error": {…}}`` object rather than the exception, so the shape is decided in
+    one place (`errors.error_payload`) and rendered in another, and a test can assert either without
+    the other.
+    """
+    error = payload.get(ERROR_MARKER)
+    if not isinstance(error, Mapping):
+        raise TypeError(
+            "serialize_error takes the {'error': {…}} object from error_payload, not a bare detail"
+        )
+    try:
+        serializer = _ERROR_SERIALIZERS[str(fmt)]
+    except KeyError:
+        known = ", ".join(CLI_FORMATS)
+        raise UnknownFormat(f"unknown format {fmt!r} — known formats are {known}") from None
+    return serializer(payload)
+
+
+def _error_as_data(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return {ERROR_MARKER: dict(payload[ERROR_MARKER])}
+
+
+def _error_as_json(payload: Mapping[str, Any]) -> str:
+    return json.dumps(_error_as_data(payload), ensure_ascii=False, separators=(",", ":"))
+
+
+def _error_as_human(payload: Mapping[str, Any]) -> str:
+    """``error<TAB><code><TAB><message><TAB><arg>`` — one line, always four fields.
+
+    **Always four**, even when ``arg`` is empty, so the line ends in a tab and
+    ``line.split("\\t")[3]`` is a value rather than an ``IndexError``. That is the row's spelling of
+    "all keys always present": fixed arity is to a positional format what a guaranteed key is to an
+    object one, and a consumer that has to count fields before indexing them is a consumer writing
+    the conditional this contract exists to remove.
+
+    Every field is collapsed to a single line. A refusal's message is written by the backend and may
+    contain anything — ADR 0009's `409` message names two timestamps, and a future one could contain
+    a note title with a newline in it. A raw newline or tab inside a field would silently turn one
+    row into two, or shift ``arg`` into ``message``'s place, and the consumer would never know. The
+    unmangled text is one ``--format json`` away.
+    """
+    error = payload[ERROR_MARKER]
+    fields = [_one_line(error.get(key, "")) for key in ROW_FIELDS]
+    return ROW_SEPARATOR.join([ERROR_MARKER, *fields])
+
+
+def _one_line(value: Any) -> str:
+    """Any value as one line of a tab-separated row. ``None`` and ``""`` are the empty field."""
+    if value is None:
+        return ""
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    return " ".join(text.split())
+
+
+_ERROR_SERIALIZERS: dict[str, Callable[[Mapping[str, Any]], Any]] = {
+    Format.HUMAN: _error_as_human,
+    Format.JSON: _error_as_json,
+    AdapterFormat.DATA: _error_as_data,
+}
+"""One entry per format, and **the same keys as ``_SERIALIZERS``** — pinned by a test.
+
+A format that could render a note list but not a refusal would fail exactly when the user most
+needs output, and it would fail as a ``UnknownFormat`` raised from inside an error handler, which
+reads as a client bug rather than as a missing encoder. KAN-541 adds ``toon`` to both dicts."""
