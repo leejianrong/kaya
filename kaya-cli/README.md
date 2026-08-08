@@ -1,11 +1,13 @@
 # kaya-cli
 
-The `kaya` console script. Distribution name `kaya-notes`, one entry point, no verbs yet.
+The `kaya` console script. Distribution name `kaya-notes`, one entry point, no verbs yet — but argv
+is parsed now, and a failure already leaves through the contract every verb will use.
 
 ```bash
 uv sync --all-extras
 uv run kaya            # prints what it is and what hasn't landed, exits 0
 uv run kaya --version  # which build is this?
+uv run kaya --nope     # usage on stderr, `error<TAB>usage<TAB>…` on stdout, exits 2
 uv run pytest -q
 uv run ruff check .
 ```
@@ -17,10 +19,10 @@ the release pipeline says so rather than staying quiet:
 
 ```console
 $ kaya --version
-kaya 0.2.0 (a1b2c3d)                                 # a release asset, built from a1b2c3d
+kaya 0.3.0 (a1b2c3d)                                 # a release asset, built from a1b2c3d
 
 $ kaya --version
-kaya 0.2.0 (source checkout, not a released build)   # whatever is in your working tree
+kaya 0.3.0 (source checkout, not a released build)   # whatever is in your working tree
 ```
 
 The second line is the point. Pandan's CLI printed a bare `0.3.0`, two user-visible fixes shipped
@@ -58,5 +60,34 @@ come from `kaya-client`'s `version_line()`, for the same reason and one more —
 reports its provenance through that same function. If a formatting rule starts growing in this
 package, that is the bug ADR 0004 exists to prevent.
 
-Verbs, `--format {human,json,toon}` and the named exit-code table arrive with the rest of V2a. Until
-then this is `--version`, `--help`, and a banner saying so.
+## The failure contract (KAN-542)
+
+Two modules, and the split between them is ADR 0004's review question answered twice.
+
+| | Where | Why there |
+|---|---|---|
+| The error object and its rendering | `kaya-client` | V6's MCP adapter must report a refusal in the same shape, and would otherwise rebuild it |
+| Code → exit number | `kaya-cli/src/kaya_cli/failures.py` | An MCP tool returns content to a host. It has no process to exit |
+
+- **`failures.py`** holds [ADR 0005](../docs/adr/0005-born-agent-conformant.md) §contract 4's table —
+  `0` ok · `1` runtime · `2` usage · `3` 401 · `4` 403 · `5` 404 — plus `EXIT_FOR_CODE`, keyed on
+  the `code` string every `KayaError` subclass carries. A raise site picks a **class**, and the class
+  is the meaning; nothing in this repository writes an exit number at a raise site. The table is
+  **add-only**: adding a row is free, renumbering one is breaking a published contract, and
+  `tests/test_exit_codes.py` pins every shipped row by literal value so the difference is a red test.
+- **`parsing.py`** intercepts `ArgumentParser.error()` and `.exit()`. argparse's default prints usage
+  to stderr and calls `sys.exit(2)`, which emits nothing a program can read and takes the process
+  with it. `StructuredParser` writes argparse's stderr text verbatim and then raises, so `main()`
+  emits *both* halves of contract 3 — usage for a human on stderr, `error<TAB>code<TAB>message<TAB>arg`
+  for a program on **stdout** — and returns a number instead of exiting from inside a parser.
+
+The row is on stdout so an agent never has to merge two streams to find out what happened, and it
+always has four tab-separated fields even when `arg` is empty: fixed arity is a positional format's
+version of "all keys always present".
+
+`--version` (KAN-543) takes the same interception: it is a plain `store_true` flag handled in
+`main`, never argparse's `action="version"`, so its exit `0` is a value `main` returns rather than a
+`SystemExit` raised from inside a parser.
+
+`--format {human,json,toon}` and the verbs arrive with KAN-541, which hangs subparsers off
+`build_parser()` and passes `--format`'s value into `failures.report(..., fmt=…)`.

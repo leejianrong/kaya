@@ -25,6 +25,14 @@ Two format vocabularies, because two audiences: ``Format`` is what a person may 
 ``--format`` and is therefore a published contract; ``AdapterFormat`` (``data``) is what an in-tree
 adapter asks for in code. ``CLI_FORMATS`` is the first as a tuple, ready for argparse's ``choices``.
 
+**Failures render through the same layer** (KAN-542). ``render_error(failure, fmt=…)`` produces ADR
+0005 §contract 3's ``error<TAB>code<TAB>message<TAB>arg`` row or the ``{"error": {…}}`` object, with
+``code``/``message``/``arg`` always present; ``error_payload`` builds that object for a caller that
+wants the dict rather than a rendering. What the client deliberately does *not* own is the stream or
+the exit number — ADR 0005's exit table is `kaya-cli`'s, because an MCP tool has neither. Every
+exception class here carries a ``code``, so a raise site names a meaning and the CLI's table is a
+lookup rather than a judgement.
+
 **V2a (KAN-540) implements the ``fmt`` dimension only.** ``fields`` and ``text_limit`` are in the
 signature, are validated for shape, and pass through untouched; `tests/test_passthrough_is_a_no_op`
 pins that, so V2b filling them in is a visible diff. ADR 0005 puts the signature before the
@@ -40,12 +48,31 @@ from importlib.metadata import PackageNotFoundError, version
 
 from kaya_client.aggregates import attach_summary
 from kaya_client.client import KayaClient
-from kaya_client.errors import ApiError, KayaError, TransportError, UnknownFormat
+from kaya_client.errors import (
+    ARG_KEY,
+    CODE_KEY,
+    CONTRACT_KEYS,
+    MESSAGE_KEY,
+    ApiError,
+    KayaError,
+    TransportError,
+    UnknownFormat,
+    UsageError,
+    error_payload,
+)
 from kaya_client.payloads import Kind, Payload, Shaped
 from kaya_client.projection import project
 from kaya_client.provenance import SOURCE_CHECKOUT, build_sha, version_line
-from kaya_client.render import render
-from kaya_client.serialization import CLI_FORMATS, AdapterFormat, Format, serialize
+from kaya_client.render import render, render_error
+from kaya_client.serialization import (
+    CLI_FORMATS,
+    ERROR_MARKER,
+    ROW_SEPARATOR,
+    AdapterFormat,
+    Format,
+    serialize,
+    serialize_error,
+)
 from kaya_client.truncation import DEFAULT_TEXT_LIMIT, truncate
 
 try:
@@ -54,8 +81,14 @@ except PackageNotFoundError:  # pragma: no cover - source checkout without an in
     __version__ = "0.0.0"
 
 __all__ = [
+    "ARG_KEY",
     "CLI_FORMATS",
+    "CODE_KEY",
+    "CONTRACT_KEYS",
     "DEFAULT_TEXT_LIMIT",
+    "ERROR_MARKER",
+    "MESSAGE_KEY",
+    "ROW_SEPARATOR",
     "SOURCE_CHECKOUT",
     "AdapterFormat",
     "ApiError",
@@ -67,12 +100,16 @@ __all__ = [
     "Shaped",
     "TransportError",
     "UnknownFormat",
+    "UsageError",
     "__version__",
     "attach_summary",
     "build_sha",
+    "error_payload",
     "project",
     "render",
+    "render_error",
     "serialize",
+    "serialize_error",
     "truncate",
     "version_line",
 ]

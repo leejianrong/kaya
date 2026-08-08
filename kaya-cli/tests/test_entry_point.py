@@ -58,8 +58,10 @@ def test_a_verb_that_has_not_landed_yet_is_a_usage_error(capsys) -> None:
 
     This is a deliberate change from the banner-for-everything placeholder that stood here before
     argument parsing existed: exiting `0` on a command that did nothing is the kind of quiet
-    success a script cannot tell from a real one. `2` is SLICES §V2a's number for a usage error, so
-    KAN-542's code table lands on it unmoved.
+    success a script cannot tell from a real one. `2` is SLICES §V2a's number for a usage error, and
+    KAN-542's code table did land on it unmoved — the number below now comes from
+    `failures.EXIT_FOR_CODE["usage"]` rather than from argparse, and `test_error_reporting.py` owns
+    the stdout half of the same event.
     """
     code = main(["note", "list"])
 
