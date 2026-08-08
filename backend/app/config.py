@@ -10,11 +10,13 @@ caller's bearer upstream (ADR 0002); ``KAYA_PANDAN_URL`` is configuration.
 """
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_DATABASE_URL = "postgresql+psycopg://kaya:kaya@localhost:5432/kaya"
+
 
 
 class Settings(BaseSettings):
@@ -65,6 +67,20 @@ class Settings(BaseSettings):
     Short, because it is load-shedding rather than a decision: a stray ``Authorization`` header on
     a retry loop must not become one pandan round trip per request. Kept well under the positive
     TTL so a token that was rejected because it hadn't been minted yet becomes usable quickly."""
+
+    spa_dist: Path | None = Field(
+        default=None,
+        validation_alias="KAYA_SPA_DIST",
+    )
+    """The directory holding the built SPA, served from this same origin (ADR 0010, KAN-538).
+
+    ``None`` — unset — means the app serves the API alone, and that is the default on purpose.
+    There is no directory guessed at, no ``../frontend/dist`` tried as a fallback: the one thing
+    worse than not finding a build is silently serving a months-old one out of somebody's working
+    tree on the day the image's copy step breaks. The container image sets this; ``make dev`` does
+    not, because Vite serves the SPA on :5173 and proxies ``/api`` back.
+
+    Set it to ``../frontend/dist`` to run the single-artifact layout from a checkout."""
 
 
 @lru_cache(maxsize=1)

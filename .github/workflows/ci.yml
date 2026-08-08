@@ -49,7 +49,7 @@ jobs:
           cat "$GITHUB_OUTPUT"
 
   docs:
-    name: Docs and secrets
+    name: Docs, secrets and image pins
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,6 +59,12 @@ jobs:
         run: scripts/check-docs-links.sh
       - name: Secret scan
         run: scripts/secret-scan.sh
+      # KAN-538, and it belongs with the other offline guards rather than in a job of its own: it
+      # reads the *shape* of an image reference and asks no registry anything, so it needs neither
+      # Docker nor a network and costs a second. The job is required via `ci-gate`, which needs
+      # job ids rather than display names — so renaming this one above is safe.
+      - name: Image pins (digests, not tags)
+        run: scripts/check-image-pins.sh
 
   backend:
     name: Backend (lint + unit)

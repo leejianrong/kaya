@@ -1,0 +1,79 @@
+# What a laptop can honestly supply, on top of manifests written for the homelab (ADR 0010).
+#
+# `make k3d` applies this overlay. Keep it SMALL: every difference between here and `../../base`
+# is a thing the local run does not prove about the real deploy, so each one below has to earn its
+# place and say what it costs.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: kaya
+
+resources:
+  - ../../base
+
+# 1. The image. `make k3d` builds `kaya:dev` and `k3d image import`s it straight into the node, so
+#    there is no registry in the loop at all — no local registry to run, no insecure-registry
+#    config, no push. `imagePullPolicy: Never` (patched below) is what turns a failed import into
+#    a loud ErrImageNeverPull instead of a silent pull of something else with the same name.
+images:
+  - name: ghcr.io/leejianrong/kaya
+    newName: kaya
+    newTag: dev
+
+# 2. The Secret the base deliberately does not carry. Generated here, from literals, because these
+#    credentials protect a database that lives for the length of a `make k3d` run and is deleted
+#    with the cluster. The homelab's equivalent is created out of band and never enters git.
+#
+#    kustomize appends a content hash to the name and rewrites every `secretKeyRef` and
+#    `secretRef` that points at it, so changing a value here rolls the pods rather than leaving
+#    them running on the old one.
+secretGenerator:
+  - name: kaya-database
+    literals:
+      - POSTGRES_USER=kaya
+      - POSTGRES_PASSWORD=kaya
+      - POSTGRES_DB=kaya
+      - DATABASE_URL=postgresql+psycopg://kaya:kaya@kaya-postgres:5432/kaya
+
+patches:
+  # 3. Never pull. See (1).
+  - target:
+      kind: Deployment
+      name: kaya
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Never
+      - op: add
+        path: /spec/template/spec/initContainers/0/imagePullPolicy
+        value: Never
+
+  # 4. No hostname and no TLS. There is no DNS entry for `kaya.homelab.lan` on a laptop and no
+  #    cert-manager in the cluster, so keeping either would make the Ingress match nothing and the
+  #    smoke test fail for a reason that has nothing to do with kaya. A host-less rule matches
+  #    every request, which is what makes `curl localhost:8080/health` work.
+  #
+  #    The cost, stated plainly: TLS termination and the cert-manager annotation are the parts of
+  #    ingress.yaml that `make k3d` does NOT exercise. ADR 0010 §Consequences accepts that.
+  - target:
+      kind: Ingress
+      name: kaya
+    patch: |-
+      - op: remove
+        path: /spec/tls
+      - op: remove
+        path: /metadata/annotations/cert-manager.io~1cluster-issuer
+      - op: remove
+        path: /spec/rules/0/host
+
+  # 5. Room to breathe on a machine that also has a browser open. The base's requests are what the
+  #    homelab should reserve; a single-node k3d cluster scheduling against them alongside Postgres
+  #    is unnecessarily tight.
+  - target:
+      kind: Deployment
+      name: kaya
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 25m

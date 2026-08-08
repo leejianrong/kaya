@@ -1,0 +1,106 @@
+# The Postgres story ADR 0010 asks the manifests to carry.
+#
+# A StatefulSet with one replica and a PersistentVolumeClaim, which is the smallest arrangement
+# that does not lose data on a reschedule. It is deliberately NOT an operator, a Helm chart or a
+# replicated cluster: kaya is one user's notes, the homelab is one machine, and an operator is a
+# second thing to run, upgrade and debug in exchange for failover nobody has asked for.
+#
+# Note what is absent — no `POSTGRES_PASSWORD:` literal anywhere. It comes from the `kaya-database`
+# Secret, which this directory references and never defines. See ../base/kustomization.yaml.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kaya-postgres
+spec:
+  # Headless: the StatefulSet's governing service, and there is nothing to load-balance across one
+  # replica anyway. `kaya-postgres` still resolves to the pod, which is all DATABASE_URL needs.
+  clusterIP: None
+  selector:
+    app.kubernetes.io/component: database
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kaya-postgres
+spec:
+  serviceName: kaya-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: database
+    spec:
+      securityContext:
+        # 70:70 is the `postgres` user inside the alpine image. Setting it explicitly rather than
+        # inheriting it means the PVC's group ownership (fsGroup) is right on the first boot, which
+        # is the difference between a running database and a permission error in initdb.
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          # Pinned by digest, and the same digest docker-compose.yml uses — so the Postgres a test
+          # runs against locally is byte-for-byte the Postgres in the cluster.
+          image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+          ports:
+            - name: postgres
+              containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: kaya-database
+          env:
+            # Deterministic collation, so an index built here sorts the way it does everywhere else.
+            - name: POSTGRES_INITDB_ARGS
+              value: "--locale=C --encoding=UTF8"
+            # The image refuses to initialise into a directory that is not empty, and a PVC mounted
+            # at /var/lib/postgresql/data may carry a `lost+found`. A subdirectory sidesteps it.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              # `-U kaya` matters: without it pg_isready probes as root and reports ready while the
+              # application user is still being created during first init.
+              command: ["pg_isready", "-U", "kaya", "-d", "kaya"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "kaya", "-d", "kaya"]
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # No storageClassName: each cluster's default is used — `local-path` on k3s and k3d, and
+        # whatever the homelab settles on. Naming one here would make this file unappliable
+        # anywhere else, which is the opposite of what ADR 0010 wants from it.
+        resources:
+          requests:
+            storage: 2Gi

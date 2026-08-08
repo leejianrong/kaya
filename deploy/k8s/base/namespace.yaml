@@ -1,0 +1,6 @@
+# Its own namespace, so `kubectl delete namespace kaya` is a complete uninstall and so the
+# homelab's other tenants cannot be reached by a wildcard selector written here.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kaya

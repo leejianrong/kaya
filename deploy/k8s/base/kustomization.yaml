@@ -1,0 +1,38 @@
+# kaya on Kubernetes, written against the homelab (ADR 0010).
+#
+# Read this directory as "what kaya asks of a cluster it is deployed to", and
+# `../overlays/local/` as "what a laptop can honestly supply". The split is the whole point of the
+# ADR: the manifests target the homelab, and are nonetheless *applied* — by `make k3d`, on every
+# run — so they are known to work rather than assumed to. A manifest set that has never been
+# applied is a guess.
+#
+# What the base deliberately does NOT contain:
+#
+#   the Secret       `kaya-database` is referenced and never defined here. A credential in git is
+#                    a credential leaked, whatever it protects. The homelab supplies it out of
+#                    band; the local overlay generates a throwaway one. `kubectl apply -k base`
+#                    therefore leaves pods Pending on a missing Secret, which is the correct
+#                    behaviour and not a defect.
+#   a storage class  `volumeClaimTemplates` names none, so each cluster's default is used.
+#   an image digest  the app image is kaya's own artifact and has no registry to be pinned in yet
+#                    (ADR 0010: no hosted deploy until the homelab). Every *external* image here
+#                    is pinned, and scripts/check-image-pins.sh enforces exactly that split.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: kaya
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - postgres.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+
+labels:
+  - includeSelectors: true
+    pairs:
+      app.kubernetes.io/name: kaya
+      app.kubernetes.io/part-of: kayatoast

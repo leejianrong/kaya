@@ -1,0 +1,45 @@
+# The homelab's front door, and the file ADR 0010 is most honest about.
+#
+# `kaya.homelab.lan` is a placeholder for a hostname that does not exist yet. The real apex arrives
+# with the homelab (pandan KAN-439), and with it the shared-cookie SSO that two `*.fly.dev` origins
+# can never have — `fly.dev` is on the Public Suffix List, so no browser will accept a cookie
+# scoped to it. Until then this host is aspirational and the local overlay strips it.
+#
+# What the local run genuinely proves, and what it does not:
+#
+#   proven      the path routing, the backend reference, the port name, and that Traefik accepts
+#               this object at all — k3d IS k3s, so the ingress controller answering `make k3d` is
+#               the same one a k3s homelab would run.
+#   NOT proven  TLS termination, the cert-manager annotation, and anything that depends on a real
+#               origin or on proxy headers arriving correctly. ADR 0010 §Consequences names that
+#               class of bug and accepts it knowingly. This is a hedge, not a proof.
+#
+# One rule, `/` prefix, and deliberately not a split between `/api` and everything else: the
+# artifact serves both, and a second path rule here would be a second place for the SPA-versus-API
+# boundary to be decided — a decision that already lives in `backend/app/spa.py` and has a test.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kaya
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  # k3s ships Traefik as its default IngressClass and k3d runs k3s, so this is one of the few
+  # fields the local apply actually exercises. If the homelab settles on ingress-nginx instead,
+  # this is the field to change and the annotation above goes with it.
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - kaya.homelab.lan
+      secretName: kaya-tls
+  rules:
+    - host: kaya.homelab.lan
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kaya
+                port:
+                  name: http

@@ -1,0 +1,18 @@
+# Non-secret configuration. Everything kaya reads that is not a credential lives here, and there
+# is very little of it — kaya holds no long-lived credential of its own (ADR 0002), so the split
+# between this file and the Secret is "the database URL, and nothing else".
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kaya-config
+data:
+  # The pandan deployment that resolves principals. Configuration and not a secret: it is echoed
+  # verbatim in the `503` body so a caller can see *which* upstream is down (app/config.py).
+  #
+  # It stays `simple-kanban-jian.fly.dev` even on the homelab until pandan itself moves — ADR 0010
+  # §Context is explicit that pandan's URL still reads that way, knowingly.
+  KAYA_PANDAN_URL: "https://simple-kanban-jian.fly.dev"
+
+  # Generous rather than snappy: pandan's API scales to zero, so the first call after an idle
+  # period pays a cold start and httpx's 5s default would turn a normal wake-up into a `503`.
+  KAYA_PANDAN_TIMEOUT_SECONDS: "10"

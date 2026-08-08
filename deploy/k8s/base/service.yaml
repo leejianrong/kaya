@@ -1,0 +1,17 @@
+# One Service for both halves of the app, because there is one origin and one port. If the SPA
+# ever needed its own address, the single-artifact decision (ADR 0010) would already have been
+# abandoned somewhere upstream of this file.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kaya
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/component: api
+  ports:
+    - name: http
+      port: 80
+      # The name, not the number: the Deployment owns which port the container listens on, and a
+      # number here would be a second place to edit when it changes.
+      targetPort: http
