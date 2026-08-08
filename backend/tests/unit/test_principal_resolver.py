@@ -257,23 +257,44 @@ class BlockingUpstream(FakeUpstream):
         self.release = threading.Event()
 
     def introspect(self, bearer: str) -> Principal | None:
+        # Recorded *before* parking, and that ordering is the whole point of overriding rather than
+        # delegating to `super()`. `FakeUpstream` appends after it returns, which would leave
+        # `call_count` at zero for as long as the leader is held — so a second thread that failed to
+        # coalesce would be invisible during exactly the window the test exists to inspect.
+        self.calls.append(bearer)
         self.entered.set()
         assert self.release.wait(timeout=10), "the test never released the upstream"
-        return super().introspect(bearer)
+
+        if not self.available:
+            raise UpstreamUnavailable("https://pandan.invalid/api/v1/me is unreachable")
+        return self.known.get(bearer)
 
 
-def stampede(count: int, target: Callable[[], None]) -> list[threading.Thread]:
-    """`count` threads through a barrier, so they are all inside the resolver at once."""
+def stampede(
+    count: int, target: Callable[[], None]
+) -> tuple[list[threading.Thread], threading.Semaphore]:
+    """`count` threads through a barrier, so they are all inside the resolver at once.
+
+    Returns the threads and a semaphore released once per thread the moment it clears the barrier.
+    Waiting on that semaphore `count` times before letting the blocked upstream go is the whole
+    difference between a test and a coin flip: the leader retires its key the instant it returns, so
+    a thread that has not yet reached the registry becomes a *new* leader and makes a second call.
+    This test was written without the gate first, and failed roughly one run in five — recorded here
+    because "it passed on my machine" is exactly how a concurrency test earns its place and then
+    loses it.
+    """
     barrier = threading.Barrier(count)
+    at_the_gate = threading.Semaphore(0)
 
     def body() -> None:
         barrier.wait(timeout=10)
+        at_the_gate.release()
         target()
 
     threads = [threading.Thread(target=body, daemon=True) for _ in range(count)]
     for thread in threads:
         thread.start()
-    return threads
+    return threads, at_the_gate
 
 
 def resolver_over(upstream: FakeUpstream, mirror: FakeMirror) -> PrincipalResolver:
@@ -298,14 +319,25 @@ def test_forty_concurrent_misses_on_one_token_cost_one_round_trip_and_one_mirror
     resolver = resolver_over(upstream, mirror)
     results: list[Principal] = []
     results_lock = threading.Lock()
+    anyone_finished = threading.Event()
 
     def call() -> None:
         principal = resolver.resolve(TOKEN)
         with results_lock:
             results.append(principal)
+        anyone_finished.set()
 
-    threads = stampede(40, call)
+    threads, at_the_gate = stampede(40, call)
     assert upstream.entered.wait(timeout=10), "nobody reached the upstream"
+    for _ in range(40):
+        assert at_the_gate.acquire(timeout=10), "a thread never reached `resolve`"
+    # The leader is parked inside `introspect` and stays there until the line below, so the others
+    # have no deadline to meet — only to arrive, which the semaphore above has just confirmed.
+    assert not anyone_finished.wait(timeout=0.25), (
+        "a caller returned while the one in-flight introspection was still parked"
+    )
+    assert upstream.call_count == 1, "a second thread started its own round trip"
+
     upstream.release.set()
     for thread in threads:
         thread.join(timeout=10)
@@ -331,6 +363,7 @@ def test_a_stampede_into_an_outage_is_a_503_for_every_caller_and_a_401_for_none(
     resolver = resolver_over(upstream, FakeMirror())
     statuses: list[int] = []
     statuses_lock = threading.Lock()
+    anyone_finished = threading.Event()
 
     def call() -> None:
         try:
@@ -340,9 +373,15 @@ def test_a_stampede_into_an_outage_is_a_503_for_every_caller_and_a_401_for_none(
             status = exc.status_code
         with statuses_lock:
             statuses.append(status)
+        anyone_finished.set()
 
-    threads = stampede(12, call)
+    threads, at_the_gate = stampede(12, call)
     assert upstream.entered.wait(timeout=10)
+    for _ in range(12):
+        assert at_the_gate.acquire(timeout=10), "a thread never reached `principal_from_bearer`"
+    assert not anyone_finished.wait(timeout=0.25)
+    assert upstream.call_count == 1
+
     upstream.release.set()
     for thread in threads:
         thread.join(timeout=10)
