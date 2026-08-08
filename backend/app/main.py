@@ -1,7 +1,7 @@
 """The ASGI app.
 
 KAN-531 is the skeleton: an app that boots and one health endpoint. ``/api/v1`` arrives with
-KAN-535, and serving the built SPA from this same origin arrives with KAN-538.
+KAN-536, and serving the built SPA from this same origin arrives with KAN-538.
 """
 
 from fastapi import FastAPI
