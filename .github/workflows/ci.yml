@@ -6,7 +6,21 @@ name: CI
 # checks that apply and skips the rest instead of going red for being unbuilt.
 #
 # Action pins: bump these when the runner flags a Node runtime deprecation, and
-# check composite wrappers for transitive pins at the same time.
+# check composite wrappers for transitive pins at the same time. There are no
+# composite wrappers today — this is the only file under .github/ — so a bump is
+# a sweep of this file alone, but check again before assuming that still holds.
+#
+# Bumped for the Node 20 deprecation in KAN-582, and the two pin styles below are
+# deliberate rather than inconsistent. actions/* publish floating major tags, so
+# `@v7` tracks patches on its own. astral-sh/setup-uv stopped publishing major and
+# minor tags at v8.0.0 (upstream issue #830), so it takes an exact patch tag and
+# `@v9` fails the run outright as an unresolvable action. That also means setup-uv
+# gets no patches until someone bumps this line by hand.
+#
+# One silent default moved in that jump and is left at its new value on purpose:
+# setup-uv v9 flips `prune-cache` from true to false, so cache entries get bigger
+# rather than wrong. Every job here sets `cache-dependency-glob` explicitly, which
+# keeps each package on its own cache key and sidesteps the broadened v6 default.
 
 on:
   push:
@@ -35,7 +49,7 @@ jobs:
       mcp: ${{ steps.d.outputs.mcp }}
       frontend: ${{ steps.d.outputs.frontend }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: d
         run: |
           for p in backend client cli mcp frontend; do
@@ -52,7 +66,7 @@ jobs:
     name: Docs, secrets and image pins
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # secret-scan uses git grep across the tree
       - name: Internal doc links
@@ -72,8 +86,8 @@ jobs:
     if: needs.detect.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
@@ -90,8 +104,8 @@ jobs:
     if: needs.detect.outputs.client == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
           cache-dependency-glob: kaya-client/uv.lock
@@ -110,10 +124,10 @@ jobs:
     if: needs.detect.outputs.cli == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # the version-bump guard needs the merge-base with main
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
           cache-dependency-glob: kaya-cli/uv.lock
@@ -141,8 +155,8 @@ jobs:
     if: needs.detect.outputs.mcp == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
           cache-dependency-glob: mcp/uv.lock
@@ -161,8 +175,8 @@ jobs:
     if: needs.detect.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -182,8 +196,8 @@ jobs:
     if: needs.detect.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
