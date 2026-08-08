@@ -15,6 +15,8 @@ the entire resolver is exercisable by the no-infrastructure test layer.
 """
 
 from app.auth.cache import PrincipalCache, digest
+from app.auth.dependencies import get_principal, get_resolver, reset_auth
+from app.auth.mirror import SqlAlchemyPrincipalMirror
 from app.auth.principal import (
     Principal,
     PrincipalMirror,
@@ -31,9 +33,13 @@ __all__ = [
     "PrincipalCache",
     "PrincipalMirror",
     "PrincipalResolver",
+    "SqlAlchemyPrincipalMirror",
     "TokenRejected",
     "UpstreamUnavailable",
     "digest",
     "error_body",
+    "get_principal",
+    "get_resolver",
     "principal_from_bearer",
+    "reset_auth",
 ]
