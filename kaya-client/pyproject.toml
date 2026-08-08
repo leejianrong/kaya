@@ -1,13 +1,20 @@
 [project]
 name = "kaya-client"
-version = "0.1.0"
+# 0.2.0 — KAN-540 gives this package its contents: `KayaClient` and the `render()` seam. A
+# `[project.dependencies]` change becomes `Requires-Dist` in the wheel and is behavioural, so it
+# bumps in the same PR (ADR 0007, CLAUDE.md §Conventions).
+version = "0.2.0"
 description = "The shared core for kaya: the API client and the one payload-shaping seam"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
-# No runtime dependencies yet. `httpx` arrives with KayaClient in V2a (KAN-54x); adding it now
-# would be a dependency with no caller.
-dependencies = []
+dependencies = [
+    # The transport for `KayaClient`, and the only runtime dependency this package has. The
+    # serializers are stdlib — `json` for `--format json`, and `toon` is specified stdlib-only and
+    # encode-only (SLICES §V2a) — so shaping stays free of anything that could pull a wheel in
+    # behind an adapter's back.
+    "httpx>=0.28",
+]
 
 [project.optional-dependencies]
 dev = [
