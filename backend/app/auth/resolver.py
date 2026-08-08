@@ -14,6 +14,8 @@ Q9's `503`, be asserted by the no-infrastructure test layer: ``principal_from_be
 ordinary function taking an ordinary object.
 """
 
+from typing import Any
+
 from fastapi import HTTPException, status
 
 from app.auth.cache import PrincipalCache
@@ -68,18 +70,21 @@ class PrincipalResolver:
         return principal
 
 
-def error_body(code: str, message: str, **extra: str) -> dict[str, dict[str, str]]:
+def error_body(code: str, message: str, **extra: Any) -> dict[str, dict[str, Any]]:
     """The error shape. One builder, so a status is never paired with a bare prose string.
 
-    **On the wire this ends up double-nested, and that is an artefact rather than a decision.**
-    FastAPI's default handler wraps whatever it is given in ``{"detail": ...}``, so a caller sees
-    ``{"detail": {"error": {"code": ...}}}``. Nothing consumes it yet — there are no routes under
-    ``/api/v1``.
+    ``{"error": {"code", "message", …}}`` reaches the wire exactly as written. KAN-536 settled that
+    (``app/api/errors.py``): FastAPI's default handler wraps a raise site's ``detail``, so this
+    object used to arrive double-nested under ``detail``, and one handler at the app boundary
+    un-nests it. Nothing at a raise site had to change, which is the point of there being one
+    builder.
 
-    KAN-536 owns the API error contract and should pick the shape on purpose. If it wants a bare
-    ``{"error": {...}}``, an ``@app.exception_handler(HTTPException)`` that returns
-    ``exc.detail`` when it is already a mapping is the whole change, and these call sites stay as
-    they are. Flagged here so the accident is not inherited as a default.
+    ``code`` and ``message`` are always strings, and a refusal a human reads is those two alone.
+    ``**extra`` is usually a string too — ``field`` on a `422`, ``ref`` on a bad identifier — but it
+    is not restricted to one, because some refusals are only actionable with data attached: ADR
+    0009's `409` carries two whole notes so the caller can diff them
+    (``app/api/concurrency.py``). Anything passed here must be JSON-encodable;
+    ``jsonable_encoder`` in the boundary handler does the rest.
     """
     return {"error": {"code": code, "message": message, **extra}}
 

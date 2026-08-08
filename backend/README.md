@@ -6,19 +6,43 @@ FastAPI over **sync** SQLAlchemy and psycopg v3, with Alembic wired up from day 
 Right now: `GET /health`, migration `0001` (the `user` mirror, `note`, and the `NOTE-` sequence —
 KAN-533), `app/auth/` — the principal resolver (KAN-534) plus `authorize_note` and the owner-scoped
 list statement (KAN-535) — and `app/api/`: the five `/api/v1/notes` routes over the central ref
-resolver (KAN-536).
+resolver (KAN-536), with ADR 0009's optimistic-concurrency precondition on `PATCH` (KAN-537).
 
 | Route | Notes |
 |---|---|
 | `POST /api/v1/notes` | `201` + `Location`. Owner is the caller; there is no field to say otherwise |
 | `GET /api/v1/notes` | `{"notes": [...]}`, owner-scoped in SQL, newest first |
 | `GET /api/v1/notes/{ref}` | `ref` is `NOTE-12`, `note-12` **or** `12` |
-| `PATCH /api/v1/notes/{ref}` | Partial. Omitted fields are unchanged. Moving a note is `{"path": …}` |
+| `PATCH /api/v1/notes/{ref}` | Partial. Omitted fields are unchanged. Moving a note is `{"path": …}`. Optional `if_updated_at` → `409` on a stale one |
 | `DELETE /api/v1/notes/{ref}` | `204`. The ref is never reused |
 
-Not here yet, with the card that owns each: the `409` precondition (KAN-537 — a write that omits it
-is a plain overwrite *by specification*, ADR 0009), `?q=` search (KAN-558/559), and `/links` +
-`/backlinks` (KAN-566).
+Not here yet, with the card that owns each: `?q=` search (KAN-558/559), and `/links` + `/backlinks`
+(KAN-566).
+
+## The `PATCH` precondition (ADR 0009)
+
+```bash
+# Guarded: send back the `updated_at` you read.
+curl -X PATCH …/api/v1/notes/NOTE-12 -d '{"body": "…", "if_updated_at": "2026-08-07T10:11:12.123456+00:00"}'
+
+# Unguarded, and that is specified rather than a gap — no read-first dance required.
+curl -X PATCH …/api/v1/notes/NOTE-12 -d '{"body": "…"}'
+```
+
+A stale precondition is a `409` whose body carries **both** versions, because "your write was
+refused" is not actionable on prose:
+
+```json
+{"error": {"code": "note_conflict", "message": "NOTE-12 has changed since you read it: …",
+           "attempted": {"ref": "NOTE-12", "body": "what you tried to write", "…": "…"},
+           "stored":    {"ref": "NOTE-12", "body": "what is there now", "…": "…"}}}
+```
+
+Both are whole notes, so a client can diff them; "keep mine" is this same `PATCH` again with
+`attempted`'s body and `stored`'s `updated_at`. Two things about the scope, both from the ADR: a
+write with **no** `if_updated_at` is a plain last-write-wins overwrite, and a write touching only
+`title`/`path` is unguarded even with a stale one, because metadata stays LWW. A write touching
+`body` and `title` together is guarded and refused whole. See `app/api/concurrency.py`.
 
 ```bash
 uv sync --all-extras

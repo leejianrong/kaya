@@ -7,14 +7,25 @@ CI, but they hold almost nothing (KAN-531):
 
 | Package | What's actually in it |
 |---|---|
-| `backend/` | FastAPI app, `GET /health`, one sync engine, migration `0001` (the `user` mirror, `note`, the `NOTE-` sequence), `app/auth/` (principal resolver, `get_principal`, `authorize_note`, `notes_owned_by`), and `app/api/`: **`/api/v1/notes` CRUD** over the central ref resolver |
+| `backend/` | FastAPI app, `GET /health`, one sync engine, migration `0001` (the `user` mirror, `note`, the `NOTE-` sequence), `app/auth/` (principal resolver, `get_principal`, `authorize_note`, `notes_owned_by`), and `app/api/`: **`/api/v1/notes` CRUD** over the central ref resolver, with ADR 0009's `409` precondition on `PATCH` |
 | `kaya-client/` | An importable package and a version. No `KayaClient`, no `render()` — those are V2a |
 | `kaya-cli/` | The `kaya` console script, one entry point, **no verbs** |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
 | `frontend/` | Svelte 5 + Vite + TS toolchain, a shell page, and the dev proxy for `/api` |
 
-Not built yet: the `409` precondition on `PATCH` (KAN-537), `?q=` search (KAN-558/559), `/links` and
-`/backlinks` (KAN-566), and the container image and manifests (KAN-538).
+Not built yet: `?q=` search (KAN-558/559), `/links` and `/backlinks` (KAN-566), and the container
+image and manifests (KAN-538).
+
+**A `PATCH` is guarded only if it asks to be, and only over the body** (ADR 0009, KAN-537,
+`backend/app/api/concurrency.py`). Send `if_updated_at` and a stale value is a `409` carrying
+`attempted` and `stored` — two whole notes, so a client can diff them. Omit it and the write is a
+plain overwrite, *by specification*: the precondition is a guarantee for clients that want it, not a
+tax on every caller, and making it mandatory would be a different decision from the accepted one. A
+write touching only `title`/`path` is unguarded even when it carries a stale precondition, because
+ADR 0009 keeps card-shaped fields on last-write-wins; one touching `body` **and** `title` is guarded
+and refused whole. The comparison is exact to the microsecond — a `timestamptz` token that loses
+precision anywhere in the round trip refuses *every* correct write, which is why the tests pin
+`.123456` rather than a round number.
 
 **Every identifier goes through `backend/app/api/refs.py`.** `NOTE-12`, `note-12` and `12` resolve
 in *one* place, so a missing note is the same `404` byte for byte whichever spelling asked for it,

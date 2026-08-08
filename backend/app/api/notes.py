@@ -5,7 +5,7 @@ Every decision with teeth in it lives one module away: identity in ``refs.py``, 
 is left here is genuinely just wiring, which is the point — a route that is four lines long has
 nowhere to hide a fifth spelling of a rule.
 
-Two things to notice, because both are load-bearing:
+Three things to notice, because all three are load-bearing:
 
 - **No route parses an identifier.** ``NoteFromRef`` resolves it, checks it and hands back a
   ``Note``. That is ADR 0008's "resolve centrally, not per call site" made unavoidable rather than
@@ -13,11 +13,12 @@ Two things to notice, because both are load-bearing:
 - **No route builds a note query.** A list composes onto ``notes_owned_by``, which already carries
   ``WHERE owner_id = :caller``; ``tests/unit/test_no_unscoped_note_query.py`` fails the build if
   this file ever names ``Note`` inside a ``select()``.
+- **No route decides a conflict.** ADR 0009's precondition is one call to ``enforce_precondition``,
+  so a second write endpoint gets the guarantee by making the same call rather than by
+  reimplementing a comparison.
 
-Deliberately absent, with the card that owns each: the `409` precondition on `PATCH` (KAN-537 —
-ADR 0009 specifies plain last-write-wins for a write that omits it, so what is below is the
-specified behaviour and not a stub), ``?q=`` search (KAN-558/559), and `/links` + `/backlinks`
-(KAN-566, which will depend on ``NoteFromRef`` and inherit ADR 0008 for free).
+Deliberately absent, with the card that owns each: ``?q=`` search (KAN-558/559), and `/links` +
+`/backlinks` (KAN-566, which will depend on ``NoteFromRef`` and inherit ADR 0008 for free).
 """
 
 from typing import Annotated
@@ -25,6 +26,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
+from app.api.concurrency import enforce_precondition
 from app.api.refs import NoteFromRef
 from app.api.schemas import NoteCreate, NoteList, NoteRead, NoteUpdate
 from app.auth import Principal, get_principal, notes_owned_by
@@ -106,12 +108,20 @@ def update_note(note: NoteFromRef, payload: NoteUpdate, session: DbSession) -> N
     column, no link rewriting, nothing to break (ADR 0008). There is no separate move endpoint
     because there is no separate operation.
 
-    **Last-write-wins, as specified.** ADR 0009 accepts a write carrying no precondition as a plain
-    overwrite on purpose, so the API stays usable from `curl` without a read-first dance. KAN-537
-    adds the branch for a write that *does* carry one: an ``updated_at`` that no longer matches is
-    a `409` with both bodies. That branch goes beside this one; this one is not a placeholder for
-    it.
+    **Two write semantics, and which one you get is the caller's choice** (ADR 0009). Send
+    ``if_updated_at`` and the write is guarded: an ``updated_at`` that has moved on is a `409`
+    carrying both versions, and nothing is written. Omit it and the write is a plain
+    last-write-wins overwrite — specified, so that `curl` and `kaya note edit --force` work without
+    a read-first dance. The precondition is a guarantee available to clients that want it, not a tax
+    on every caller, so do not make it required.
+
+    The guard runs **before** anything is applied, which is what makes a refused write atomic: a
+    `PATCH` carrying a title and a body is rejected whole rather than leaving the title applied and
+    the body not. See ``app/api/concurrency.py`` for why a metadata-only write is unguarded even
+    when it carries a stale precondition.
     """
+    enforce_precondition(session, note, payload)
+
     changes = payload.changes()
     for field, value in changes.items():
         setattr(note, field, value)
