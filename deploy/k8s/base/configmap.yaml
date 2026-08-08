@@ -13,9 +13,16 @@ data:
   # §Context is explicit that pandan's URL still reads that way, knowingly.
   KAYA_PANDAN_URL: "https://simple-kanban-jian.fly.dev"
 
-  # Generous rather than snappy: pandan's API scales to zero, so the first call after an idle
-  # period pays a cold start and httpx's 5s default would turn a normal wake-up into a `503`.
-  KAYA_PANDAN_TIMEOUT_SECONDS: "10"
+  # Two budgets rather than one, because "pandan is down" and "pandan is asleep" are different
+  # failures and a single deadline could only be right for one of them (KAN-666). Measured: fly's
+  # edge completes the TCP and TLS handshakes in tens of milliseconds whether the machine behind it
+  # is running or stopped, and the whole cold-start wait lands in the read.
+  #
+  # These replace `KAYA_PANDAN_TIMEOUT_SECONDS`, which is gone rather than aliased: it named a
+  # single deadline, and a single deadline is the bug. Nothing reads it any more, so a copy of it
+  # left in an environment somewhere is ignored — check for one when rolling this out.
+  KAYA_PANDAN_CONNECT_TIMEOUT_SECONDS: "5"
+  KAYA_PANDAN_READ_TIMEOUT_SECONDS: "30"
 
   # Threshold for the one stdout handler (app/observability/, Q41). `INFO` is one JSON line per
   # request; `DEBUG` adds the liveness probe, which is deliberately below `INFO` because the
