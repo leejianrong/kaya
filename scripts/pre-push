@@ -17,6 +17,9 @@ run() {
 
 run "internal doc links"       scripts/check-docs-links.sh
 run "secret scan"              scripts/secret-scan.sh
+# Offline and instant — it reads the shape of an image reference rather than asking a
+# registry. KAN-538: a base image on a floating tag makes the provenance labels a lie.
+run "image pins"               scripts/check-image-pins.sh
 
 if [ -d backend ] && command -v uv >/dev/null 2>&1; then
   run "backend lint"           bash -c 'cd backend && uv run ruff check .'

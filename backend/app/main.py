@@ -1,12 +1,12 @@
 """The ASGI app.
 
 KAN-531 was the skeleton: an app that boots and one health endpoint. KAN-536 mounts ``/api/v1``
-(``app/api/``), which is where everything a caller can do now lives. Serving the built SPA from this
-same origin arrives with KAN-538.
+(``app/api/``), which is where everything a caller can do now lives. KAN-538 puts the built SPA on
+this same origin, so one artifact serves both halves (ADR 0010).
 
-Two lines of composition and no behaviour, deliberately — the router and the error handlers are both
-importable and both installable onto a bare ``FastAPI()``, so a test can stand up the real surface
-without the real settings.
+Three lines of composition and no behaviour, deliberately — the router, the error handlers and the
+SPA are all installable onto a bare ``FastAPI()``, so a test can stand up the real surface without
+the real settings.
 """
 
 from fastapi import FastAPI
@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from app import __version__
 from app.api import install_error_handlers
 from app.api import router as api_router
+from app.spa import mount_spa
 
 app = FastAPI(
     title="kaya",
@@ -44,3 +45,11 @@ def health() -> Health:
     hard-depend on pandan being reachable. Readiness, if it is ever needed, is a separate route.
     """
     return Health(status="ok", service="kaya", version=__version__)
+
+
+# LAST, and the position is the guarantee rather than a tidiness preference. Starlette matches in
+# registration order, so a catch-all installed here sees only paths that `/api/v1`, `/health`,
+# `/docs` and `/openapi.json` all declined — and `app.spa` refuses those namespaces a second time,
+# for the paths inside them that match no route at all. Installs nothing when there is no build,
+# which is every source checkout and every existing test. See `app/spa.py`.
+mount_spa(app)

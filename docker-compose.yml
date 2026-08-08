@@ -1,19 +1,31 @@
-# Local Postgres. Nothing else lives here yet: the app image that serves the built SPA from one
-# origin arrives with KAN-538, and `make up` says so rather than pretending.
+# The local stack: Postgres, the migration, and the one artifact that serves the SPA and the API
+# from a single origin (ADR 0010 — `make up` is the primary loop, and every slice is demonstrable
+# on localhost).
 #
-# The project name and the published port are overridable because of a rule in CLAUDE.md that
+# Two entry points, and the difference is deliberate:
+#
+#     make db     just Postgres, for `make dev`'s native hot-reload loop
+#     make up     the whole stack on :8000, running the image the manifests deploy
+#
+# The project name and the published ports are overridable because of a rule in CLAUDE.md that
 # costs an hour when it's missed: parallel worktrees share a filesystem, so they must NOT share a
 # database. One branch's migration stamps a revision the others don't have, and their apps then
 # fail to boot. In a second worktree:
 #
-#     COMPOSE_PROJECT_NAME=kaya-myfeature KAYA_DB_PORT=5433 make db
+#     COMPOSE_PROJECT_NAME=kaya-myfeature KAYA_DB_PORT=5433 KAYA_APP_PORT=8001 make up
 #
 # and point that tree's DATABASE_URL at 5433.
 name: ${COMPOSE_PROJECT_NAME:-kaya}
 
+# Compose has no anchors for whole services, but it does for scalars, and the app and the migration
+# must agree on the database exactly. Written once so they cannot drift.
+x-database-url: &database-url postgresql+psycopg://kaya:kaya@db:5432/kaya
+
 services:
   db:
-    image: postgres:17-alpine
+    # Pinned by digest for the same reason the Dockerfile's bases are (scripts/check-image-pins.sh).
+    # `17-alpine` in front of the `@` is documentation; Docker resolves the digest.
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
     restart: unless-stopped
     environment:
       POSTGRES_USER: kaya
@@ -33,6 +45,42 @@ services:
       timeout: 3s
       retries: 20
       start_period: 5s
+
+  # A one-shot service rather than something the web server does on its way up, mirroring the
+  # initContainer in deploy/k8s/base/deployment.yaml. A failed migration is then a failed container
+  # with an exit code and a log, instead of an app that boots and 500s on the first query.
+  migrate:
+    image: ${KAYA_IMAGE:-kaya:dev}
+    build: &app-build
+      context: .
+      dockerfile: Dockerfile
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: *database-url
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    # `image:` and `build:` together: compose reuses a locally built `kaya:dev` if there is one and
+    # builds only when there is not. `make up` builds it first via scripts/image-build.sh, which is
+    # the only path that produces true provenance labels — a bare `docker compose build` leaves
+    # them reading `unknown`, which is honest and is why the Dockerfile defaults them that way.
+    image: ${KAYA_IMAGE:-kaya:dev}
+    build: *app-build
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: *database-url
+      # Kaya holds no credential of its own; this is the upstream it forwards bearers to (ADR 0002).
+      KAYA_PANDAN_URL: ${KAYA_PANDAN_URL:-https://simple-kanban-jian.fly.dev}
+    ports:
+      - "${KAYA_APP_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:

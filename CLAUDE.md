@@ -7,14 +7,34 @@ CI, but they hold almost nothing (KAN-531):
 
 | Package | What's actually in it |
 |---|---|
-| `backend/` | FastAPI app, `GET /health`, one sync engine, migration `0001` (the `user` mirror, `note`, the `NOTE-` sequence), `app/auth/` (principal resolver, `get_principal`, `authorize_note`, `notes_owned_by`), and `app/api/`: **`/api/v1/notes` CRUD** over the central ref resolver, with ADR 0009's `409` precondition on `PATCH` |
+| `backend/` | FastAPI app, `GET /health`, one sync engine, migration `0001` (the `user` mirror, `note`, the `NOTE-` sequence), `app/auth/` (principal resolver, `get_principal`, `authorize_note`, `notes_owned_by`), `app/api/`: **`/api/v1/notes` CRUD** over the central ref resolver with ADR 0009's `409` precondition on `PATCH`, and `app/spa.py` serving the built SPA from the same origin |
 | `kaya-client/` | An importable package and a version. No `KayaClient`, no `render()` — those are V2a |
 | `kaya-cli/` | The `kaya` console script, one entry point, **no verbs** |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
 | `frontend/` | Svelte 5 + Vite + TS toolchain, a shell page, and the dev proxy for `/api` |
+| *root* | `Dockerfile` (one artifact, bases pinned by digest), `docker-compose.yml` (db + migrate + app), `deploy/k8s/` (base for the homelab, overlay for k3d) |
 
-Not built yet: `?q=` search (KAN-558/559), `/links` and `/backlinks` (KAN-566), and the container
-image and manifests (KAN-538).
+Not built yet: `?q=` search (KAN-558/559), `/links` and `/backlinks` (KAN-566), the SPA's actual UI
+(V3, KAN-552 onward).
+
+**V1 is complete.** `make up` runs the whole stack on `:8000` from the image; `make k3d` applies
+`deploy/k8s/` to a throwaway local cluster and then *makes requests against it* — an `apply` that
+succeeds only means the API server liked the YAML (ADR 0010, KAN-538).
+
+**The SPA fallback must never answer for `/api`.** A single-page app needs history fallback so
+`/notes/NOTE-12` loads the app, and the two obvious ways to build it (`StaticFiles(html=True)` at
+`/`, or an exception handler on `404`) both swallow the API — `/api/v1/notes/NOTE-9999` comes back
+`200 text/html` and KAN-536's byte-identical `404` is gone. `app/spa.py` refuses a fixed list of
+reserved namespaces instead, and `tests/unit/test_spa_single_origin.py` proves it by running every
+reserved path against two apps, one with the SPA mounted and one without, and requiring
+byte-identical answers. **Every other API test in the repo passes with the fallback mounted wrong**,
+because they stand the app up with no build directory and therefore no fallback at all.
+
+**Base images are pinned by digest, never by tag** (`Dockerfile`, `docker-compose.yml`,
+`deploy/k8s/base/`). A tag is a mutable pointer, so an image on one has provenance labels that
+describe kaya's source and nothing else — pandan's KAN-475. `scripts/check-image-pins.sh` runs in
+the pre-push hook and in CI; `scripts/image-build.sh` is the only build path that produces true
+labels, and it suffixes the revision `-dirty` when the tree it built from was.
 
 **A `PATCH` is guarded only if it asks to be, and only over the body** (ADR 0009, KAN-537,
 `backend/app/api/concurrency.py`). Send `if_updated_at` and a stale value is a `409` carrying
@@ -121,10 +141,15 @@ make hooks             # install the pre-push gate — run this once after cloni
 make install           # uv sync every Python package + npm ci
 make db                # Postgres 17 via docker compose, waits for healthy
 make dev               # db, then backend :8000 and SPA :5173 together
+make up                # db + migrate + the app image, one origin on :8000
+make down              # stop the stack (keeps the volume)
+make image             # build the image with TRUE provenance labels
+make k3d               # deploy/k8s to a local cluster, then prove the pod serves
+make k3d-down          # delete the cluster (it costs ~575 MiB while it runs)
 make test              # the fast, no-infra layer (what pre-push runs)
 make test-integration  # real Postgres via testcontainers (needs Docker)
 make lint              # ruff × 4 packages + eslint + svelte-check
-make check             # docs-links + secret-scan + lint + test
+make check             # docs-links + secret-scan + image-pins + lint + test
 make build             # SPA into frontend/dist
 make measure-auth      # re-measure introspection latency (Docker + a real PAT; KAN-539)
 ```
@@ -134,8 +159,7 @@ that reads a credential. It takes the PAT from `KAYA_MEASURE_PAT` or `~/.config/
 never prints it, and **exits 0 having done nothing when there is no PAT** — so it can be run
 anywhere, and CI never needs a secret to keep it green.
 
-Still stubs, and they say which card unblocks them: `make up` (KAN-538), `make k3d` (KAN-538),
-`make test-e2e` (KAN-552).
+Still a stub, and it says which card unblocks it: `make test-e2e` (KAN-552).
 
 Per-package, if you want the loop tighter:
 
@@ -143,7 +167,17 @@ Per-package, if you want the loop tighter:
 cd backend && uv run pytest tests/unit -q       # also: tests/integration, needs Docker
 cd backend && uv run uvicorn app.main:app --reload
 cd frontend && npm run dev                      # /api proxies to :8000
+
+# The single-origin layout from a checkout, without building the image. Nothing is guessed at:
+# unset KAYA_SPA_DIST means the API serves alone, which is what `make dev` wants.
+cd frontend && npm run build
+cd backend && KAYA_SPA_DIST=../frontend/dist uv run uvicorn app.main:app --port 8000
 ```
+
+**`make k3d` names its kubectl context explicitly** (`kubectl --context k3d-kaya …`) and so should
+anything else that touches the cluster. The `k3d-<name>` context exists only while the cluster does,
+so a target relying on "whatever is current" depends on state it did not establish — and the
+manifests have to be appliable on the homelab by someone who does not have this laptop's kubeconfig.
 
 **Adding a package directory turns on its CI jobs**, gated on the directory existing rather than on
 a changed-paths filter. So a new package needs, from its first commit: a committed `uv.lock`

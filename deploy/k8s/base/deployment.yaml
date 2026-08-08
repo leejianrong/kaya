@@ -1,0 +1,135 @@
+# The one artifact: the built SPA and `/api/v1` from a single origin (ADR 0010, KAN-538).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kaya
+spec:
+  # One replica, and this is a constraint rather than a starting point. The migration runs as an
+  # initContainer, so N replicas means N concurrent `alembic upgrade head` against one database.
+  # Alembic takes no lock of its own; two of them racing on `alembic_version` is how a schema ends
+  # up half-applied. Going to two replicas means moving the migration out to a Job that runs once
+  # and is waited on — not editing this number.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # With one replica, `maxUnavailable: 0` would deadlock: the new pod needs the old one gone to
+      # come up under a strict budget. A moment of downtime on a rollout is the honest trade here.
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: api
+    spec:
+      securityContext:
+        # Matches the numeric USER in the Dockerfile. `runAsNonRoot` is checked by the kubelet
+        # before the container starts, and it can only check a *numeric* uid — an image with a
+        # name-only `USER kaya` fails that check with "container has runAsNonRoot and image has
+        # non-numeric user", which is why the Dockerfile sets `USER 10001:10001`.
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+
+      # The schema is brought current before the web server exists, and a failure here is a pod
+      # that never serves rather than one that serves 500s. Same image, different command — so
+      # there is no second artifact to keep in step, and the migration is provably the one that
+      # ships with this code.
+      initContainers:
+        - name: migrate
+          image: ghcr.io/leejianrong/kaya:0.1.0
+          command: ["alembic", "upgrade", "head"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: kaya-database
+                  key: DATABASE_URL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+      containers:
+        - name: kaya
+          # kaya's own artifact, so a tag rather than a digest: there is no registry copy to pin to
+          # until the homelab exists (ADR 0010). The local overlay rewrites this to the image
+          # `k3d image import` put in the node, and scripts/check-image-pins.sh exempts exactly
+          # this reference and no other.
+          image: ghcr.io/leejianrong/kaya:0.1.0
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: kaya-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: kaya-database
+                  key: DATABASE_URL
+
+          # All three probes hit `/health`, which touches no database and makes no upstream call.
+          # That is ADR 0003 showing up in a manifest: a readiness probe that queried Postgres, or
+          # pandan, would take kaya out of service to report *their* outage — and under ADR 0003 a
+          # note must still save and render with pandan completely down.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            # The image is complete at build time: dependencies in /opt/kaya/venv, the SPA already
+            # copied to app/static. Nothing is written at runtime except /tmp, so this costs
+            # nothing and removes a whole class of "the container modified itself" surprise.
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        # Small on purpose. Notes live in Postgres (PLAN §Scope: text-only markdown, no attachments),
+        # so a pod that needs real scratch space is a pod doing something this design did not intend.
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

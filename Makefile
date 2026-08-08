@@ -11,7 +11,7 @@ help: ## List every target
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
 	  | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 	@echo ""
-	@echo "  Targets marked (V1+) need application code that has not landed yet."
+	@echo "  Targets marked (V3+) need application code that has not landed yet."
 
 # ---------------------------------------------------------------- works today
 
@@ -27,6 +27,10 @@ docs-links: ## Check that every internal doc link resolves
 secret-scan: ## Grep the working tree for credential-shaped strings
 	@scripts/secret-scan.sh
 
+.PHONY: image-pins
+image-pins: ## Fail if any external container image is referenced by tag instead of digest
+	@scripts/check-image-pins.sh
+
 .PHONY: install
 install: ## Sync every package's dependencies (uv for Python, npm for the SPA)
 	@for pkg in $(PY_PACKAGES); do echo "▸ $$pkg"; (cd $$pkg && uv sync --all-extras) || exit 1; done
@@ -40,6 +44,27 @@ db: ## Start Postgres 17 in the background and wait for it to be healthy
 .PHONY: db-down
 db-down: ## Stop Postgres (keeps the volume)
 	@docker compose down
+
+.PHONY: image
+image: ## Build the container image with TRUE provenance labels
+	@scripts/image-build.sh
+
+.PHONY: up
+up: image ## Whole stack on :8000 from the image the manifests deploy (db, migrate, app)
+	@docker compose up -d --wait db app
+	@echo "✓ kaya on http://localhost:$${KAYA_APP_PORT:-8000}  ·  stop it with 'make down'"
+
+.PHONY: down
+down: ## Stop the whole stack (keeps the volume)
+	@docker compose down
+
+.PHONY: k3d
+k3d: ## Apply deploy/k8s to a local k3d cluster and prove the pod serves
+	@scripts/k3d-up.sh
+
+.PHONY: k3d-down
+k3d-down: ## Delete the local k3d cluster
+	@scripts/k3d-up.sh --down
 
 .PHONY: db-reset
 db-reset: ## Stop Postgres and DELETE its volume
@@ -86,19 +111,11 @@ build: ## Build the SPA into frontend/dist
 	@cd frontend && npm run build
 
 .PHONY: check
-check: docs-links secret-scan lint test ## Everything the pre-push hook runs
+check: docs-links secret-scan image-pins lint test ## Everything the pre-push hook runs
 	@echo "✓ all checks that apply to the current tree passed"
 
-# ------------------------------------------------------------------- (V1+)
-
-.PHONY: up
-up: ## (V1+) Whole stack: db + app image serving the SPA
-	@scripts/not-yet.sh up "KAN-538 (container image) — use 'make dev' until then"
+# ------------------------------------------------------------------- (V3+)
 
 .PHONY: test-e2e
 test-e2e: ## (V3+) Boots the stack itself
 	@scripts/not-yet.sh test-e2e "KAN-552 (SPA shell)"
-
-.PHONY: k3d
-k3d: ## (V1+) Apply the k8s manifests to a local cluster
-	@scripts/not-yet.sh k3d "KAN-538 (manifests)"

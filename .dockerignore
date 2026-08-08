@@ -1,0 +1,60 @@
+# The build context is the repo root, because one artifact needs both halves of the repo
+# (frontend/ and backend/). That makes this file load-bearing rather than an optimisation: without
+# it the context carries two virtualenvs, node_modules, and — the part that matters —
+# `backend/.env`, straight into a layer nobody would think to look in.
+#
+# Deny-list rather than allow-list, matching .gitignore's shape so the two are readable side by
+# side. `scripts/image-build.sh` prints the context size, which is the cheap way to notice this
+# file has stopped working.
+
+# --- secrets: the reason this file is not optional ---
+.env
+.env.*
+!.env.example
+.mcp.json
+*.pem
+*.key
+secrets/
+
+# --- git and CI ---
+.git
+.github
+.gitignore
+
+# --- Python: rebuilt inside the image, and a host venv would not run in it anyway ---
+**/.venv
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/.coverage
+**/htmlcov
+
+# --- Node: `npm ci` installs these in the spa stage ---
+**/node_modules
+# A stale local build must never reach a layer. The `spa` stage builds it from source, and the
+# runtime stage copies it from there.
+frontend/dist
+
+# --- tests and docs: not shipped, and their absence keeps the runtime layer honest about what it
+#     contains. The image is the product, not the workshop. ---
+backend/tests
+docs
+**/*.md
+# pyproject.toml names it as the project readme, and uv will not read the metadata without it.
+!backend/README.md
+
+# --- deployment inputs, which describe the image and are not part of it ---
+deploy
+docker-compose.yml
+Makefile
+treehouse.toml
+
+# --- editors / OS / agent tooling ---
+.vscode
+.idea
+.claude
+*.swp
+.DS_Store
