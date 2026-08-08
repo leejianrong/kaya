@@ -10,13 +10,14 @@ the API server liked the YAML (ADR 0010).
 | Package | What's in it |
 |---|---|
 | `backend/` | The whole of V1: migration `0001`, `app/auth/` (principal resolver, `authorize_note`), `app/api/` (`/api/v1/notes` CRUD, the central ref resolver, ADR 0009's `409`), `app/spa.py`, `app/observability/` |
-| `kaya-client/` | A package and a version. No `KayaClient`, no `render()`; those are V2a |
+| `kaya-client/` | KAN-540: `KayaClient` over httpx (`list_notes`, `get_note`) and the `render()` seam as four composable steps. Only the `fmt` dimension is implemented — `human`/`json` user-facing, `data` adapter-only; `fields` and `text_limit` are **pinned no-ops**. No `toon`, no write verbs |
 | `kaya-cli/` | The `kaya` console script, one entry point, **no verbs** |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
 | `frontend/` | Svelte 5 + Vite + TS, a shell page, the dev proxy for `/api` |
 | *root* | `Dockerfile` (bases pinned by digest), `docker-compose.yml`, `deploy/k8s/` |
 
-Next: V2a builds `kaya-client` and the `render()` seam. Still unbuilt anywhere are `?q=` search
+Next: KAN-541 puts the CLI verbs (`kaya note list`, `kaya note get`), `--format`, the `toon` encoder
+and the error/exit-code contract on top of that seam. Still unbuilt anywhere are `?q=` search
 (KAN-558/559), `/links` and `/backlinks` (KAN-566), and the SPA's real UI (V3).
 
 **Trust the code over the docs.** When this file and the repository disagree, the repository is
@@ -114,6 +115,28 @@ labels.
 **The API error shape is `{"error": {"code", "message", …}}`**, flat and identical for every failure
 including Starlette's own `404`/`405` and body validation. `error_body` is the single builder;
 `detail` is FastAPI's word and never reaches the wire.
+
+**`KayaClient` returns a `Payload`, never a response body, and `render()` refuses a raw `dict`.**
+That is ADR 0004 at its sharpest point: the moment a dict crosses that boundary, whoever formats it
+has to re-derive list-vs-entity, the field vocabulary and the prose allow-list, and the obvious
+place to put that derivation is the adapter — which is pandan's 11.4×. The four steps are one module
+each in ADR 0004's fixed order, and the order is **type-enforced**: `truncate` takes and returns a
+`Payload`, `attach_summary` returns a `Shaped`, and `serialize` accepts only a `Shaped`, so ADR
+0005's "the summary is structurally out of the truncator's reach" is a fact rather than a convention.
+`fields` and `text_limit` are **no-ops until V2b** and `tests/test_passthrough_is_a_no_op.py` pins
+that, so V2b arrives as a visible diff. The default human row is pinned byte-for-byte in
+`tests/test_human_row_is_pinned.py`; if a later slice reddens it while `--fields` was omitted, that
+is the guard working, not a stale test to update.
+
+**A `--format` value is a published contract; a registered serializer is not.** `Format` holds only
+what a person may type (`CLI_FORMATS` is that as a tuple, for argparse `choices`); `AdapterFormat`
+holds `data`, which exists for MCP's `structuredContent` and is reachable in code only.
+`_SERIALIZERS` is the full registry behind both, and `UnknownFormat` lists the user-facing set only,
+because a suggestion in an error message is a contract too and that message reaches a shell. Adding
+a format to the registry must not advertise it — ADR 0005 adopts pandan's exit codes verbatim rather
+than improving them for exactly this reason, and pandan spent a whole card (KAN-442) withdrawing a
+`pdn` alias. **KAN-541 adds `toon` to both**, and the literal pin in
+`test_the_published_cli_vocabulary_is_pinned` makes that a conscious edit.
 
 **A cold pandan currently `503`s a valid PAT.** Measured (`make measure-auth`): a cache hit is
 1.6 µs, a warm miss 387 ms, a cold miss **21.8 s** against a 10 s timeout. The fix is decided but

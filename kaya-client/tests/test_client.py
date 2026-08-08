@@ -1,0 +1,223 @@
+"""``KayaClient`` against an ``httpx.MockTransport``. No network, no live backend, no PAT.
+
+The transport seam is injectable for the same reason `app/auth/upstream.py`'s is: faking at the HTTP
+boundary is what keeps a runtime dependency out of the test suite. Reachable from here without a
+server: a `200`, a `404`, a `401`, a `502` that is not even JSON, and a connection that never opens.
+
+Two assertions in this file are about what must **not** happen. The bearer is forwarded byte for
+byte and never appears in an exception message — kaya's whole ADR 0002 bargain is that it holds no
+replayable credential, and an exception string reaches a log, a traceback and, under the CLI's
+error contract, stdout.
+"""
+
+import httpx
+import pytest
+from conftest import GROCERIES, NOTE_LIST_BODY
+
+from kaya_client import ApiError, KayaClient, Kind, TransportError, render
+
+BASE_URL = "https://kaya.example"
+TOKEN = "kanban_pat_notarealtokenatall"
+"""Deliberately pre-rebrand-shaped. ADR 0002 gives kaya no token format and no prefix logic —
+pandan still accepts these, and a ``startswith`` guard would be pandan ADR 0018's bug one layer
+out. This client must forward it without an opinion."""
+
+
+def client_over(handler: object) -> KayaClient:
+    transport = httpx.MockTransport(handler)  # type: ignore[arg-type]
+    return KayaClient(BASE_URL, TOKEN, client=httpx.Client(transport=transport))
+
+
+def responder(status: int, json_body: object = None, *, text: str | None = None):
+    def handle(request: httpx.Request) -> httpx.Response:
+        handle.seen = request  # type: ignore[attr-defined]
+        if text is not None:
+            return httpx.Response(status, text=text)
+        return httpx.Response(status, json=json_body)
+
+    return handle
+
+
+def test_list_notes_returns_a_collection_payload() -> None:
+    with client_over(responder(200, NOTE_LIST_BODY)) as client:
+        payload = client.list_notes()
+    assert payload.kind is Kind.COLLECTION
+    assert [record["ref"] for record in payload.records] == ["NOTE-12", "NOTE-3"]
+
+
+def test_list_notes_preserves_the_api_order() -> None:
+    """``updated_at DESC, id DESC`` is the API's, tie-break included. Nothing re-sorts it here."""
+    reversed_body = {"notes": list(reversed(NOTE_LIST_BODY["notes"]))}
+    with client_over(responder(200, reversed_body)) as client:
+        payload = client.list_notes()
+    assert [record["ref"] for record in payload.records] == ["NOTE-3", "NOTE-12"]
+
+
+def test_list_notes_hits_the_notes_route() -> None:
+    handler = responder(200, NOTE_LIST_BODY)
+    with client_over(handler) as client:
+        client.list_notes()
+    assert str(handler.seen.url) == f"{BASE_URL}/api/v1/notes"  # type: ignore[attr-defined]
+
+
+def test_get_note_returns_an_entity_payload() -> None:
+    with client_over(responder(200, GROCERIES)) as client:
+        payload = client.get_note("NOTE-12")
+    assert payload.kind is Kind.ENTITY
+    assert payload.record == GROCERIES
+
+
+@pytest.mark.parametrize("ref", ["NOTE-12", "note-12", "12", "#NOTE-12"])
+def test_a_ref_is_forwarded_untouched(ref: str) -> None:
+    """ADR 0008 resolves every spelling in **one** place, `backend/app/api/refs.py`.
+
+    Normalising here would be a second resolver, and the first thing a second resolver does is
+    disagree: ``#NOTE-12`` is a `400` from the API, and a client that helpfully stripped the ``#``
+    would turn it into a silent success against a different note.
+    """
+    handler = responder(200, GROCERIES)
+    with client_over(handler) as client:
+        client.get_note(ref)
+    assert str(handler.seen.url).endswith(f"/notes/{ref}")  # type: ignore[attr-defined]
+
+
+def test_the_bearer_is_forwarded_byte_for_byte() -> None:
+    handler = responder(200, NOTE_LIST_BODY)
+    with client_over(handler) as client:
+        client.list_notes()
+    assert handler.seen.headers["authorization"] == f"Bearer {TOKEN}"  # type: ignore[attr-defined]
+
+
+def test_a_trailing_slash_on_the_base_url_does_not_double_up() -> None:
+    handler = responder(200, NOTE_LIST_BODY)
+    client = KayaClient(
+        BASE_URL + "/", TOKEN, client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    client.list_notes()
+    assert str(handler.seen.url) == f"{BASE_URL}/api/v1/notes"  # type: ignore[attr-defined]
+
+
+def test_a_404_carries_the_api_error_object() -> None:
+    """`app/api/errors.py` settled the wire shape as flat ``{"error": {…}}`` partly for this call.
+
+    The client forwards the object rather than unwrapping it, so ADR 0009's `409` — which carries
+    two whole notes so a caller can diff them — arrives intact at an adapter that has not been
+    written yet.
+    """
+    body = {"error": {"code": "not_found", "message": "no note NOTE-9999", "ref": "NOTE-9999"}}
+    with client_over(responder(404, body)) as client, pytest.raises(ApiError) as raised:
+        client.get_note("NOTE-9999")
+
+    assert raised.value.status == 404
+    assert raised.value.code == "not_found"
+    assert raised.value.message == "no note NOTE-9999"
+    assert raised.value.payload == body
+
+
+@pytest.mark.parametrize(("status", "code"), [(401, "unauthenticated"), (403, "forbidden")])
+def test_auth_refusals_keep_their_status_and_code(status: int, code: str) -> None:
+    """ADR 0005's exit table keys `401`→3 and `403`→4 on meaning, so both facts have to survive."""
+    body = {"error": {"code": code, "message": "no"}}
+    with client_over(responder(status, body)) as client, pytest.raises(ApiError) as raised:
+        client.list_notes()
+    assert (raised.value.status, raised.value.code) == (status, code)
+
+
+def test_a_non_json_failure_still_arrives_in_the_api_error_shape() -> None:
+    """A `502` from a proxy in front of kaya is HTML. An adapter must not need a branch for it."""
+    handler = responder(502, text="<html>bad gateway</html>")
+    with client_over(handler) as client, pytest.raises(ApiError) as raised:
+        client.list_notes()
+    assert raised.value.status == 502
+    assert raised.value.code == "http_error"
+    assert "<html>" not in str(raised.value), "an unvetted body must not reach a printed message"
+
+
+def test_an_unreachable_api_is_not_a_refusal() -> None:
+    """The distinction `app/auth/` draws between ``UpstreamUnavailable`` and a `401`.
+
+    Collapsing them tells a caller their token is bad when their wifi is off — and under ADR 0005's
+    exit table that is exit `3`, which a script would react to by discarding a working credential.
+    """
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    with client_over(refuse) as client, pytest.raises(TransportError):
+        client.list_notes()
+
+
+def test_a_200_that_is_not_json_is_an_outage_not_a_payload() -> None:
+    """A tunnel or CDN interstitial wearing a success code."""
+    handler = responder(200, text="<html>login</html>")
+    with client_over(handler) as client, pytest.raises(TransportError) as raised:
+        client.list_notes()
+    assert "<html>" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "make_failure",
+    [
+        lambda: responder(401, {"error": {"code": "unauthenticated", "message": "no"}}),
+        lambda: responder(502, text="nope"),
+        lambda: responder(200, text="nope"),
+    ],
+)
+def test_no_failure_message_contains_any_fragment_of_the_bearer(make_failure: object) -> None:
+    """Every contiguous fragment, because a truncated token is still a token (Q41/Q42).
+
+    The same assertion shape as `backend/tests/unit/`'s redaction tests, applied one package out:
+    ADR 0002 buys exactly one property — kaya holds no replayable credential — and an exception
+    string is the cheapest way to give it away, since the CLI's error contract prints one.
+    """
+    from kaya_client.errors import KayaError
+
+    client = client_over(make_failure())  # type: ignore[operator]
+    with client, pytest.raises(KayaError) as raised:
+        client.list_notes()
+
+    message = f"{raised.value!r} {raised.value}"
+    fragments = {
+        TOKEN[start:stop]
+        for start in range(len(TOKEN))
+        for stop in range(start + 6, len(TOKEN) + 1)
+    }
+    assert not [fragment for fragment in fragments if fragment in message]
+
+
+def test_an_injected_client_is_not_closed_by_this_one() -> None:
+    """It belongs to the caller, who may still be using it — the asymmetry ``__init__`` warns of."""
+    injected = httpx.Client(transport=httpx.MockTransport(responder(200, NOTE_LIST_BODY)))
+    with KayaClient(BASE_URL, TOKEN, client=injected):
+        pass
+    assert not injected.is_closed
+
+
+def test_a_client_it_built_itself_is_closed() -> None:
+    client = KayaClient(BASE_URL, TOKEN)
+    client.close()
+    assert client._client.is_closed
+
+
+def test_the_default_timeout_outlasts_a_cold_pandan() -> None:
+    """A cold introspection measured 21.8 s (PLAN §Open risks, KAN-539).
+
+    A client deadline under that turns a slow-but-working upstream into a client-side failure the
+    server never hears about, which is strictly worse than waiting. Pinned as a literal so KAN-666's
+    fix, or its retry fallback landing in this package, has to look at this number on the way past.
+    """
+    from kaya_client.client import DEFAULT_TIMEOUT
+
+    assert DEFAULT_TIMEOUT >= 25.0
+
+
+def test_the_client_feeds_render_directly() -> None:
+    """The end-to-end shape of ADR 0004: transport in, shaped output out, no dict in between.
+
+    If this test needed to touch the response body between the two calls, that would be the seam
+    an adapter would eventually reimplement.
+    """
+    with client_over(responder(200, NOTE_LIST_BODY)) as client:
+        assert render(client.list_notes()) == (
+            "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list"
+        )

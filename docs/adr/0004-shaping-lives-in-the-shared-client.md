@@ -94,3 +94,52 @@ this in the client?"
   composable step with its own tests, not four branches in one body.
 - **Now has to be true:** the API returns complete records, since it is what both adapters project from.
   An API that pre-narrows would leave the client unable to satisfy `--full`.
+
+## Amendment — 2026-08-09, KAN-540 (V2a), building the seam
+
+Two things the decision above left unspecified, settled by the implementation rather than
+re-litigated. Neither changes what the decision says.
+
+**`payload` is a `Payload`, not the response body.** The signature has four parameters and no room
+for a fifth, but V2b needs facts about the payload that a raw `dict` cannot carry — chiefly whether
+it is a list or a single entity, since §contract 2 of ADR 0005 makes `--fields` "a usage error on
+single-entity verbs". Sniffing for a `"notes"` key would work today and break when `/links` and
+`/backlinks` land (KAN-566) with envelopes nobody taught the sniffer about. So `KayaClient` returns
+a small value object carrying the complete records plus the schema facts shaping needs: the kind,
+the envelope key, the default human columns, and the prose allow-list truncation will use. Which is
+this decision applied to itself — those facts are shaping inputs, and the alternative is every
+adapter re-deriving them.
+
+**`-> str | dict` is spelled `fmt="data"`, and `data` is adapter-facing only.** The decision names
+three formats and types the seam as a union, but all three named formats are strings, leaving the
+`dict` arm without a spelling. It is a fourth `fmt` value returning the shaped dict itself — the
+output of steps 1–3, before any encoder touches it. It exists for the MCP adapter V6 will write: an
+MCP tool returning `structuredContent` hands its host a JSON object, and without `data` the obvious
+workaround is `json.loads(render(..., fmt="json"))` in the adapter, which is a shaping decision
+leaking back out of the client. **`data` is the only value that returns a `dict`; every other format
+returns a `str`.**
+
+`data` is **not** a `--format` value, and that distinction is structural rather than documentary.
+The serialization module carries two vocabularies over one registry: `Format` holds only what a
+person may type after `--format` — ADR 0005 §contract 1's published `{human, json, toon}` — and
+`AdapterFormat` holds `data`. So `choices=[fmt.value for fmt in Format]`, the obvious line an
+adapter author writes, yields the published contract and *cannot* yield `data`. The `UnknownFormat`
+message lists the user-facing set only, because a suggestion in an error message is a contract too
+and that message reaches a shell.
+
+The ten lines that split the vocabularies are the same trade the rest of this slice makes. ADR 0005
+adopts pandan's exit-code scheme verbatim rather than improving it precisely because a contract
+published early cannot be cheaply withdrawn; pandan spent a whole card (KAN-442) withdrawing a `pdn`
+alias. **KAN-541 adds `toon` to both the registry and `Format`**, and a literal pin on the
+user-facing tuple makes publishing a format a conscious edit rather than a side effect of
+registering one.
+
+**Ordering, and how "structurally out of the truncator's reach" is bought.** ADR 0005 adopts
+pandan's correction that the `summary` is attached *after* truncation. That is now type-enforced
+rather than conventional: `truncate` takes and returns a `Payload`, `attach_summary` returns a
+`Shaped`, and `serialize` accepts only a `Shaped`. There is no order of calls in which a truncator
+sees a summary, because by the time one exists the type the truncator accepts is gone.
+
+The "god function" risk this ADR flags against itself is answered as it asks — four modules,
+`projection.py`, `truncation.py`, `aggregates.py` and `serialization.py`, each with its own tests,
+and a `render` that is the pipeline and nothing else.
