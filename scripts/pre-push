@@ -16,6 +16,11 @@ run() {
 }
 
 run "internal doc links"       scripts/check-docs-links.sh
+# KAN-580: gitleaks over the tracked tree, ~0.9s once the pinned binary is cached; the
+# first run on a machine also fetches it (~10 MB, digest-checked, cached under ~/.cache and
+# shared across worktrees). History is NOT scanned here — `make secret-scan-history` does
+# that on demand, and secret-scan.sh explains why putting it in the gate would only teach
+# people to reach for --no-verify.
 run "secret scan"              scripts/secret-scan.sh
 # Offline and instant — it reads the shape of an image reference rather than asking a
 # registry. KAN-538: a base image on a floating tag makes the provenance labels a lie.
