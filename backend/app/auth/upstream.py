@@ -27,6 +27,27 @@ ME_PATH = "/api/v1/me"
 """Pandan's introspection endpoint. Added to pandan for kaya's benefit; see ADR 0002 §Decision."""
 
 
+def split_timeout(*, connect: float, read: float) -> httpx.Timeout:
+    """The deadline for one introspection, as two budgets rather than one (KAN-666).
+
+    A single number cannot be right for both of pandan's failure modes, because they are not the
+    same failure. **Down** shows up in the connect phase — nothing answers on port 443, or nothing
+    resolves — and wants a short deadline so Q9's `503` is prompt. **Asleep** shows up entirely in
+    the read phase: fly's edge proxy completes the TCP and TLS handshakes on its own while the app
+    machine boots behind it, so the connection is established in the usual few tens of milliseconds
+    and then nothing comes back for twenty seconds. Measured, not assumed — the numbers are on
+    KAN-666 and in `scripts/measure_introspection_latency.py --split-only`.
+
+    `write` and `pool` take the connect budget rather than the read one. The request is one small
+    segment, so a `write` that blocks past the connect budget is a broken socket rather than a busy
+    pandan; and `pool` is contention for a local connection slot, which has nothing to do with how
+    awake the upstream is. Neither is left to httpx's default, because `httpx.Timeout` requires all
+    four to be given once any of them is, and a phase nobody thought about is how one of these ends
+    up unbounded.
+    """
+    return httpx.Timeout(connect=connect, read=read, write=connect, pool=connect)
+
+
 class IdentityUpstream(Protocol):
     """Resolves a bearer to a principal, or declines to."""
 
@@ -51,7 +72,7 @@ class PandanIdentityUpstream:
         self,
         base_url: str,
         *,
-        timeout: float,
+        timeout: httpx.Timeout | float,
         client: httpx.Client | None = None,
     ) -> None:
         self._url = base_url.rstrip("/") + ME_PATH

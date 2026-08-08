@@ -77,6 +77,7 @@ def client(database_url: str, upstream: FakeUpstream) -> Iterator[Any]:
     from app.auth.dependencies import get_resolver, reset_auth
     from app.auth.mirror import SqlAlchemyPrincipalMirror
     from app.auth.resolver import PrincipalResolver
+    from app.auth.single_flight import SingleFlight
     from app.db import get_session, get_sessionmaker
     from app.main import app
 
@@ -90,12 +91,14 @@ def client(database_url: str, upstream: FakeUpstream) -> Iterator[Any]:
     empty()
     reset_auth()
     cache = PrincipalCache(positive_ttl=60.0, negative_ttl=10.0)
+    single_flight = SingleFlight()
 
     def resolver(session: Annotated[Session, Depends(get_session)]) -> PrincipalResolver:
         return PrincipalResolver(
             upstream=upstream,
             mirror=SqlAlchemyPrincipalMirror(session),
             cache=cache,
+            single_flight=single_flight,
         )
 
     app.dependency_overrides[get_resolver] = resolver

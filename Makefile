@@ -114,9 +114,15 @@ test: ## Fast, no-infra test layer (what pre-push runs)
 test-integration: ## Real Postgres via testcontainers (needs Docker)
 	@cd backend && uv run pytest tests/integration -q
 
+# Extra flags for the measurement below, e.g.
+#   make measure-auth MEASURE_ARGS="--split-only --last-contact 2026-08-08T17:47Z"
+# `--split-only` is KAN-666's connect-vs-read experiment. It needs no Docker and no Postgres,
+# because it makes one call and times it at the socket.
+MEASURE_ARGS ?=
+
 .PHONY: measure-auth
-measure-auth: ## Re-measure introspection latency (needs Docker and a real PAT; KAN-539)
-	@cd backend && uv run scripts/measure_introspection_latency.py
+measure-auth: ## Re-measure introspection latency (needs Docker and a real PAT; KAN-539, KAN-666)
+	@cd backend && uv run scripts/measure_introspection_latency.py $(MEASURE_ARGS)
 
 .PHONY: build
 build: ## Build the SPA into frontend/dist

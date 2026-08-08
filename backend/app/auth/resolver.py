@@ -4,7 +4,8 @@ The five steps, unchanged from the ADR:
 
 1. Take the bearer verbatim. **Do not inspect its prefix.**
 2. Look up ``sha256(raw_token)`` in a TTL cache.
-3. On a miss, call pandan's ``GET /api/v1/me`` with the bearer forwarded unchanged.
+3. On a miss, call pandan's ``GET /api/v1/me`` with the bearer forwarded unchanged — **once**,
+   however many threads missed at the same moment (KAN-666, ``app.auth.single_flight``).
 4. On success, ensure a local ``user`` mirror row exists, keyed on pandan's UUID.
 5. Return it. (Step 5 proper — ``authorize_note`` — is ``app.auth.authorization``, KAN-535.)
 
@@ -18,21 +19,22 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
-from app.auth.cache import PrincipalCache
+from app.auth.cache import PrincipalCache, digest
 from app.auth.principal import (
     Principal,
     PrincipalMirror,
     TokenRejected,
     UpstreamUnavailable,
 )
+from app.auth.single_flight import SingleFlight
 from app.auth.upstream import IdentityUpstream
 
 
 class PrincipalResolver:
     """Bearer in, ``Principal`` out — or ``TokenRejected`` / ``UpstreamUnavailable``.
 
-    Three injected collaborators and no framework, so the whole of ADR 0002's resolver runs in a
-    unit test against two in-memory fakes: no network, no database, no real PAT.
+    Four injected collaborators and no framework, so the whole of ADR 0002's resolver runs in a
+    unit test against in-memory fakes: no network, no database, no real PAT.
     """
 
     def __init__(
@@ -41,10 +43,17 @@ class PrincipalResolver:
         upstream: IdentityUpstream,
         mirror: PrincipalMirror,
         cache: PrincipalCache,
+        single_flight: SingleFlight,
     ) -> None:
         self._upstream = upstream
         self._mirror = mirror
         self._cache = cache
+        # Required rather than defaulted, deliberately. A `SingleFlight()` default would look
+        # harmless and be worse than nothing: `get_resolver` builds a resolver *per request*, so
+        # every caller would get a private registry, coalesce with nobody, and pass every test in
+        # this file — including the concurrency one, which would then be asserting about a stampede
+        # that no longer happens through the object under test.
+        self._single_flight = single_flight
 
     def resolve(self, bearer: str) -> Principal:
         hit, cached = self._cache.lookup(bearer)
@@ -56,11 +65,42 @@ class PrincipalResolver:
             # behaviour), and what makes the steady-state cost a dict lookup rather than a hop.
             return cached
 
+        # A miss. Every concurrent miss for *this* token collapses into one round trip; a miss for
+        # a different token is a different key and is not held up behind this one. The key is the
+        # digest, so the registry never holds a raw credential (ADR 0002, `single_flight.py`).
+        #
+        # The waiters skip the mirror as well as the round trip, and that is right rather than an
+        # oversight: the leader's `ensure` has committed by the time anyone is woken, and a cache
+        # *hit* has always skipped the mirror for the same reason. What a waiter must not skip is
+        # the leader's failure — `SingleFlight` re-raises it, which is what keeps an outage a `503`
+        # for all forty callers instead of a `401` for thirty-nine of them.
+        principal = self._single_flight.do(digest(bearer), lambda: self._introspect(bearer))
+
+        if principal is None:
+            raise TokenRejected
+        return principal
+
+    def _introspect(self, bearer: str) -> Principal | None:
+        """The uncached path, run by exactly one thread per token at a time.
+
+        ``None`` is a rejection and is a *result*, not an error: it has to travel back through
+        ``SingleFlight`` as a return value so every waiter caches and raises the same way.
+        """
+        # The second half of a double-check, and it closes a real window rather than tidying one.
+        # ``resolve`` looked in the cache *before* asking for the key, so a thread can miss, lose
+        # the race to a leader that then finishes and retires the key, and arrive here as a brand
+        # new leader for an answer that is already cached. Coalescing cannot help — by then there
+        # is nothing in flight to join. On a cold pandan that mistake costs a second twenty-second
+        # round trip, which is worth one dict lookup to avoid.
+        hit, cached = self._cache.lookup(bearer)
+        if hit:
+            return cached
+
         principal = self._upstream.introspect(bearer)
 
         if principal is None:
             self._cache.remember(bearer, None)
-            raise TokenRejected
+            return None
 
         # Mirror before caching. If the mirror fails, this request fails loudly and the next one
         # retries; caching first would paper over a broken mirror for a whole TTL and leave later

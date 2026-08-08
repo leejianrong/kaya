@@ -168,14 +168,37 @@ than improving them for exactly this reason, and pandan spent a whole card (KAN-
 `pdn` alias. **KAN-541 adds `toon` to both**, and the literal pin in
 `test_the_published_cli_vocabulary_is_pinned` makes that a conscious edit.
 
-**A cold pandan currently `503`s a valid PAT.** Measured (`make measure-auth`): a cache hit is
-1.6 µs, a warm miss 387 ms, a cold miss **21.8 s** against a 10 s timeout. The fix is decided but
-unbuilt (KAN-666): split the timeout by phase, short connect and long read, so an outage still fails
-fast while a sleeping pandan is waited out, and single-flight the cache so concurrent misses make one
-upstream call. Do **not** simply raise the single timeout: it would make a genuine outage take 30 s
-to report, and without coalescing, concurrent cold requests hold a threadpool worker each. Contrary
-to an earlier note in this file, no Postgres connection is held during introspection; the session is
-lazy and the mirror write happens after the upstream returns.
+**A cold pandan used to `503` a valid PAT. KAN-666 split the deadline and coalesced the misses.**
+KAN-539 measured (`make measure-auth`) a cache hit at 1.6 µs, a warm miss at 387 ms and a cold miss
+at **21.8 s** — against what was then a single 10 s deadline, which is why a good credential failed.
+There are now two, `KAYA_PANDAN_CONNECT_TIMEOUT_SECONDS` (5 s) and
+`KAYA_PANDAN_READ_TIMEOUT_SECONDS` (30 s), built by `split_timeout` in `app/auth/upstream.py`. The
+old single knob is **gone, not aliased**: one number conflated "pandan is down" with "pandan is
+asleep", and that conflation *was* the bug. Do not reintroduce it, and do not simply raise it — a
+genuine outage would then take 30 s to report.
+
+`make measure-auth MEASURE_ARGS=--split-only` is the experiment that justifies the split. It times
+one introspection at the socket and reports connect (DNS + TCP + TLS) apart from read (the wait for
+the first response byte). Connect is **67–105 ms [n=8]** while read varies over 392–662 ms, and the
+part of connect that actually touches fly — TCP + TLS, excluding local DNS — is **48.6–56.7 ms**, an
+8 ms spread against the read's 270 ms. The `*.fly.dev` **wildcard** certificate arrives from fly's
+shared edge two `fly.io` proxy hops in front of pandan, which no per-app machine could hold, so
+pandan's machine is not a participant in the handshake and cannot make it slow.
+**Honest limit: all eight KAN-666 samples came back warm**, because pandan would not stay idle long
+enough, so the cold *connect* figure is inferred from that mechanism rather than measured. The split
+is still safe, because it cannot be worse than the single deadline it replaces: a slow connect would
+fail at 5 s where it used to fail at 10 s, and a fast one succeeds where it used to fail outright.
+If you ever do catch pandan genuinely cold, take a `--split-only` sample and settle it.
+
+**A long read budget is only affordable because of `app/auth/single_flight.py`.** Sync
+`get_principal` runs in Starlette's 40-thread pool, so without coalescing, 40 concurrent requests on
+one uncached PAT hold 40 workers for the whole read budget and note *saving* stalls behind an
+upstream that saving never uses — ADR 0003's rule, broken from inside kaya. `SingleFlight` turns
+those 40 misses into one upstream call and one held worker, and every waiter sees the leader's
+*failure* rather than its `None`, so an outage stays Q9's `503` for all of them instead of a `401`
+for 39. It dedupes **per token**: many *distinct* cold PATs at once would still hold a worker each,
+accepted because kaya's shape is one agent with one PAT. No Postgres connection is held during
+introspection; the session is lazy and the mirror write happens after the upstream returns.
 
 ## Commands
 

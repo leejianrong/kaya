@@ -38,17 +38,37 @@ class Settings(BaseSettings):
     Read by ``app.auth`` to build the ``GET /api/v1/me`` URL. It is configuration, not a secret —
     it appears verbatim in the `503` body so a caller can see *which* upstream is down."""
 
-    pandan_timeout_seconds: float = Field(
-        default=10.0,
-        validation_alias="KAYA_PANDAN_TIMEOUT_SECONDS",
+    pandan_connect_timeout_seconds: float = Field(
+        default=5.0,
+        validation_alias="KAYA_PANDAN_CONNECT_TIMEOUT_SECONDS",
     )
-    """Deadline for one introspection call.
+    """How long kaya will wait to *reach* pandan: DNS, the TCP handshake, the TLS handshake.
 
-    Generous rather than snappy, and deliberately so: pandan's API scales to zero, so the first
-    call after an idle period pays a cold start. httpx's own default is 5s, which would turn a
-    normal wake-up into a `503`. It is still *bounded* — an unbounded upstream call holds a kaya
-    Postgres connection for the whole request (the failure mode measured in KAN-560), and slow is
-    worse than down because down fails fast."""
+    Short, because this phase says whether pandan's front door is answering, and that question does
+    not get slower when the app behind the door is asleep — KAN-666 measured it (see the read budget
+    below). A dead upstream fails inside this budget, so Q9's `503` still arrives promptly instead
+    of a caller waiting out a read budget for a host that was never going to answer."""
+
+    pandan_read_timeout_seconds: float = Field(
+        default=30.0,
+        validation_alias="KAYA_PANDAN_READ_TIMEOUT_SECONDS",
+    )
+    """How long kaya will wait for pandan's *answer* once the request is on the wire.
+
+    Long, because pandan runs `min_machines_running = 0` and a cold start is a real wait rather than
+    a fault. KAN-539 measured cold misses at 11–23 s against the single 10 s deadline these two
+    fields replace, which is why a valid PAT used to get a `503`.
+
+    **The two numbers exist separately because one number could not be right for both.** A single
+    deadline conflates "pandan is down" with "pandan is asleep": short enough to report an outage
+    promptly is too short to let a wake-up finish, and long enough for a wake-up makes an outage
+    take half a minute to report. Split, each phase gets the deadline its own failure deserves.
+
+    It is still *bounded*, and 30 s is not free: a sync route holds its Postgres session for the
+    whole request (ADR 0001), so a long upstream call is a held connection. What makes it affordable
+    is `app.auth.single_flight` — concurrent misses on one token become one call and one held
+    worker, not forty. Raise this without that and ADR 0003's rule is broken by resource
+    exhaustion."""
 
     principal_cache_ttl_seconds: float = Field(
         default=60.0,
