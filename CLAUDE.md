@@ -10,14 +10,16 @@ the API server liked the YAML (ADR 0010).
 | Package | What's in it |
 |---|---|
 | `backend/` | The whole of V1: migration `0001`, `app/auth/` (principal resolver, `authorize_note`), `app/api/` (`/api/v1/notes` CRUD, the central ref resolver, ADR 0009's `409`), `app/spa.py`, `app/observability/` |
-| `kaya-client/` | KAN-540: `KayaClient` over httpx (`list_notes`, `get_note`) and the `render()` seam as four composable steps. Only the `fmt` dimension is implemented — `human`/`json` user-facing, `data` adapter-only; `fields` and `text_limit` are **pinned no-ops**. No `toon`, no write verbs |
-| `kaya-cli/` | The `kaya` console script, one entry point, **no verbs** |
+| `kaya-client/` | KAN-540: `KayaClient` over httpx (`list_notes`, `get_note`) and the `render()` seam as four composable steps. Only the `fmt` dimension is implemented — `human`/`json` user-facing, `data` adapter-only; `fields` and `text_limit` are **pinned no-ops**. No `toon`, no write verbs. KAN-543: `provenance.version_line()` and the `_build_stamp.COMMIT` a release rewrites |
+| `kaya-cli/` | The `kaya` console script, one entry point, **no verbs**. KAN-543: an argparse parser with `--version` and `--help` on it, and nothing else |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
 | `frontend/` | Svelte 5 + Vite + TS, a shell page, the dev proxy for `/api` |
 | *root* | `Dockerfile` (bases pinned by digest), `docker-compose.yml`, `deploy/k8s/` |
 
-Next: KAN-541 puts the CLI verbs (`kaya note list`, `kaya note get`), `--format`, the `toon` encoder
-and the error/exit-code contract on top of that seam. Still unbuilt anywhere are `?q=` search
+Next: KAN-541 puts the CLI verbs (`kaya note list`, `kaya note get`), `--format` and the `toon`
+encoder on top of that seam, KAN-542 the error/exit-code contract, and KAN-544 the release workflow
+that populates KAN-543's build stamp plus the version-bump guard. Still unbuilt anywhere are `?q=`
+search
 (KAN-558/559), `/links` and `/backlinks` (KAN-566), and the SPA's real UI (V3).
 
 **Trust the code over the docs.** When this file and the repository disagree, the repository is
@@ -106,6 +108,18 @@ directory and therefore no fallback at all.
 specification*. A write touching only `title` or `path` is unguarded even with a stale precondition;
 one touching `body` as well is refused whole. The comparison is exact to the microsecond, so a token
 that loses precision anywhere in the round trip refuses *every* correct write.
+
+**A build that can't identify itself says so; it never invents a sha** (ADR 0007,
+`kaya_client/provenance.py`). `--version` prints `kaya X.Y.Z (a1b2c3d)` or
+`kaya X.Y.Z (source checkout, not a released build)`, and there is no third form — a bare number is
+the pandan bug this exists to avoid. The sha comes from `_build_stamp.COMMIT`, **always empty in the
+repository** and rewritten by `scripts/stamp-build.sh` immediately before packaging; both ends
+validate it, so an unexpanded `${GITHUB_SHA}`, a sentinel word or the null sha degrades to the
+source-checkout wording rather than being printed as provenance. Stamp *after* the tests: a test
+asserts the committed stamp is empty, because a committed sha makes every checkout claim to be a
+release. `version_line()` lives in `kaya-client` and not in the CLI because V6's MCP server reports
+provenance through the same function (ADR 0004) — and deliberately *not* through `render()`, whose
+signature ADR 0005 freezes until V2b.
 
 **Base images are pinned by digest, never by tag.** A tag is a mutable pointer, so provenance labels
 on a floating base describe nothing (pandan's KAN-475). `scripts/check-image-pins.sh` runs in the

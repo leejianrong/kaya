@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 import kaya_cli
-from kaya_cli.__main__ import main
+from kaya_cli.__main__ import main, version_string
 
 PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
 
@@ -33,11 +33,48 @@ def test_main_prints_a_banner_and_exits_zero(capsys) -> None:
     assert kaya_cli.__version__ in out
 
 
-def test_main_does_not_choke_on_arguments_it_does_not_understand_yet() -> None:
-    assert main(["note", "list", "--format", "json"]) == 0
+def test_the_banner_leads_with_the_version_line(capsys) -> None:
+    """So provenance is available from a mistyped command, not only from someone who knew to ask.
+
+    ADR 0007's diagnostic only helps if the person confused by a symptom reaches it.
+    """
+    main([])
+    first_line = capsys.readouterr().out.splitlines()[0]
+
+    assert first_line == version_string()
+
+
+def test_help_is_printed_to_stdout_and_exits_zero(capsys) -> None:
+    code = main(["--help"])
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert "--version" in out
+    assert out.startswith("usage: kaya")
+
+
+def test_a_verb_that_has_not_landed_yet_is_a_usage_error(capsys) -> None:
+    """KAN-541 brings `note list` and `note get`. Until then argparse says the word is unknown.
+
+    This is a deliberate change from the banner-for-everything placeholder that stood here before
+    argument parsing existed: exiting `0` on a command that did nothing is the kind of quiet
+    success a script cannot tell from a real one. `2` is SLICES §V2a's number for a usage error, so
+    KAN-542's code table lands on it unmoved.
+    """
+    code = main(["note", "list"])
+
+    assert code == 2
+    assert "note" in capsys.readouterr().err
 
 
 def test_there_is_exactly_one_console_script_and_it_is_named_kaya() -> None:
+    """No `ky`, and specifically not as a second `[project.scripts]` entry (ADR 0007 §4).
+
+    Pandan declared `pdn` that way and had to withdraw it as a whole card (`KAN-442`): a packaging
+    installer generates the alias, but the release is a PyInstaller `--onefile` build producing
+    exactly one executable, so it existed for `uv tool install` users and never for anyone who
+    downloaded the release asset. The README documents a symlink instead, which works on both.
+    """
     scripts = declared()["scripts"]
 
     assert list(scripts) == ["kaya"], f"Q39: exactly one console script, got {list(scripts)}"

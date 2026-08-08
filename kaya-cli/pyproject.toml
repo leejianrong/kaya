@@ -3,7 +3,10 @@
 # (pandan ADR 0018 §Package-name reality). That constrains the distribution name only. The console
 # script is `kaya`, and there is exactly one of them (Q39).
 name = "kaya-notes"
-version = "0.1.0"
+# 0.2.0 — KAN-543 gives the CLI argument parsing and ADR 0007's build-stamped `--version`. A
+# behavioural change to a shipped package bumps it in the same PR (ADR 0007 §3, CLAUDE.md
+# §Conventions §Versioning).
+version = "0.2.0"
 description = "kaya — the notes CLI"
 readme = "README.md"
 license = "Apache-2.0"

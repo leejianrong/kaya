@@ -4,7 +4,7 @@ The shared core. Two in-tree adapters consume it — [`kaya-cli`](../kaya-cli/) 
 [`mcp`](../mcp/) — and **neither of them is allowed to shape a payload**
 ([ADR 0004](../docs/adr/0004-shaping-lives-in-the-shared-client.md)).
 
-Two things live here:
+Three things live here:
 
 - **`KayaClient`** over httpx — the only thing in the suite that speaks to `/api/v1`. Its methods
   return a `Payload`, never a response body.
@@ -15,6 +15,10 @@ Two things live here:
   projection  →  truncation  →  aggregate attachment  →  serialization
   projection.py  truncation.py  aggregates.py           serialization.py
   ```
+
+- **`version_line(program, version)`** in `provenance.py` — ADR 0007's two `--version` forms, and
+  the build stamp behind them. Small, but here for the same reason as `render`: both adapters print
+  provenance and neither may own the wording.
 
 ```bash
 uv sync --all-extras
@@ -62,6 +66,58 @@ one, and the tests either side of it catch a format landing in only one of the t
 If a V2b-or-later change needs to alter `render`'s signature, that is a sequencing failure, not a
 reason to push through — `src/kaya_client/render.py`'s docstring argues requirement by requirement
 why each of V2b's build-plan items lands on it unmoved.
+
+## Stamping a release build
+
+`--version` has to name a commit from inside a PyInstaller `--onefile` executable that has no
+`.git` and no package index behind it, so the sha is embedded **at package time** rather than read
+at runtime. The whole mechanism is one constant:
+
+```python
+# src/kaya_client/_build_stamp.py — always empty in the repository
+COMMIT = ""
+```
+
+There is one stamp for the suite, not one per package, because the sha is a fact about the
+repository every package is built from. It lives here because `kaya-cli` and `mcp` both depend on
+this package and neither depends on the other.
+
+A release job rewrites that constant in the checkout, immediately before packaging. Hatchling and
+PyInstaller then pick the module up like any other module under `src/kaya_client/` — nothing needs
+declaring as package data, and nothing needs `--add-data`:
+
+```bash
+scripts/stamp-build.sh "$GITHUB_SHA"     # rewrites COMMIT; refuses anything that isn't a sha
+cd kaya-client && uv build               # or pyinstaller, for the release asset
+```
+
+**KAN-544's release gate** (ADR 0007 §2) then executes what it built and compares the whole line,
+not just the sha — the version half catches a different failure, described below:
+
+```bash
+got=$("$ARTIFACT" --version)
+want="kaya ${VERSION} (${GITHUB_SHA:0:7})"
+[ "$got" = "$want" ] || { echo "artifact cannot identify itself: $got"; exit 1; }
+```
+
+Four things worth knowing before writing that workflow:
+
+- **Stamp after the tests, before the build.** `tests/test_provenance.py::test_the_committed_stamp_is_empty`
+  asserts the repository's stamp is empty, which is what stops a real sha ever being committed — a
+  committed sha would make every source checkout claim to be a release of one old commit. CI
+  already tested the commit; a release job does not need to test it again.
+- **`--onefile` drops dist-info.** `importlib.metadata.version(...)` then returns the `0.0.0`
+  fallback and the artifact reports a perfect sha next to a wrong version. Pass
+  `--copy-metadata kaya-notes --copy-metadata kaya-client`, and compare the whole `--version` line
+  so the gate catches it if you forget.
+- **`[project.scripts]` entries don't exist on a `--onefile` artifact either** — that is `KAN-442`,
+  and the reason there is one console script and the short alias is a documented symlink.
+- **A bad stamp fails safe, in both directions.** `scripts/stamp-build.sh` refuses an unexpanded
+  `${GITHUB_SHA}`, a sentinel word, a non-hex string, anything under seven characters and git's
+  null sha; `build_sha()` applies the same rule on the way out and resolves anything that isn't
+  unmistakably a sha to `None`. The artifact then prints `(source checkout, not a released build)`
+  and the gate above goes red. It never prints an empty `()` or an invented sha, because the only
+  unsafe failure here is a binary claiming provenance it does not have.
 
 ## Why this package exists at all
 
