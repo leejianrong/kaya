@@ -7,13 +7,17 @@ pandan" and "how many times did you touch the mirror" can tell those apart, whic
 lesson KAN-560 wrote into V5's guard.
 """
 
+import threading
+from collections.abc import Callable
+
 import pytest
-from fakes import ALICE, OTHER_TOKEN, TOKEN, FakeClock, FakeMirror, FakeUpstream
+from fakes import ALICE, BOB, OTHER_TOKEN, TOKEN, FakeClock, FakeMirror, FakeUpstream
 from fastapi import HTTPException
 
-from app.auth.cache import PrincipalCache
-from app.auth.principal import TokenRejected, UpstreamUnavailable
+from app.auth.cache import PrincipalCache, digest
+from app.auth.principal import Principal, TokenRejected, UpstreamUnavailable
 from app.auth.resolver import PrincipalResolver, principal_from_bearer
+from app.auth.single_flight import SingleFlight
 
 
 @pytest.fixture
@@ -37,6 +41,7 @@ def resolver(clock: FakeClock, upstream: FakeUpstream, mirror: FakeMirror) -> Pr
         upstream=upstream,
         mirror=mirror,
         cache=PrincipalCache(positive_ttl=60.0, negative_ttl=10.0, clock=clock),
+        single_flight=SingleFlight(),
     )
 
 
@@ -228,3 +233,240 @@ def test_no_error_body_or_header_ever_carries_the_token(
 
 def test_a_resolved_principal_is_returned_unwrapped(resolver: PrincipalResolver) -> None:
     assert principal_from_bearer(TOKEN, resolver) == ALICE
+
+
+# --- A stampede on one token (KAN-666) ----------------------------------------------------------
+#
+# The tests above all run on one thread, and the resolver's most expensive path is the one that
+# only happens on several. `test_single_flight.py` proves the registry coalesces; these prove the
+# *resolver* is actually wired to it, which is a separate claim and the one that regresses when
+# somebody inlines `_introspect` back into `resolve`.
+
+
+class BlockingUpstream(FakeUpstream):
+    """A ``FakeUpstream`` that parks inside ``introspect`` until the test lets it out.
+
+    Staged rather than slow: a `sleep` long enough to win a race on a quiet laptop is a `sleep`
+    short enough to lose one on a loaded CI box, and the test that results fails for reasons nobody
+    can reproduce.
+    """
+
+    def __init__(self, known: dict[str, Principal] | None = None) -> None:
+        super().__init__(known)
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def introspect(self, bearer: str) -> Principal | None:
+        # Recorded *before* parking, and that ordering is the whole point of overriding rather than
+        # delegating to `super()`. `FakeUpstream` appends after it returns, which would leave
+        # `call_count` at zero for as long as the leader is held — so a second thread that failed to
+        # coalesce would be invisible during exactly the window the test exists to inspect.
+        self.calls.append(bearer)
+        self.entered.set()
+        assert self.release.wait(timeout=10), "the test never released the upstream"
+
+        if not self.available:
+            raise UpstreamUnavailable("https://pandan.invalid/api/v1/me is unreachable")
+        return self.known.get(bearer)
+
+
+def stampede(
+    count: int, target: Callable[[], None]
+) -> tuple[list[threading.Thread], threading.Semaphore]:
+    """`count` threads through a barrier, so they are all inside the resolver at once.
+
+    Returns the threads and a semaphore released once per thread the moment it clears the barrier.
+    Waiting on that semaphore `count` times before letting the blocked upstream go is the whole
+    difference between a test and a coin flip: the leader retires its key the instant it returns, so
+    a thread that has not yet reached the registry becomes a *new* leader and makes a second call.
+    This test was written without the gate first, and failed roughly one run in five — recorded here
+    because "it passed on my machine" is exactly how a concurrency test earns its place and then
+    loses it.
+    """
+    barrier = threading.Barrier(count)
+    at_the_gate = threading.Semaphore(0)
+
+    def body() -> None:
+        barrier.wait(timeout=10)
+        at_the_gate.release()
+        target()
+
+    threads = [threading.Thread(target=body, daemon=True) for _ in range(count)]
+    for thread in threads:
+        thread.start()
+    return threads, at_the_gate
+
+
+def resolver_over(upstream: FakeUpstream, mirror: FakeMirror) -> PrincipalResolver:
+    return PrincipalResolver(
+        upstream=upstream,
+        mirror=mirror,
+        cache=PrincipalCache(positive_ttl=60.0, negative_ttl=10.0, clock=FakeClock()),
+        single_flight=SingleFlight(),
+    )
+
+
+def test_forty_concurrent_misses_on_one_token_cost_one_round_trip_and_one_mirror_write() -> None:
+    """The acceptance criterion of KAN-666, at the width Starlette's threadpool actually has.
+
+    Forty is not a round number chosen for effect: it is `anyio`'s default threadpool size, so it is
+    exactly how many sync `get_principal` dependencies can be in flight at once. Before coalescing,
+    a cold pandan held every one of them for the full read budget and note *saving* queued behind an
+    upstream that saving does not use — ADR 0003's rule, broken from inside kaya.
+    """
+    upstream = BlockingUpstream({TOKEN: ALICE})
+    mirror = FakeMirror()
+    resolver = resolver_over(upstream, mirror)
+    results: list[Principal] = []
+    results_lock = threading.Lock()
+    anyone_finished = threading.Event()
+
+    def call() -> None:
+        principal = resolver.resolve(TOKEN)
+        with results_lock:
+            results.append(principal)
+        anyone_finished.set()
+
+    threads, at_the_gate = stampede(40, call)
+    assert upstream.entered.wait(timeout=10), "nobody reached the upstream"
+    for _ in range(40):
+        assert at_the_gate.acquire(timeout=10), "a thread never reached `resolve`"
+    # The leader is parked inside `introspect` and stays there until the line below, so the others
+    # have no deadline to meet — only to arrive, which the semaphore above has just confirmed.
+    assert not anyone_finished.wait(timeout=0.25), (
+        "a caller returned while the one in-flight introspection was still parked"
+    )
+    assert upstream.call_count == 1, "a second thread started its own round trip"
+
+    upstream.release.set()
+    for thread in threads:
+        thread.join(timeout=10)
+        assert not thread.is_alive()
+
+    assert upstream.call_count == 1, (
+        f"forty concurrent misses on one token made {upstream.call_count} calls to pandan; on a "
+        "cold upstream that is forty threadpool workers held for the whole read budget"
+    )
+    assert mirror.ensured == [ALICE], "the waiters re-mirrored a row the leader had already written"
+    assert results == [ALICE] * 40
+
+
+def test_a_stampede_into_an_outage_is_a_503_for_every_caller_and_a_401_for_none() -> None:
+    """Q9 under concurrency, which is the only place the single-flight could quietly break it.
+
+    The dangerous failure is silent and asymmetric: the leader gets its `503` and the thirty-nine
+    waiters get `401 invalid_token`, so most of a fleet is told to rotate a credential that is
+    perfectly good — over an outage none of them caused.
+    """
+    upstream = BlockingUpstream({TOKEN: ALICE})
+    upstream.available = False
+    resolver = resolver_over(upstream, FakeMirror())
+    statuses: list[int] = []
+    statuses_lock = threading.Lock()
+    anyone_finished = threading.Event()
+
+    def call() -> None:
+        try:
+            principal_from_bearer(TOKEN, resolver)
+            status = 200
+        except HTTPException as exc:
+            status = exc.status_code
+        with statuses_lock:
+            statuses.append(status)
+        anyone_finished.set()
+
+    threads, at_the_gate = stampede(12, call)
+    assert upstream.entered.wait(timeout=10)
+    for _ in range(12):
+        assert at_the_gate.acquire(timeout=10), "a thread never reached `principal_from_bearer`"
+    assert not anyone_finished.wait(timeout=0.25)
+    assert upstream.call_count == 1
+
+    upstream.release.set()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert upstream.call_count == 1
+    assert statuses == [503] * 12, (
+        "an outage reached a caller as something other than a 503; a waiter handed the leader's "
+        "`None` instead of the leader's exception is exactly how that happens"
+    )
+
+
+def test_the_in_flight_registry_is_keyed_on_the_digest_and_not_the_bearer() -> None:
+    """ADR 0002 again: nothing reachable from a process-wide object may be a live credential.
+
+    Checked *while a call is in flight*, because the registry is empty at rest — asserting on it
+    afterwards would be a guard that passes without ever looking at anything.
+    """
+    upstream = BlockingUpstream({TOKEN: ALICE})
+    single_flight = SingleFlight()
+    resolver = PrincipalResolver(
+        upstream=upstream,
+        mirror=FakeMirror(),
+        cache=PrincipalCache(positive_ttl=60.0, negative_ttl=10.0, clock=FakeClock()),
+        single_flight=single_flight,
+    )
+
+    caller = threading.Thread(target=lambda: resolver.resolve(TOKEN), daemon=True)
+    caller.start()
+    assert upstream.entered.wait(timeout=10)
+
+    keys = list(single_flight._in_flight)
+
+    upstream.release.set()
+    caller.join(timeout=10)
+
+    assert keys == [digest(TOKEN)]
+    # Counted rather than printed: in production the offending value would be a live PAT, and a
+    # pytest assertion message goes straight into a CI log.
+    assert sum(1 for key in keys if TOKEN in key) == 0
+
+
+def test_a_miss_on_another_token_is_not_queued_behind_an_in_flight_one() -> None:
+    """Coalescing is per token. If it were global, one sleeping principal would stall everyone."""
+    upstream = BlockingUpstream({TOKEN: ALICE, OTHER_TOKEN: BOB})
+    single_flight = SingleFlight()
+    blocked = PrincipalResolver(
+        upstream=upstream,
+        mirror=FakeMirror(),
+        cache=PrincipalCache(positive_ttl=60.0, negative_ttl=10.0, clock=FakeClock()),
+        single_flight=single_flight,
+    )
+    free = PrincipalResolver(
+        upstream=FakeUpstream({OTHER_TOKEN: BOB}),
+        mirror=FakeMirror(),
+        cache=PrincipalCache(positive_ttl=60.0, negative_ttl=10.0, clock=FakeClock()),
+        single_flight=single_flight,
+    )
+
+    stuck = threading.Thread(target=lambda: blocked.resolve(TOKEN), daemon=True)
+    stuck.start()
+    assert upstream.entered.wait(timeout=10)
+
+    assert free.resolve(OTHER_TOKEN) == BOB, "a different token waited on an unrelated round trip"
+
+    upstream.release.set()
+    stuck.join(timeout=10)
+
+
+def test_a_leader_that_arrived_late_uses_the_answer_instead_of_asking_again() -> None:
+    """The double-check in `_introspect`, which no black-box test can reach.
+
+    The window is real but microseconds wide: miss the cache, lose the race, and arrive at the
+    registry after the winner has already retired its key. There is nothing left to coalesce with
+    at that point, so the only thing standing between that thread and a second cold round trip is
+    the second cache read. Called directly, because staging a microsecond is not a test.
+    """
+    upstream = FakeUpstream({TOKEN: ALICE})
+    resolver = resolver_over(upstream, FakeMirror())
+
+    assert resolver.resolve(TOKEN) == ALICE
+    assert upstream.call_count == 1
+
+    assert resolver._introspect(TOKEN) == ALICE
+
+    assert upstream.call_count == 1, (
+        "a late leader asked pandan for something already cached; on a cold upstream that is a "
+        "second twenty-second round trip nobody needed"
+    )

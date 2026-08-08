@@ -150,11 +150,13 @@ def client(session: Any, upstream: FakeUpstream, clock: FakeClock) -> Iterator[A
     from app.auth.mirror import SqlAlchemyPrincipalMirror
     from app.auth.principal import Principal
     from app.auth.resolver import PrincipalResolver
+    from app.auth.single_flight import SingleFlight
 
     resolver = PrincipalResolver(
         upstream=upstream,
         mirror=SqlAlchemyPrincipalMirror(session),
         cache=PrincipalCache(positive_ttl=60.0, negative_ttl=10.0, clock=clock),
+        single_flight=SingleFlight(),
     )
 
     app = FastAPI()

@@ -8,8 +8,11 @@ likely to be "improved" back into bugs are written down at the top of the module
   there is nothing kaya could usefully infer from a token's shape even if it wanted to.
 - ``cache.py`` — the negative cache is what a ``startswith`` guard was reaching for, and it sheds
   the same load without knowing anything about the token.
+- ``single_flight.py`` — deduplicating concurrent misses is not tidiness, it is what makes the
+  30 s read budget in ``upstream.py`` affordable without breaking ADR 0003 (KAN-666).
 
-Import layering, deliberately one-way: ``principal`` ← ``cache``/``upstream`` ← ``resolver`` ←
+Import layering, deliberately one-way: ``principal`` ← ``cache``/``upstream``/``single_flight`` ←
+``resolver`` ←
 ``authorization`` ← ``dependencies``, with ``mirror`` off to one side. ``resolver`` and
 ``authorization`` reach for ``fastapi.HTTPException`` and nothing else of the framework — no
 ``Depends``, no request, no session — so the entire HTTP contract, status codes and error bodies
@@ -33,7 +36,8 @@ from app.auth.principal import (
     UpstreamUnavailable,
 )
 from app.auth.resolver import PrincipalResolver, error_body, principal_from_bearer
-from app.auth.upstream import IdentityUpstream, PandanIdentityUpstream
+from app.auth.single_flight import SingleFlight
+from app.auth.upstream import IdentityUpstream, PandanIdentityUpstream, split_timeout
 
 __all__ = [
     "IdentityUpstream",
@@ -42,6 +46,7 @@ __all__ = [
     "PrincipalCache",
     "PrincipalMirror",
     "PrincipalResolver",
+    "SingleFlight",
     "SqlAlchemyPrincipalMirror",
     "TokenRejected",
     "UpstreamUnavailable",
@@ -55,4 +60,5 @@ __all__ = [
     "notes_owned_by",
     "principal_from_bearer",
     "reset_auth",
+    "split_timeout",
 ]

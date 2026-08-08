@@ -11,6 +11,8 @@ Lifetimes, and why each is what it is:
   import time binds to whatever the environment said before a fixture had a chance to change it.
 - **The httpx client is process-wide**, so connections to pandan are pooled and a cache miss pays
   for a TLS handshake roughly never.
+- **The single-flight registry is process-wide**, and it has to be for the same reason as the
+  cache: it deduplicates concurrent misses across *requests*, which is the only place they happen.
 - **The mirror is per-request**, because it holds the request's session.
 
 ``/api/v1`` does not exist yet (KAN-536), so nothing depends on ``get_principal`` in the app
@@ -28,7 +30,8 @@ from app.auth.cache import PrincipalCache
 from app.auth.mirror import SqlAlchemyPrincipalMirror
 from app.auth.principal import Principal
 from app.auth.resolver import PrincipalResolver, principal_from_bearer
-from app.auth.upstream import IdentityUpstream, PandanIdentityUpstream
+from app.auth.single_flight import SingleFlight
+from app.auth.upstream import IdentityUpstream, PandanIdentityUpstream, split_timeout
 from app.config import get_settings
 from app.db import get_session
 
@@ -43,11 +46,26 @@ def get_principal_cache() -> PrincipalCache:
 
 
 @lru_cache(maxsize=1)
+def get_single_flight() -> SingleFlight:
+    """Process-wide, for the same reason the cache is: a per-request registry deduplicates nothing.
+
+    This is the one of the three whose lifetime is easiest to get wrong without anything failing —
+    a per-request `SingleFlight` still returns correct principals, always, and simply makes N
+    upstream calls where one would do. `test_single_flight_is_process_wide` in the unit layer is
+    what notices.
+    """
+    return SingleFlight()
+
+
+@lru_cache(maxsize=1)
 def get_upstream() -> IdentityUpstream:
     settings = get_settings()
     return PandanIdentityUpstream(
         settings.pandan_url,
-        timeout=settings.pandan_timeout_seconds,
+        timeout=split_timeout(
+            connect=settings.pandan_connect_timeout_seconds,
+            read=settings.pandan_read_timeout_seconds,
+        ),
     )
 
 
@@ -56,6 +74,7 @@ def reset_auth() -> None:
     must not inherit another test's cache — the cache outliving a test is the classic way an auth
     suite passes in isolation and fails in a full run."""
     get_principal_cache.cache_clear()
+    get_single_flight.cache_clear()
     get_upstream.cache_clear()
 
 
@@ -64,6 +83,7 @@ def get_resolver(session: Annotated[Session, Depends(get_session)]) -> Principal
         upstream=get_upstream(),
         mirror=SqlAlchemyPrincipalMirror(session),
         cache=get_principal_cache(),
+        single_flight=get_single_flight(),
     )
 
 
