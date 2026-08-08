@@ -17,9 +17,10 @@ Not built yet: `authorize_note` and owner-scoped lists (KAN-535), anything under
 (KAN-536), the container image and manifests (KAN-538).
 
 Introspection latency is now **measured** (KAN-539, re-runnable as `make measure-auth`): a cache hit
-is **1.6 µs**, a warm miss **387 ms**, and a **cold miss 21.8 s**. That last number is more than
-twice `KAYA_PANDAN_TIMEOUT_SECONDS`'s 10 s default, so a cold pandan currently answers a *valid* PAT
-with a `503`. **Do not fix that by raising the timeout** — it converts the `503` into a 22-second
+is **1.6 µs**, a warm miss **387 ms**, and a **cold miss 21.8 s** (measured with the harness's
+deadline lifted to 30 s, so a cold start produced a number rather than a timeout). That last figure
+is more than twice `KAYA_PANDAN_TIMEOUT_SECONDS`'s 10 s default, so a cold pandan currently answers
+a *valid* PAT with a `503`. **Do not fix that by raising the timeout** — it converts the `503` into a 22-second
 request holding a Postgres connection, which is worse. PLAN §Open risks carries the escalation and
 the argument; read it before touching `app/auth/` or that setting.
 
