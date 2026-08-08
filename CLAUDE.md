@@ -7,14 +7,15 @@ CI, but they hold almost nothing (KAN-531):
 
 | Package | What's actually in it |
 |---|---|
-| `backend/` | FastAPI app that boots, `GET /health`, one sync engine, and migration `0001`: the `user` mirror, `note`, and the `NOTE-` sequence. No routes under `/api/v1` yet |
+| `backend/` | FastAPI app that boots, `GET /health`, one sync engine, migration `0001` (the `user` mirror, `note`, the `NOTE-` sequence), and `app/auth/`: the principal resolver and its `get_principal` dependency. No routes under `/api/v1` yet, so nothing depends on `get_principal` in the app itself |
 | `kaya-client/` | An importable package and a version. No `KayaClient`, no `render()` — those are V2a |
 | `kaya-cli/` | The `kaya` console script, one entry point, **no verbs** |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
 | `frontend/` | Svelte 5 + Vite + TS toolchain, a shell page, and the dev proxy for `/api` |
 
-Not built yet: the principal resolver (KAN-534), anything under `/api/v1` (KAN-535/536), the
-container image and manifests (KAN-538).
+Not built yet: `authorize_note` and owner-scoped lists (KAN-535), anything under `/api/v1`
+(KAN-536), the container image and manifests (KAN-538). Introspection latency is implemented but
+**unmeasured** — that number is KAN-539's, and PLAN §Open risks still carries it.
 
 CI gates each language job on its **directory existing**, so all five now run on every PR. A
 package that can't be made green does not belong in the tree.

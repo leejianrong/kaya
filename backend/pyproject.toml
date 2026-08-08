@@ -14,13 +14,15 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "alembic>=1.14",
     "pydantic-settings>=2.7",
+    # Runtime, not just test tooling, since KAN-534: the principal resolver calls pandan's
+    # `GET /api/v1/me` over httpx (ADR 0002). It doubles as fastapi.testclient's transport.
+    "httpx>=0.28",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3",
     "ruff>=0.9",
-    "httpx>=0.28",              # fastapi.testclient
     "testcontainers[postgres]>=4.9",
 ]
 
