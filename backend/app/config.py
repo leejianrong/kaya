@@ -31,7 +31,40 @@ class Settings(BaseSettings):
         default="https://simple-kanban-jian.fly.dev",
         validation_alias="KAYA_PANDAN_URL",
     )
-    """Origin of the pandan deployment that resolves principals (ADR 0002). Unused until KAN-534."""
+    """Origin of the pandan deployment that resolves principals (ADR 0002).
+
+    Read by ``app.auth`` to build the ``GET /api/v1/me`` URL. It is configuration, not a secret —
+    it appears verbatim in the `503` body so a caller can see *which* upstream is down."""
+
+    pandan_timeout_seconds: float = Field(
+        default=10.0,
+        validation_alias="KAYA_PANDAN_TIMEOUT_SECONDS",
+    )
+    """Deadline for one introspection call.
+
+    Generous rather than snappy, and deliberately so: pandan's API scales to zero, so the first
+    call after an idle period pays a cold start. httpx's own default is 5s, which would turn a
+    normal wake-up into a `503`. It is still *bounded* — an unbounded upstream call holds a kaya
+    Postgres connection for the whole request (the failure mode measured in KAN-560), and slow is
+    worse than down because down fails fast."""
+
+    principal_cache_ttl_seconds: float = Field(
+        default=60.0,
+        validation_alias="KAYA_PRINCIPAL_CACHE_TTL_SECONDS",
+    )
+    """How long a resolved principal is trusted without re-asking pandan (Q6, ASSUMED).
+
+    This is exactly how far revocation lags, and it is the one constant to turn if that matters."""
+
+    principal_negative_cache_ttl_seconds: float = Field(
+        default=10.0,
+        validation_alias="KAYA_PRINCIPAL_NEGATIVE_CACHE_TTL_SECONDS",
+    )
+    """How long a rejection is remembered (Q6, ASSUMED).
+
+    Short, because it is load-shedding rather than a decision: a stray ``Authorization`` header on
+    a retry loop must not become one pandan round trip per request. Kept well under the positive
+    TTL so a token that was rejected because it hadn't been minted yet becomes usable quickly."""
 
 
 @lru_cache(maxsize=1)
