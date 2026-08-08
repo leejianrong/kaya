@@ -17,7 +17,12 @@ included, is exercisable by the no-infrastructure test layer. ``dependencies`` i
 that knows FastAPI's dependency machinery exists, and ``mirror`` the only one holding a session.
 """
 
-from app.auth.authorization import authorize_note, notes_owned_by
+from app.auth.authorization import (
+    authorize_note,
+    note_addressed_as_id,
+    note_addressed_as_ref,
+    notes_owned_by,
+)
 from app.auth.cache import PrincipalCache, digest
 from app.auth.dependencies import get_principal, get_resolver, reset_auth
 from app.auth.mirror import SqlAlchemyPrincipalMirror
@@ -45,6 +50,8 @@ __all__ = [
     "error_body",
     "get_principal",
     "get_resolver",
+    "note_addressed_as_id",
+    "note_addressed_as_ref",
     "notes_owned_by",
     "principal_from_bearer",
     "reset_auth",

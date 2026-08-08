@@ -1,6 +1,7 @@
-"""Step 5 of ADR 0002's resolver: which note a principal may touch, and which ones it may see.
+"""Step 5 of ADR 0002's resolver: which note a principal may touch, which ones it may see, and —
+since KAN-536 — the two statements that fetch a single note by either of its names.
 
-Two functions, and the difference between them is the whole design.
+Three kinds of function, and the difference between them is the whole design.
 
 ``authorize_note`` decides about **one** note that has already been fetched, and it deliberately
 cannot scope the fetch. The `403` requires knowing the note exists, so a query filtered on the
@@ -16,11 +17,20 @@ accident rather than by construction — it would still page wrongly (ten rows f
 someone else's, seven returned for a page of ten) and it would still have pulled the prose across
 the wire.
 
-Neither function knows *how* the note was addressed. ``authorize_note`` takes a ``Note`` or
+``note_addressed_as_ref`` / ``note_addressed_as_id`` decide about **neither**. They are the two
+unscoped single-row fetches ADR 0008 needs, one per spelling of a note's name, and they are as
+deliberately unscoped as ``session.get(Note, …)`` is: same reason, same `403`. They live in *this*
+module rather than beside the ref resolver in ``app/api/`` because
+``tests/unit/test_no_unscoped_note_query.py`` requires ``Note`` to reach a query builder here and
+nowhere else under ``app/``, and that rule is worth more than the tidiness of moving two lines.
+Fetching by a non-primary-key unique column is the one legitimate read `session.get` cannot express,
+so the choice was between this and evading the guard. See the note above each one.
+
+``authorize_note`` knows *nothing* about how the note was addressed. It takes a ``Note`` or
 ``None``, never an identifier, so a missing note gets the same `404` whether it was asked for as
 ``NOTE-9999`` or ``9999`` — ADR 0008's requirement, met structurally, because there is nothing here
 that could differ between the two forms. The central ref resolver that turns either spelling into
-that ``Note | None`` is KAN-536's, and this is the seam it hands its result to.
+that ``Note | None`` is ``app.api.refs`` (KAN-536), and this is the seam it hands its result to.
 
 Nothing here touches FastAPI's dependency machinery, for the same reason ``resolver.py`` doesn't:
 the whole HTTP contract below is then assertable by the no-infrastructure test layer.
@@ -32,6 +42,32 @@ from sqlalchemy import Select, select
 from app.auth.principal import Principal
 from app.auth.resolver import error_body
 from app.models import Note
+
+
+def note_addressed_as_ref(ref: str) -> Select[tuple[Note]]:
+    """One note by its ``NOTE-n`` ref. **Unscoped, on purpose** — the result goes to
+    ``authorize_note``, which cannot answer `403` for somebody else's note if the fetch never found
+    it (see the module docstring, and ``test_no_unscoped_note_query``'s carve-out for
+    ``session.get``).
+
+    ``ref`` is unique, so this returns at most one row. It is *not* an entry point for a list:
+    adding an ``.order_by()`` and dropping the ``where`` turns it into the exact leak
+    ``notes_owned_by`` exists to prevent. If you want many notes, start from ``notes_owned_by``.
+    """
+    return select(Note).where(Note.ref == ref)
+
+
+def note_addressed_as_id(note_id: int) -> Select[tuple[Note]]:
+    """The same fetch, by the other name (ADR 0008: every id-taking verb accepts either form).
+
+    ``session.get(Note, note_id)`` would do this in one call and is explicitly sanctioned. It is
+    deliberately *not* used, because then the two spellings would run down two different code paths
+    — one through the ORM identity map, one through a statement — and "identical results including
+    identical error codes" would rest on two implementations agreeing rather than on there being
+    one. Returning a ``Select`` here means ``app.api.refs`` picks a statement and everything after
+    that point is literally the same line of code for both forms.
+    """
+    return select(Note).where(Note.id == note_id)
 
 
 def authorize_note(principal: Principal, note: Note | None) -> Note:
