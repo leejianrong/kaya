@@ -41,14 +41,38 @@ An unstamped or badly stamped build prints `(source checkout, not a released bui
 fails that comparison, which is the whole point: the failure direction is "I am not a release",
 never a plausible-looking sha.
 
-### Two traps on the `--onefile` path
+**Compare the whole line, not just the sha.** A sha-only gate passes an artifact that carries the
+right commit beside the wrong version, and that is the only way this mechanism can fail quietly —
+every other failure prints the source-checkout wording, which any comparison catches.
 
-- `importlib.metadata.version(...)` needs the dist-info to be bundled. PyInstaller does not copy it
-  by default, so a onefile build without `--copy-metadata kaya-notes --copy-metadata kaya-client`
-  reports version `0.0.0` while carrying a perfectly good sha. The gate above catches it *only*
-  because it compares the version too — compare the whole line, not just the sha.
-- `[project.scripts]` entries do not exist on a onefile artifact at all (`KAN-442`, ADR 0007 §4).
-  That is why there is one console script and the short alias is a documented symlink.
+### The `--onefile` path, as measured
+
+Three real onefile binaries were built from this branch on 2026-08-09 (`HEAD` was `575e6d9`) and
+executed. All three exited `0`:
+
+    stamped, with --copy-metadata       kaya 0.2.0 (575e6d9)
+    stamped, without --copy-metadata    kaya 0.2.0 (575e6d9)
+    unstamped, without --copy-metadata  kaya 0.2.0 (source checkout, not a released build)
+
+Two things follow, and one earlier guess is retracted.
+
+- **The stamp survives onefile.** The sha reaches the binary, and an unstamped onefile degrades to
+  the source-checkout form rather than to anything that reads as provenance.
+- **The third row is the fixture for KAN-544's `[mutate]` case.** ADR 0007 §5 wants the release job
+  proven by watching it fail on an artifact with the sha stripped; that artifact is producible by
+  building without running `scripts/stamp-build.sh` first, and the line above is exactly what the
+  gate must reject. It does not need inventing.
+- **Retracted:** an earlier draft of this docstring asserted that PyInstaller drops the dist-info,
+  so that a build without `--copy-metadata` would report version `0.0.0`. It does not reproduce —
+  `importlib.metadata` resolved the real version in the middle row above. Keep
+  `--copy-metadata kaya-notes --copy-metadata kaya-client` in the build anyway: it costs nothing,
+  and the failure it insures against is *silent* rather than loud. A version that fell back to
+  `0.0.0` would still carry a valid sha and would sail through a sha-only gate. That is the honest
+  argument for it, and for comparing the whole line.
+
+One trap that is not a guess: **`[project.scripts]` entries do not exist on a onefile artifact at
+all** (`KAN-442`, ADR 0007 §4). That is why there is one console script and the short alias is a
+documented symlink.
 """
 
 # A 40-character lowercase hex sha on a release build; empty everywhere else. `provenance.py`

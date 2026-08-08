@@ -91,8 +91,8 @@ scripts/stamp-build.sh "$GITHUB_SHA"     # rewrites COMMIT; refuses anything tha
 cd kaya-client && uv build               # or pyinstaller, for the release asset
 ```
 
-**KAN-544's release gate** (ADR 0007 §2) then executes what it built and compares the whole line,
-not just the sha — the version half catches a different failure, described below:
+**KAN-544's release gate** (ADR 0007 §2) then executes what it built and compares the **whole
+line**, not just the sha:
 
 ```bash
 got=$("$ARTIFACT" --version)
@@ -100,24 +100,47 @@ want="kaya ${VERSION} (${GITHUB_SHA:0:7})"
 [ "$got" = "$want" ] || { echo "artifact cannot identify itself: $got"; exit 1; }
 ```
 
-Four things worth knowing before writing that workflow:
+Comparing the whole line matters because a wrong-version-right-sha artifact is the **only** way this
+mechanism can fail quietly. Every other failure prints the source-checkout wording, which any
+comparison catches; a sha-only gate would wave that one through.
+
+Three more things worth knowing before writing that workflow:
 
 - **Stamp after the tests, before the build.** `tests/test_provenance.py::test_the_committed_stamp_is_empty`
   asserts the repository's stamp is empty, which is what stops a real sha ever being committed — a
   committed sha would make every source checkout claim to be a release of one old commit. CI
   already tested the commit; a release job does not need to test it again.
-- **`--onefile` drops dist-info.** `importlib.metadata.version(...)` then returns the `0.0.0`
-  fallback and the artifact reports a perfect sha next to a wrong version. Pass
-  `--copy-metadata kaya-notes --copy-metadata kaya-client`, and compare the whole `--version` line
-  so the gate catches it if you forget.
-- **`[project.scripts]` entries don't exist on a `--onefile` artifact either** — that is `KAN-442`,
-  and the reason there is one console script and the short alias is a documented symlink.
+- **`[project.scripts]` entries don't exist on a `--onefile` artifact** — that is `KAN-442`, and the
+  reason there is one console script and the short alias is a documented symlink.
 - **A bad stamp fails safe, in both directions.** `scripts/stamp-build.sh` refuses an unexpanded
   `${GITHUB_SHA}`, a sentinel word, a non-hex string, anything under seven characters and git's
   null sha; `build_sha()` applies the same rule on the way out and resolves anything that isn't
   unmistakably a sha to `None`. The artifact then prints `(source checkout, not a released build)`
   and the gate above goes red. It never prints an empty `()` or an invented sha, because the only
   unsafe failure here is a binary claiming provenance it does not have.
+
+### What the onefile path actually does
+
+Measured, not reasoned. Three real PyInstaller `--onefile` binaries were built from this branch on
+2026-08-09 with `HEAD` at `575e6d9` and executed. All three exited `0`:
+
+| build | `--version` |
+|---|---|
+| stamped, **with** `--copy-metadata` | `kaya 0.2.0 (575e6d9)` |
+| stamped, **without** `--copy-metadata` | `kaya 0.2.0 (575e6d9)` |
+| **unstamped**, without | `kaya 0.2.0 (source checkout, not a released build)` |
+
+The stamp survives the onefile path intact, and an unstamped onefile degrades to the source-checkout
+form. **That third row is KAN-544's `[mutate]` fixture.** ADR 0007 §5 wants the release gate proven
+by watching it fail on an artifact that cannot identify itself, and building without first running
+`scripts/stamp-build.sh` produces exactly that artifact — the case does not need inventing.
+
+An earlier draft of this section claimed PyInstaller drops the dist-info, so a build without
+`--copy-metadata` would report version `0.0.0`. **That does not reproduce**: the middle row resolved
+the real version. Pass `--copy-metadata kaya-notes --copy-metadata kaya-client` anyway. It costs
+nothing, and the failure it insures against is *silent* — a version falling back to `0.0.0` would
+still carry a valid sha and would pass a sha-only gate. That, rather than a dist-info claim that
+doesn't hold, is the reason to keep the flag and the reason to compare the whole line.
 
 ## Why this package exists at all
 
