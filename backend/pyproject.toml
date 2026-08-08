@@ -9,7 +9,7 @@ dependencies = [
     # ADR 0001: FastAPI, SYNC SQLAlchemy over psycopg v3, Alembic from day one.
     # There is deliberately no fastapi-users, no OAuth client and no async driver.
     "fastapi>=0.115",
-    "uvicorn[standard]>=0.34",
+    "uvicorn[standard]>=0.52.1",
     "sqlalchemy>=2.0.36",
     "psycopg[binary]>=3.3.4",
     "alembic>=1.19.0",
