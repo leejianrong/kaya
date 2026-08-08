@@ -51,6 +51,21 @@ Surfaces:
 poll/refresh. Metadata-only writes (title, path) stay plain LWW, because they're card-shaped fields where
 the original reasoning holds.
 
+**Clarified while implementing (KAN-537).** "Metadata-only writes stay LWW" left the mixed cases open, and
+the implementation had to pick one. The precondition **guards the body**, so:
+
+| The `PATCH` sends | With a stale precondition |
+|---|---|
+| `body` (with or without `title`/`path`) | `409`, and **nothing** is written — not even the metadata half |
+| `title` and/or `path` only | Written, LWW. A rename conflicts with nothing this decision is about |
+| Neither (an empty `PATCH`) | A no-op, as always. Nothing changed, so nothing can be lost |
+
+The reading follows this ADR's own reasoning rather than the letter of the sentence: the deviation from
+pandan ADR 0007 is about the *payload*, and a re-typed title is not the harm. It also protects the
+affordance — the SPA "sends it always", so a `409` on a rename would be a banner its user learns to
+dismiss before the one that matters arrives. The mixed write is refused whole because applying half of a
+rejected write would be a second silent edit, in the opposite direction.
+
 ## Alternatives considered
 
 | Option | Why not |

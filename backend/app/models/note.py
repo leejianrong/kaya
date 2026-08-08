@@ -122,10 +122,21 @@ class Note(Base):
         nullable=False,
     )
     """Doubles as the optimistic-concurrency token (ADR 0009): a `PATCH` carrying a stale value is
-    rejected with `409`.
+    rejected with `409` (`app/api/concurrency.py`).
 
     `now()` is transaction start time, so two writes *inside one transaction* stamp the same value.
-    That is fine for the contract as specified — each request is its own transaction — but a future
-    batch endpoint that writes one note twice in a single transaction would defeat the precondition
-    silently. `clock_timestamp()` is the escape hatch if that day comes.
+    KAN-537 looked at this and **kept `now()`**, for two reasons rather than by deferral. Each
+    request is its own transaction, so the token moves on every write the contract actually has; and
+    `created_at` and `updated_at` are both `now()`, which is what makes them *equal* on a freshly
+    created note — under `clock_timestamp()` they would differ by a few microseconds, so "this note
+    has never been edited" would stop being expressible as `created_at == updated_at` and start
+    being a tolerance.
+
+    What KAN-537 would not leave is the assumption unpinned, because the failure mode is invisible:
+    a batch endpoint writing one note twice in a single transaction would stamp the same value both
+    times and silently defeat the precondition. `tests/integration/test_notes_api.py`
+    ::`test_two_writes_in_one_transaction_share_one_stamp` asserts the behaviour *as it is*, so the
+    day that endpoint is written the assumption is a failing test in front of its author rather
+    than a comment they never read. `clock_timestamp()` is the escape hatch then — and it is a
+    migration, since the default is `server_default`.
     """
