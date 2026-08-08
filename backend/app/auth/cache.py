@@ -16,6 +16,7 @@ eventually be a flaky one (dev-playbook §3).
 """
 
 import hashlib
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -44,11 +45,39 @@ class _Entry:
 
 
 class PrincipalCache:
-    """TTL cache of introspection answers, keyed on a digest.
+    """TTL cache of introspection answers, keyed on a digest. **Safe under concurrent use.**
 
-    Not thread-safe by construction, and it does not need to be. Every operation is a handful of
-    dict mutations under the GIL; the worst a race can do is two threads paying for the same
-    upstream call, which is a wasted round trip and not a wrong answer.
+    That last part is not decoration, and the earlier version of this docstring got it wrong in a
+    way worth recording, because the reasoning was persuasive and still incorrect.
+
+    It argued that the cache did not need a lock: every operation is a handful of dict mutations
+    under the GIL, so the worst a race can do is two threads paying for the same upstream call —
+    a wasted round trip, not a wrong answer. **That reasons about wrong answers and says nothing
+    about raised exceptions.** `lookup` used to check `expires_at` and then `del` the key as two
+    separate steps. Two threads could both pass the check and the second `del` would raise
+    `KeyError`. `_evict` had the same shape twice over, plus a comprehension over `_entries` that
+    another thread could resize underneath it.
+
+    None of that is hypothetical here. `get_principal` is a sync `def` FastAPI dependency, so
+    Starlette runs it in a threadpool, and this object is a process-wide singleton. The blast
+    radius was a **500 from the auth dependency on a perfectly valid credential**, and it was
+    reachable at every TTL boundary — which, for one agent holding one PAT and making many
+    parallel calls, comes round every sixty seconds.
+
+    So: one lock, held across every read and write of `_entries`. Two rules keep it honest.
+
+    1. **Nothing injected is called while the lock is held.** The clock is read before the lock is
+       taken, never inside it. A caller's clock is arbitrary code; blocking every other thread on
+       it would trade a `KeyError` for a stall. The cost is that `now` can be a few microseconds
+       stale by the time it is compared, so an entry may live a fraction past its expiry. Against
+       a 60s TTL that is not a number anyone can observe.
+    2. **`_evict` runs with the lock already held and never takes it.** ``threading.Lock`` is not
+       reentrant, so a second acquire from inside `remember` would deadlock rather than fail
+       loudly.
+
+    Contention is not a concern: the critical section is a few dict operations with no I/O in it,
+    and an uncontended acquire costs tens of nanoseconds against an upstream round trip measured
+    in hundreds of milliseconds.
     """
 
     def __init__(
@@ -65,6 +94,7 @@ class PrincipalCache:
         self._clock = clock
         self._max_entries = max_entries
         self._entries: dict[str, _Entry] = {}
+        self._lock = threading.Lock()
 
     def lookup(self, token: str) -> tuple[bool, Principal | None]:
         """``(hit, principal)``.
@@ -76,35 +106,52 @@ class PrincipalCache:
         still pass, because the answer would still be "rejected".
         """
         key = digest(token)
-        entry = self._entries.get(key)
-        if entry is None:
-            return (False, None)
-        if self._clock() >= entry.expires_at:
-            del self._entries[key]
-            return (False, None)
-        return (True, entry.principal)
+        now = self._clock()  # read before the lock — see rule 1 in the class docstring
+
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return (False, None)
+            if now >= entry.expires_at:
+                # A plain `del` rather than a tolerant `pop(key, None)`, deliberately: the lock is
+                # what makes this safe, and a defensive pop here would imply the lock is optional.
+                del self._entries[key]
+                return (False, None)
+            return (True, entry.principal)
 
     def remember(self, token: str, principal: Principal | None) -> None:
         """Cache an answer. ``None`` records a rejection under the shorter negative TTL."""
         ttl = self._positive_ttl if principal is not None else self._negative_ttl
         key = digest(token)
-        # Re-insert rather than overwrite, so dict insertion order stays recency order for _evict.
-        self._entries.pop(key, None)
-        self._entries[key] = _Entry(principal=principal, expires_at=self._clock() + ttl)
-        self._evict()
+        now = self._clock()
 
-    def _evict(self) -> None:
+        with self._lock:
+            # Re-insert rather than overwrite, so dict insertion order stays recency order.
+            self._entries.pop(key, None)
+            self._entries[key] = _Entry(principal=principal, expires_at=now + ttl)
+            self._evict(now)
+
+    def _evict(self, now: float) -> None:
+        """Bring the cache back under its bound. **The caller holds ``_lock``.**
+
+        ``now`` is passed in rather than read here, for both reasons in the class docstring: the
+        lock is held, so no injected code may run; and re-reading would be a second clock call
+        inside one logical operation.
+        """
         if len(self._entries) <= self._max_entries:
             return
-        now = self._clock()
+        # Safe to build a list from `_entries` and to iterate it only because the lock is held.
+        # Unlocked, a concurrent insert here raises "dictionary changed size during iteration".
         for key in [k for k, entry in self._entries.items() if now >= entry.expires_at]:
             del self._entries[key]
         while len(self._entries) > self._max_entries:
             del self._entries[next(iter(self._entries))]
 
     def clear(self) -> None:
-        self._entries.clear()
+        with self._lock:
+            self._entries.clear()
 
     def __len__(self) -> int:
         """Live *and* expired entries — the storage size, not the logical size."""
-        return len(self._entries)
+        with self._lock:
+            return len(self._entries)

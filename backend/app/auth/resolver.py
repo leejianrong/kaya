@@ -69,7 +69,18 @@ class PrincipalResolver:
 
 
 def error_body(code: str, message: str, **extra: str) -> dict[str, dict[str, str]]:
-    """The error shape. One builder, so a status is never paired with a bare prose string."""
+    """The error shape. One builder, so a status is never paired with a bare prose string.
+
+    **On the wire this ends up double-nested, and that is an artefact rather than a decision.**
+    FastAPI's default handler wraps whatever it is given in ``{"detail": ...}``, so a caller sees
+    ``{"detail": {"error": {"code": ...}}}``. Nothing consumes it yet — there are no routes under
+    ``/api/v1``.
+
+    KAN-536 owns the API error contract and should pick the shape on purpose. If it wants a bare
+    ``{"error": {...}}``, an ``@app.exception_handler(HTTPException)`` that returns
+    ``exc.detail`` when it is already a mapping is the whole change, and these call sites stay as
+    they are. Flagged here so the accident is not inherited as a default.
+    """
     return {"error": {"code": code, "message": message, **extra}}
 
 

@@ -55,6 +55,10 @@ class PandanIdentityUpstream:
         client: httpx.Client | None = None,
     ) -> None:
         self._url = base_url.rstrip("/") + ME_PATH
+        # `timeout` configures the client this builds; it does **not** apply to one passed in,
+        # which arrives carrying its own. Only tests pass `client`, and they pass a MockTransport
+        # that never blocks — but the asymmetry is easy to misread, so: if you inject a client,
+        # set its timeout on the client.
         self._client = client if client is not None else httpx.Client(timeout=timeout)
 
     def introspect(self, bearer: str) -> Principal | None:
