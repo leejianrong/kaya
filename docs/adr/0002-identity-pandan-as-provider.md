@@ -111,3 +111,30 @@ to work through a short outage, so an active session survives a pandan restart.
   pandan's availability.
 - **Now has to be true:** pandan ships `GET /api/v1/me` before kaya's V1 can be demonstrated. That is a
   V1 build step, tracked on the board.
+
+## Amendment (2026-08-08): the cold-authentication cost, measured and bounded
+
+The Consequences above call the runtime dependency on pandan for cold authentication "the sharpest
+cost of the decision", accepted knowingly. KAN-539 then measured it and found the cost was not
+merely sharp but **unpaid**: a cold pandan took 11–23 s to answer, against a single 10 s deadline, so
+kaya did not wait out the wake-up at all — it returned `503` on a perfectly good PAT. That was the
+trigger this ADR's cache strategy was given, and KAN-666 is the revisit.
+
+**The cache strategy is unchanged.** The measurement was explicit that the cache is the part working
+correctly: a hit costs 1.6 µs, and the TTLs of Q6 are untouched. Two things around it changed.
+
+**The deadline is split by phase.** A single number conflated two different failures — pandan *down*
+and pandan *asleep* — and the deadline that must be short for the first is too short for the second.
+`KAYA_PANDAN_CONNECT_TIMEOUT_SECONDS` (5 s) bounds reaching pandan; `KAYA_PANDAN_READ_TIMEOUT_SECONDS`
+(30 s) bounds waiting for its answer. This is measurement, not preference: connect is 67–103 ms and
+flat while the read is what varies, because fly's shared edge terminates TLS two proxy hops in front
+of pandan and the app machine never participates in the handshake. §Failure behaviour is untouched —
+an unreachable pandan is still a `503` naming the upstream, and now reports *sooner* than it used to.
+
+**Concurrent misses on one token are coalesced.** `app/auth/single_flight.py` makes N simultaneous
+misses one upstream call. This is what keeps the longer read budget inside ADR 0003 rather than a
+violation of it: kaya's routes are sync, so each in-flight introspection holds one of Starlette's 40
+threadpool workers, and 40 of them held for 30 s stalls note *saving* — work that needs nothing from
+pandan. Waiters receive the leader's exception rather than its `None`, so an outage during a stampede
+stays a `503` for every caller instead of becoming a `401` for all but one, which would have been
+this ADR's Q9 rule broken at the one moment it matters most.
