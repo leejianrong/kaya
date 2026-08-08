@@ -68,9 +68,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0   # secret-scan uses git grep across the tree
+          # The default secret scan reads tracked files at the checked-out commit and would
+          # be correct on a depth-1 clone. Full history stays because `secret-scan.sh
+          # --history` would not be: gitleaks scans the commits it can see, so a shallow
+          # clone makes that audit silently partial instead of failing. KAN-580.
+          fetch-depth: 0
       - name: Internal doc links
         run: scripts/check-docs-links.sh
+      # Byte-for-byte the command the pre-push hook runs, against a gitleaks pinned by
+      # version and sha256 in scripts/ensure-gitleaks.sh — so "green locally" and "green in
+      # CI" are claims about the same scanner and the same rules. Deliberately not
+      # gitleaks-action: that is a second mechanism to keep in step with the local one, and
+      # its licence key becomes mandatory the day this repo moves under an organisation.
       - name: Secret scan
         run: scripts/secret-scan.sh
       # KAN-538, and it belongs with the other offline guards rather than in a job of its own: it

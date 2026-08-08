@@ -1,0 +1,63 @@
+# gitleaks configuration for kaya (KAN-580).
+#
+# gitleaks' own rule set is the baseline — it already knows GitHub tokens, AWS keys and
+# PEM private-key headers, which is three of the four shapes the hand-rolled scan this
+# replaced looked for. What it cannot know is the fourth, and the fourth is the one this
+# repo is actually at risk of leaking, so it is added below.
+#
+# `[extend] useDefault` pulls in gitleaks' bundled rules by reference rather than by copy.
+# Vendoring them would freeze the rule set at whatever the file said the day it was
+# written; extending means a version bump in scripts/ensure-gitleaks.sh brings new
+# detections with it, and the pin is the single thing that controls which rules run.
+
+title = "kaya"
+
+[extend]
+useDefault = true
+
+# --- this suite's own credentials -------------------------------------------------------
+#
+# ADR 0002: kaya mints no tokens and has no token format of its own. The credential that
+# can realistically end up in this tree is somebody's *pandan* PAT — pasted into a doc
+# while debugging board access, or left in a test fixture. No generic scanner ships a rule
+# for a two-person suite's prefixes, so this is the rule that has to be written by hand.
+#
+# Both prefixes are live secrets, not one current and one historical: pandan ADR 0018 kept
+# `kanban_pat_` accepted after the rebrand, so a leaked pre-rebrand token still works.
+# `kaya_pat_` is here pre-emptively and costs nothing — if kaya ever does mint a token,
+# the rule already exists rather than being remembered.
+[[rules]]
+id = "kayatoast-pat"
+description = "kayatoast suite personal access token (pandan / kanban / kaya)"
+# The {20,} tail is what separates a real token from prose. CLAUDE.md and the ADRs discuss
+# these prefixes by name constantly; a rule that fired on the bare prefix would fail on the
+# documentation that explains it, and a gate that is wrong about its own repo gets removed.
+regex = '''\b(pandan_pat_|kanban_pat_|kaya_pat_)[A-Za-z0-9_-]{20,}'''
+keywords = [
+  "pandan_pat_",
+  "kanban_pat_",
+  "kaya_pat_",
+]
+
+[[rules.allowlists]]
+description = "documented placeholders, not tokens"
+regexTarget = "match"
+regexes = [
+  # `pandan_pat_xxxxx…` / `pandan_pat_REPLACE_ME` and friends: a shape written down to
+  # explain the shape. A real token is not 20 identical characters.
+  '''(?i)(pandan|kanban|kaya)_pat_((x|\.){20,}|<[^>]+>|(REPLACE|EXAMPLE|YOUR|FAKE|DUMMY|REDACTED)[A-Za-z0-9_-]*)''',
+]
+
+# --- global allowlist -------------------------------------------------------------------
+#
+# Kept deliberately short. Every entry here is a place a real secret would go unreported,
+# so the bar is "this path cannot contain a credential", not "this path is noisy".
+[[allowlists]]
+description = "lockfiles: hashes and integrity digests, never credentials"
+# uv writes sha256 hashes per wheel and npm writes base64 sha512 integrity strings. Both
+# are high-entropy by construction and neither is a secret. They are also generated files,
+# so a finding in one could not be fixed by editing it.
+paths = [
+  '''(^|/)uv\.lock$''',
+  '''(^|/)package-lock\.json$''',
+]

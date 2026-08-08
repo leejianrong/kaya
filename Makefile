@@ -24,8 +24,12 @@ docs-links: ## Check that every internal doc link resolves
 	@scripts/check-docs-links.sh
 
 .PHONY: secret-scan
-secret-scan: ## Grep the working tree for credential-shaped strings
+secret-scan: ## gitleaks over every tracked file + the .env / .mcp.json tracking assertions
 	@scripts/secret-scan.sh
+
+.PHONY: secret-scan-history
+secret-scan-history: ## Same scanner over every commit. An audit, deliberately NOT part of `check`
+	@scripts/secret-scan.sh --history
 
 .PHONY: image-pins
 image-pins: ## Fail if any external container image is referenced by tag instead of digest
