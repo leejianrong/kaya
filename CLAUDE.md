@@ -161,6 +161,7 @@ make test-integration  # real Postgres via testcontainers (needs Docker)
 make lint              # ruff × 4 packages + eslint + svelte-check
 make check             # docs-links + secret-scan + image-pins + lint + test
 make build             # SPA into frontend/dist
+make audit             # npm audit + pip-audit over every lockfile (network; NOT in `check`)
 make measure-auth      # re-measure introspection latency (Docker + a real PAT; KAN-539)
 ```
 
@@ -229,7 +230,19 @@ overwrite from the index and silently destroy uncommitted work that no reflog ca
 
 **Versioning.** A behavioural change to a shipped package bumps its version in the same PR
 ([ADR 0007](docs/adr/0007-release-provenance-from-the-first-release.md)). The guard diffs against the
-**merge-base with `main`**, not the remote tip.
+**merge-base with `main`**, not the remote tip. When that guard is built (KAN-544) it must classify
+by **which table in `pyproject.toml` changed, not by filename**, or every Dependabot PR into
+`kaya-client` / `kaya-cli` / `mcp` becomes a red check someone hand-fixes: a `uv.lock`-only change is
+the dev environment and is **not** behavioural, a `[project.dependencies]` change becomes
+`Requires-Dist` in the wheel and **is**, and a `dev` extra is the test toolchain and is not.
+`.github/dependabot.yml` carries the same note.
+
+**Dependencies.** Lockfiles committed, installs frozen, updates by **Dependabot** (not renovate —
+`.github/dependabot.yml` says why), vulnerabilities by `make audit`. **Do not move the audit into
+the pre-push hook or into `make check`.** `npm audit` exits non-zero on transitive dev advisories
+nobody can fix, so gating on it teaches `--no-verify`; it runs weekly instead and reports into one
+issue that never blocks a merge. Do not add a `docker` ecosystem to the bot either — base images are
+digest-pinned and `scripts/check-image-pins.sh` would reject the tag a bot PR writes.
 
 **Measurements go in the PR body.** Several slices require a number rather than an assertion:
 introspection latency (V1), the `toon` delta (V2a), the CodeMirror bundle size (V3), and the MCP

@@ -1,0 +1,170 @@
+name: Dependency audit
+
+# The vulnerability half of KAN-699. Runs `scripts/dependency-audit.sh` on a schedule and reports
+# into ONE issue. It is deliberately not part of `ci.yml` and deliberately not required by
+# `ci-gate`.
+#
+# WHY A SCHEDULED ISSUE AND NOT A PR CHECK. An advisory arrives on a third party's timetable, not
+# on the PR author's. Make it a merge gate and the first unfixable transitive dev advisory turns
+# every open PR red for reasons nobody on the PR can act on — the exact case that was live when
+# this card was written (`eslint-plugin-svelte` → `postcss` → `nanoid`, high, dev-only). The
+# realistic outcomes of that are an allowlist file that quietly goes stale, an admin merge, or the
+# job being deleted. The repo has already reasoned its way here once: `secret-scan.sh --history` is
+# an on-demand audit rather than a gate, for the same reason and in its own words.
+#
+# So the division of labour is:
+#   * Dependabot (.github/dependabot.yml) raises a PR for every advisory that HAS a fix, and those
+#     PRs run the full `ci-gate` like anything else. That is the part that actually blocks bad code.
+#   * This job names the residue — what is left after Dependabot has done what it can — in an issue
+#     that updates in place rather than piling up.
+#
+# WHY THE JOB CAN BE GREEN WHILE ADVISORIES EXIST. Green here means "the audit ran". Red means the
+# audit BROKE. The findings live in the issue, because a permanently red scheduled workflow is
+# indistinguishable from a broken one after about a fortnight, and the point of this card was
+# noticing things nobody was looking at.
+#
+# TWO THINGS ABOUT `schedule:` WORTH KNOWING BEFORE DEBUGGING IT.
+#   1. Scheduled workflows only ever run from the DEFAULT BRANCH. This file cannot be exercised
+#      from a PR branch, so its issue-writing path is unproven until the first `workflow_dispatch`
+#      after it lands on main. The script it calls was proven separately, by reverting the nanoid
+#      fix and watching it report.
+#   2. GitHub disables scheduled workflows after 60 days with no repository activity, and emails
+#      the owner. On a repo that goes quiet, silence from this job is not the same as a clean tree.
+
+on:
+  schedule:
+    # Mondays, a little after Dependabot's own 06:00 Asia/Singapore window, so a week's fixable
+    # advisories already have PRs open by the time this names what is left. `cron` is UTC and has
+    # no timezone option, so 06:00 SGT is 22:00 UTC the previous day. The odd minute is GitHub's own
+    # advice: jobs on the hour queue behind everyone else's.
+    - cron: "23 22 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Narrow and load-bearing: this workflow's entire output is one issue. Nothing else here writes.
+  issues: write
+
+concurrency:
+  group: dependency-audit
+  cancel-in-progress: false
+
+env:
+  # Stable, so the "find the existing issue" step below can find it. Changing it orphans the open
+  # issue rather than updating it.
+  ISSUE_TITLE: "Dependency audit: known advisories outstanding"
+  ISSUE_LABEL: dependency-audit
+
+jobs:
+  audit:
+    name: Audit every lockfile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pin styles follow ci.yml and its reasoning: `actions/*` publish floating major tags, and
+      # astral-sh/setup-uv stopped publishing them at v8, so it takes an exact patch tag and `@v9`
+      # fails the run outright. Keep these two lines in step with ci.yml when either is bumped.
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          # Every lockfile, because this job reads all four. One cache key for the job is right
+          # here — unlike ci.yml, where per-package keys keep the jobs independent.
+          cache-dependency-glob: "*/uv.lock"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      # NOTE THE ABSENT INSTALL STEPS. There is no `npm ci` and no `uv sync`, on purpose and
+      # verified: `npm audit` builds its tree from package-lock.json alone, and `uv export --frozen`
+      # reads uv.lock alone. Installing would cost minutes to produce the same answer, and it would
+      # make this job's result depend on an install succeeding — which is ci.yml's job to report,
+      # not this one's.
+      - name: Audit
+        id: audit
+        run: |
+          set +e
+          scripts/dependency-audit.sh | tee "$RUNNER_TEMP/report.txt"
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          {
+            echo '## Dependency audit'
+            echo '```'
+            cat "$RUNNER_TEMP/report.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Exit 2 is the one case that fails the run: the audit could not be completed, so its silence
+      # says nothing about the tree. See the exit-code contract in scripts/dependency-audit.sh.
+      - name: Fail if the audit could not run
+        if: steps.audit.outputs.status == '2'
+        run: |
+          echo "✗ the dependency audit did not complete — see the log above."
+          echo "  Red here means the check is broken, NOT that advisories were found."
+          exit 1
+
+      # `gh` rather than a third-party issue action, for the reason ci.yml gives for preferring a
+      # pinned gitleaks binary over gitleaks-action: one fewer dependency to keep pinned, and it is
+      # already on the runner.
+      - name: Open or update the tracking issue
+        if: steps.audit.outputs.status == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh label create "$ISSUE_LABEL" --color BFD4F2 \
+            --description "Raised by .github/workflows/dependency-audit.yml" 2>/dev/null || true
+
+          {
+            echo "\`scripts/dependency-audit.sh\` found known advisories in a committed lockfile."
+            echo ""
+            echo "This issue is **rewritten in place** by every run, so it is always the current"
+            echo "picture rather than a pile of stale comments. Nothing is blocked by it — see the"
+            echo "header of \`.github/workflows/dependency-audit.yml\` for why the audit reports"
+            echo "instead of gating."
+            echo ""
+            echo "An advisory marked \`dev-only\` is absent from the runtime dependency set, so it"
+            echo "never reaches a user. That changes the urgency, not the disposition: it is still"
+            echo "a build-time supply-chain exposure and it still wants an upstream fix."
+            echo ""
+            echo "Anything with a fix should already have a Dependabot PR open. Anything showing"
+            echo "\`NO FIX AVAILABLE\` is waiting on an upstream release — record the decision to"
+            echo "wait, here, so the next reader does not re-derive it."
+            echo ""
+            echo '```'
+            cat "$RUNNER_TEMP/report.txt"
+            echo '```'
+            echo ""
+            echo "Run: $RUN_URL"
+          } > "$RUNNER_TEMP/body.md"
+
+          # `--state all`: a closed issue is reopened and rewritten rather than replaced, so the
+          # history of an advisory that keeps coming back stays in one place.
+          number=$(gh issue list --label "$ISSUE_LABEL" --state all --limit 1 \
+                     --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --title "$ISSUE_TITLE" --body-file "$RUNNER_TEMP/body.md"
+            gh issue reopen "$number" 2>/dev/null || true
+            echo "updated issue #$number"
+          else
+            gh issue create --title "$ISSUE_TITLE" --label "$ISSUE_LABEL" \
+              --body-file "$RUNNER_TEMP/body.md"
+          fi
+
+      - name: Close the tracking issue when the tree is clean
+        if: steps.audit.outputs.status == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          number=$(gh issue list --label "$ISSUE_LABEL" --state open --limit 1 \
+                     --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh issue close "$number" \
+              --comment "Clean as of $(date -u '+%Y-%m-%d %H:%M UTC') — every advisory listed above has cleared."
+            echo "closed issue #$number"
+          else
+            echo "no advisories, and no open tracking issue to close"
+          fi

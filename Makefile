@@ -35,6 +35,14 @@ secret-scan-history: ## Same scanner over every commit. An audit, deliberately N
 image-pins: ## Fail if any external container image is referenced by tag instead of digest
 	@scripts/check-image-pins.sh
 
+# Deliberately NOT a dependency of `check` and not in the pre-push hook, for the same reason
+# `secret-scan-history` is not: it needs the network, and it goes red on a third party's timetable
+# rather than on anything the pusher did. A scheduled workflow runs it weekly and reports into one
+# issue. scripts/dependency-audit.sh explains the whole argument. KAN-699.
+.PHONY: audit
+audit: ## npm audit + pip-audit over every committed lockfile. An audit, deliberately NOT in `check`
+	@scripts/dependency-audit.sh
+
 .PHONY: install
 install: ## Sync every package's dependencies (uv for Python, npm for the SPA)
 	@for pkg in $(PY_PACKAGES); do echo "▸ $$pkg"; (cd $$pkg && uv sync --all-extras) || exit 1; done
