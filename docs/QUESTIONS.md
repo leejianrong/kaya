@@ -42,6 +42,7 @@ soft-vs-self-sufficient linking) is at
 | Q7 | Browser single sign-on in the MVP? | DEFERRED | Needs both apps under one owned apex domain; `fly.dev` is on the Public Suffix List so `*.fly.dev` origins cannot share a cookie. Arrives with the homelab. PAT auth carries the MVP. | ADR 0002, ADR 0010 |
 | Q8 | Per-note sharing or ACLs? | DEFERRED | Owner-only for the MVP, mirroring pandan's pre-M5 stance. pandan's board membership model is the template when it's needed. | PLAN §Scope |
 | Q9 | What does kaya do when pandan is unreachable and the token isn't cached? | ASSUMED | `503` with a structured error naming the upstream. It is never a `401` — a wrong answer about identity is worse than no answer. | ADR 0002 |
+| Q40 | Does the `403` on someone else's note leak that it exists? | ASSUMED | Yes, and deliberately. A `403` tells the caller the note is real; a blanket `404` would hide that but would also leave someone who mistyped a ref hunting a note sitting right there. The bit is cheap to give up — refs come from one global sequence and already leak a rough note count (ADR 0008 §Consequences). Per-note sharing (Q8) is the trigger to revisit; "hardening" it to `404` unilaterally is a contract change and fails `test_someone_elses_note_is_a_403_and_deliberately_not_a_404`. | ADR 0002, PLAN §Authorization, SLICES §V1 |
 
 ### Stack and architecture
 
@@ -114,6 +115,6 @@ One row per checklist category, so a skipped category is visible rather than abs
 | External dependencies | Q10, Q12 (CodeMirror 6, MIT), Q1 (pandan as a runtime dependency of the resolver only) |
 | Runtime and deployment | Q14, Q28, Q29 · ADR 0010 |
 | Measurable success | PLAN §Requirements (each R carries a checkable acceptance line in SLICES.md) |
-| Security and secrets | Q5, Q6, Q9, Q33 · ADR 0002 |
+| Security and secrets | Q5, Q6, Q9, Q33, Q40 · ADR 0002 |
 | Versioning and migration | Q18, Q27, Q29, Q30 · ADR 0007, ADR 0008 |
 | Agent ergonomics *(domain category, added)* | Q13, Q23, Q24, Q25 · ADR 0004, 0005, 0006 |

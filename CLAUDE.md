@@ -7,19 +7,33 @@ CI, but they hold almost nothing (KAN-531):
 
 | Package | What's actually in it |
 |---|---|
-| `backend/` | FastAPI app that boots, `GET /health`, one sync engine, migration `0001` (the `user` mirror, `note`, the `NOTE-` sequence), and `app/auth/`: the principal resolver with its `get_principal` dependency, plus `authorize_note` and `notes_owned_by`. No routes under `/api/v1` yet, so nothing in the app depends on any of it |
+| `backend/` | FastAPI app, `GET /health`, one sync engine, migration `0001` (the `user` mirror, `note`, the `NOTE-` sequence), `app/auth/` (principal resolver, `get_principal`, `authorize_note`, `notes_owned_by`), and `app/api/`: **`/api/v1/notes` CRUD** over the central ref resolver |
 | `kaya-client/` | An importable package and a version. No `KayaClient`, no `render()` — those are V2a |
 | `kaya-cli/` | The `kaya` console script, one entry point, **no verbs** |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
 | `frontend/` | Svelte 5 + Vite + TS toolchain, a shell page, and the dev proxy for `/api` |
 
-Not built yet: anything under `/api/v1` — routes, the central `NOTE-n`/id ref resolver, and the
-`409` precondition (KAN-536/537) — and the container image and manifests (KAN-538).
+Not built yet: the `409` precondition on `PATCH` (KAN-537), `?q=` search (KAN-558/559), `/links` and
+`/backlinks` (KAN-566), and the container image and manifests (KAN-538).
+
+**Every identifier goes through `backend/app/api/refs.py`.** `NOTE-12`, `note-12` and `12` resolve
+in *one* place, so a missing note is the same `404` byte for byte whichever spelling asked for it,
+and `#NOTE-12` is a `400` usage error (ADR 0008). A route never sees a string — it depends on
+`NoteFromRef` and is handed a `Note`, which is what makes V5's `/links` and `/backlinks` inherit the
+guarantee without writing any ref handling. If you add a ref-taking verb, take the dependency; if
+you find yourself parsing an identifier in a route, that is the bug ADR 0008 exists to prevent.
+
+**The API error shape is `{"error": {"code", "message", …}}`** — flat, un-nested, and the same for
+every failure including Starlette's own `404`/`405` and body validation (`app/api/errors.py`).
+`error_body` remains the single builder; `detail` is FastAPI's word and does not appear on the wire.
 
 **A note list is scoped in SQL, in one place.** Compose onto `app.auth.notes_owned_by`, which
 carries `WHERE owner_id = :caller`; `backend/tests/unit/test_no_unscoped_note_query.py` fails if
 `Note` reaches a `select()` anywhere else under `app/`. A *single* note is fetched unscoped on
-purpose — `authorize_note` cannot answer `403` for someone else's note if the fetch never found it.
+purpose — `authorize_note` cannot answer `403` for someone else's note if the fetch never found it —
+which is why `note_addressed_as_ref` / `note_addressed_as_id` also live in `app/auth/authorization.py`
+rather than beside the resolver that calls them. That guard is not negotiable: put the query in the
+sanctioned module, never in the allow-list.
 
 Introspection latency is now **measured** (KAN-539, re-runnable as `make measure-auth`): a cache hit
 is **1.6 µs**, a warm miss **387 ms**, and a **cold miss 21.8 s** (measured with the harness's

@@ -3,11 +3,22 @@
 FastAPI over **sync** SQLAlchemy and psycopg v3, with Alembic wired up from day one
 ([ADR 0001](../docs/adr/0001-stack-inherited-from-pandan.md)).
 
-Right now: an app that boots and serves `GET /health`, migration `0001` (the `user` mirror, `note`,
-and the `NOTE-` sequence — KAN-533), and `app/auth/` — the principal resolver (KAN-534) plus
-`authorize_note` and the owner-scoped list statement (KAN-535). **There is still nothing under
-`/api/v1`**, so nothing in the app depends on any of it yet; the routes are KAN-536, and they are
-written against these seams rather than the other way round (ADR 0005).
+Right now: `GET /health`, migration `0001` (the `user` mirror, `note`, and the `NOTE-` sequence —
+KAN-533), `app/auth/` — the principal resolver (KAN-534) plus `authorize_note` and the owner-scoped
+list statement (KAN-535) — and `app/api/`: the five `/api/v1/notes` routes over the central ref
+resolver (KAN-536).
+
+| Route | Notes |
+|---|---|
+| `POST /api/v1/notes` | `201` + `Location`. Owner is the caller; there is no field to say otherwise |
+| `GET /api/v1/notes` | `{"notes": [...]}`, owner-scoped in SQL, newest first |
+| `GET /api/v1/notes/{ref}` | `ref` is `NOTE-12`, `note-12` **or** `12` |
+| `PATCH /api/v1/notes/{ref}` | Partial. Omitted fields are unchanged. Moving a note is `{"path": …}` |
+| `DELETE /api/v1/notes/{ref}` | `204`. The ref is never reused |
+
+Not here yet, with the card that owns each: the `409` precondition (KAN-537 — a write that omits it
+is a plain overwrite *by specification*, ADR 0009), `?q=` search (KAN-558/559), and `/links` +
+`/backlinks` (KAN-566).
 
 ```bash
 uv sync --all-extras
@@ -30,7 +41,18 @@ database — it passes locally and fails in CI. That is pandan's "PR #17 trap".
 `WHERE` on the statement, not a pass over rows Postgres already returned, so another user's note is
 never fetched. `tests/unit/test_no_unscoped_note_query.py` fails if `Note` reaches a `select()`
 anywhere else in `app/`. Fetching a *single* note unscoped is fine and necessary — that is what
-lets `authorize_note` answer `403` rather than `404` for someone else's.
+lets `authorize_note` answer `403` rather than `404` for someone else's, and it is why
+`note_addressed_as_ref` / `note_addressed_as_id` live in `authorization.py` beside the scoped one
+rather than next to the ref resolver that calls them.
+
+**Every identifier goes through `app/api/refs.py`.** `NOTE-12`, `note-12` and `12` resolve in one
+place, so `#NOTE-12` is a `400` and a missing note is the same `404` byte for byte whichever
+spelling asked for it (ADR 0008). A route never sees a string; it depends on `NoteFromRef` and is
+handed a `Note`.
+
+**One error shape: `{"error": {"code", "message", …}}`.** `app/api/errors.py` un-nests what FastAPI
+would otherwise wrap in `detail`, and covers Starlette's own `404`/`405` and body validation too, so
+a client needs one parser rather than three.
 
 ## Migrations
 
