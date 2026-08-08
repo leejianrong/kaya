@@ -43,6 +43,7 @@ soft-vs-self-sufficient linking) is at
 | Q8 | Per-note sharing or ACLs? | DEFERRED | Owner-only for the MVP, mirroring pandan's pre-M5 stance. pandan's board membership model is the template when it's needed. | PLAN §Scope |
 | Q9 | What does kaya do when pandan is unreachable and the token isn't cached? | ASSUMED | `503` with a structured error naming the upstream. It is never a `401` — a wrong answer about identity is worse than no answer. | ADR 0002 |
 | Q40 | Does the `403` on someone else's note leak that it exists? | ASSUMED | Yes, and deliberately. A `403` tells the caller the note is real; a blanket `404` would hide that but would also leave someone who mistyped a ref hunting a note sitting right there. The bit is cheap to give up — refs come from one global sequence and already leak a rough note count (ADR 0008 §Consequences). Per-note sharing (Q8) is the trigger to revisit; "hardening" it to `404` unilaterally is a contract change and fails `test_someone_elses_note_is_a_403_and_deliberately_not_a_404`. | ADR 0002, PLAN §Authorization, SLICES §V1 |
+| Q42 | Can a caller's bearer reach a log line? | DECIDED | **No, and it is enforced twice.** Structurally: the access line carries a fixed allowlist (`ACCESS_FIELDS`) with no header of any name and no query string in it. As a backstop: every record is scrubbed at serialization, so a header mapping, a `repr()` or an exception message logged by any call site — kaya's, httpx's, SQLAlchemy's — is cleaned without that call site knowing the rule exists. Guarded by `test_log_redaction.py`, which asserts against every contiguous **fragment** of a realistically-shaped fake token rather than the whole string, because a partial leak is a leak. Mutation-proven per Q32. | ADR 0002, `app/observability/redaction.py` |
 
 ### Stack and architecture
 
@@ -88,6 +89,7 @@ soft-vs-self-sufficient linking) is at
 | Q32 | How is a "this can't regress" guard proven? | ASSUMED | Mutation-test it: break the protected thing, confirm the failure names the right thing, restore **non-destructively** (`git apply -R`, not `git checkout --`). pandan found six blind guards this way in five slices. | PLAN §Testing approach |
 | Q33 | Secrets in the repo? | ASSUMED | None. `.mcp.json` and `.env` ignored and scanned. Kaya holds no long-lived credential of its own — it forwards the caller's token and stores only hashes in the cache. The introspection URL is config, not a secret. | PLAN §Implementation decisions |
 | Q34 | Docs site? | ASSUMED | Docs-as-code with a PR build check, mirroring pandan. Not in the MVP slices; the ADR chain in this repo is the MVP's documentation. | DEFERRED to post-MVP |
+| Q41 | How is a running kaya observed? | ASSUMED | **In:** one JSON line per request on stdout, an `X-Request-Id` echoed to the caller and carried on every log line of that request (including tracebacks), and unhandled exceptions logged with that id. Stdlib `logging` with a ~130-line JSON formatter — no new dependency. **Out, deliberately:** no metrics endpoint (nothing scrapes it under ADR 0010, and an unread `/metrics` is a surface to secure for no reader), no error-tracking SaaS (a DSN is configuration for an environment that doesn't exist), no sampling (at this traffic it only loses the one request somebody is asking about), no request/response bodies. `/health` logs at DEBUG so the liveness probe doesn't drown the log. Revisit at the first homelab deploy, which is the first time anything reads these logs. | `app/observability/`, KAN-700 |
 
 ### Scope
 
@@ -113,8 +115,8 @@ One row per checklist category, so a skipped category is visible rather than abs
 | Interfaces and contracts | Q13, Q14, Q23, Q24, Q25, Q27 · ADR 0004–0006 |
 | Failure behaviour | Q9, Q26 · ADR 0002 §Consequences, ADR 0003 |
 | External dependencies | Q10, Q12 (CodeMirror 6, MIT), Q1 (pandan as a runtime dependency of the resolver only) |
-| Runtime and deployment | Q14, Q28, Q29 · ADR 0010 |
+| Runtime and deployment | Q14, Q28, Q29, Q41 · ADR 0010 |
 | Measurable success | PLAN §Requirements (each R carries a checkable acceptance line in SLICES.md) |
-| Security and secrets | Q5, Q6, Q9, Q33, Q40 · ADR 0002 |
+| Security and secrets | Q5, Q6, Q9, Q33, Q40, Q42 · ADR 0002 |
 | Versioning and migration | Q18, Q27, Q29, Q30 · ADR 0007, ADR 0008 |
 | Agent ergonomics *(domain category, added)* | Q13, Q23, Q24, Q25 · ADR 0004, 0005, 0006 |

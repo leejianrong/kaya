@@ -4,9 +4,9 @@ KAN-531 was the skeleton: an app that boots and one health endpoint. KAN-536 mou
 (``app/api/``), which is where everything a caller can do now lives. KAN-538 puts the built SPA on
 this same origin, so one artifact serves both halves (ADR 0010).
 
-Three lines of composition and no behaviour, deliberately — the router, the error handlers and the
-SPA are all installable onto a bare ``FastAPI()``, so a test can stand up the real surface without
-the real settings.
+Four lines of composition and no behaviour, deliberately — the router, the error handlers, the
+observability layer and the SPA are all installable onto a bare ``FastAPI()``, so a test can stand
+up the real surface without the real settings.
 """
 
 from fastapi import FastAPI
@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from app import __version__
 from app.api import install_error_handlers
 from app.api import router as api_router
+from app.observability import install_observability
 from app.spa import mount_spa
 
 app = FastAPI(
@@ -24,6 +25,13 @@ app = FastAPI(
     docs_url="/docs",
     openapi_url="/openapi.json",
 )
+
+# First, so that anything the rest of this module's import does — and everything uvicorn logs
+# while starting up — is already going to one stdout handler in one shape. It also puts the
+# request-log middleware *outside* the exception handlers, which is what lets the access line
+# record the status a refusal was finally answered with rather than the exception it began as.
+# See `app/observability/middleware.py` on the ordering.
+install_observability(app)
 
 # Before the router, so a refusal raised while resolving a dependency is shaped too.
 install_error_handlers(app)

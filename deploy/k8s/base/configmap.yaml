@@ -16,3 +16,12 @@ data:
   # Generous rather than snappy: pandan's API scales to zero, so the first call after an idle
   # period pays a cold start and httpx's 5s default would turn a normal wake-up into a `503`.
   KAYA_PANDAN_TIMEOUT_SECONDS: "10"
+
+  # Threshold for the one stdout handler (app/observability/, Q41). `INFO` is one JSON line per
+  # request; `DEBUG` adds the liveness probe, which is deliberately below `INFO` because the
+  # kubelet hits `/health` every few seconds forever and would otherwise be almost the whole log.
+  #
+  # There is nothing here pointing the log *at* anything. The process writes JSON to stdout and the
+  # cluster decides what collects it — the only arrangement that behaves identically under
+  # `make dev`, under `make up`, and in a pod.
+  KAYA_LOG_LEVEL: "INFO"
