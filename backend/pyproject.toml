@@ -12,7 +12,7 @@ dependencies = [
     "uvicorn[standard]>=0.34",
     "sqlalchemy>=2.0.36",
     "psycopg[binary]>=3.2",
-    "alembic>=1.14",
+    "alembic>=1.19.0",
     "pydantic-settings>=2.7",
     # Runtime, not just test tooling, since KAN-534: the principal resolver calls pandan's
     # `GET /api/v1/me` over httpx (ADR 0002). It doubles as fastapi.testclient's transport.
