@@ -58,7 +58,7 @@ round trip dominates: `GET /healthz` alone is 389 ms.
 
 | Call | Median | Notes |
 |------|--------|-------|
-| `GET /healthz` | 389 ms | the floor, pure round trip |
+| `GET /healthz` | 389 ms | the floor, pure round trip [^healthz] |
 | `GET /cards/{id}` | 776 ms | [n=7] min 530, max 790 |
 | 10 sequential card reads | 6,716 ms | [n=5] min 6,217, max 7,043 |
 | 10 concurrent, cap 10 | 948 ms | [n=5] min 852, max 1,569 |
@@ -80,6 +80,11 @@ Twenty refs, wall clock by concurrency cap, three runs each:
 
 Pandan absorbs twenty in flight without shedding and with only mild per-request degradation. That
 is the honest case for the fan-out, and it is worth stating plainly before the case against it.
+
+[^healthz]: Noted while re-using this row as a baseline in KAN-539: pandan has no JSON health
+    endpoint. `/healthz`, `/health` and `/api/v1/health` all answer `200 text/html` with the SPA's
+    `index.html`, so this row is a proxy-plus-static-file round trip. That is still the right floor
+    — same proxy, same app, no database and no auth — but it is not what the path name suggests.
 
 `updated_since` works but is not selective on this data: every window from one hour to thirty days
 returns a full 200-card page, so an incremental sweep saves nothing here today.
