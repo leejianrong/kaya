@@ -253,7 +253,7 @@ def test_json_is_compact_for_errors_too() -> None:
 # -------------------------------------------------------------- the format vocabulary
 
 def test_errors_render_in_every_format_successes_do() -> None:
-    """The tripwire for KAN-541's ``toon``.
+    """The tripwire that caught KAN-541's ``toon``, and will catch the next format too.
 
     A format that rendered a note list but not a `404` would fail exactly when the user most needs
     output, and it would fail as an ``UnknownFormat`` raised from inside an error handler — which
@@ -262,11 +262,11 @@ def test_errors_render_in_every_format_successes_do() -> None:
     assert set(_ERROR_SERIALIZERS) == set(_SERIALIZERS)
 
 
-@pytest.mark.parametrize("fmt", ["toon", "yaml", "HUMAN", "", "csv"])
+@pytest.mark.parametrize("fmt", ["yaml", "HUMAN", "TOON", "", "csv"])
 def test_an_unknown_format_fails_the_same_way_on_the_error_path(fmt: str) -> None:
     with pytest.raises(UnknownFormat) as raised:
         render_error(NOT_FOUND, fmt=fmt)
-    assert "human, json" in str(raised.value)
+    assert "human, json, toon" in str(raised.value)
 
 
 def test_the_error_paths_unknown_format_message_hides_the_adapter_format() -> None:
@@ -313,7 +313,7 @@ def test_no_rendered_error_contains_any_fragment_of_the_bearer(handler: object) 
 
     rendered = " ".join(
         json.dumps(render_error(raised.value, fmt=fmt), ensure_ascii=False)
-        for fmt in ("human", "json", "data")
+        for fmt in ("human", "json", "toon", "data")
     )
     fragments = {
         TOKEN[start:stop]

@@ -61,13 +61,14 @@ def test_the_row_names_the_flag_argparse_rejected(capsys) -> None:
 
 
 def test_an_unknown_positional_is_also_a_usage_error(capsys) -> None:
-    """`kaya note list` is KAN-541's, and until it exists it must be *refused*, not ignored.
+    """A word the CLI does not have must be *refused*, not ignored.
 
     This replaces V1's placeholder assertion that unknown argv returned `0`. A CLI that silently
     accepts a verb it does not have is a CLI that reports success for work it never did — the exact
-    shape of failure an agent cannot detect.
+    shape of failure an agent cannot detect. `note list` is a real verb since KAN-541, so the
+    assertion moved to a word that is not; the property is unchanged.
     """
-    code = main(["note", "list"])
+    code = main(["notebook", "list"])
     captured = capsys.readouterr()
 
     assert code == 2
@@ -134,7 +135,7 @@ def test_argparse_never_exits_the_process_itself() -> None:
     would be the one path with no test on it. ``pytest.raises(SystemExit)`` inverted: nothing here
     may raise it at all.
     """
-    for argv in (["--nope"], ["--help"], [], ["note", "get", "NOTE-1"]):
+    for argv in (["--nope"], ["--help"], [], ["note"], ["note", "get"]):
         assert isinstance(main(argv), int)
 
 

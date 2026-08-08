@@ -25,6 +25,7 @@ a retry over a 21.8 s cold introspection makes an outage take a multiple of the 
 """
 
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -103,13 +104,20 @@ class KayaClient:
     def get_note(self, ref: str) -> Payload:
         """One note, addressed as ``NOTE-12``, ``note-12`` or bare ``12``.
 
-        The identifier is passed through untouched. ADR 0008 puts every spelling of a ref through
-        one resolver in `backend/app/api/refs.py`, so that a missing note is the same `404` byte for
-        byte whichever spelling asked for it. Normalising here would be a second resolver, and the
-        first thing a second resolver does is disagree — ``#NOTE-12`` is a `400` from the API and
-        would become a silent success from a client that "helpfully" stripped the ``#``.
+        The identifier reaches the API **unchanged in meaning**. ADR 0008 puts every spelling of a
+        ref through one resolver in `backend/app/api/refs.py`, so a missing note is the same `404`
+        byte for byte whichever spelling asked for it. Normalising here would be a second resolver,
+        and the first thing a second resolver does is disagree — ``#NOTE-12`` is a `400` from the
+        API and would become a silent success from a client that "helpfully" stripped the ``#``.
+
+        **Which is why the ref is percent-encoded as one path segment** (KAN-541). Interpolating
+        it raw looks like passing it through and is not: httpx parses the result as a URL, so
+        ``#NOTE-12`` became an empty segment plus a fragment that is never sent, ``12?q=x`` became a
+        query string, and ``a/b`` became two segments. Each reached a *different endpoint* than the
+        caller named, so the `400` ADR 0008 promises never happened. ``quote(safe="")`` sends the
+        segment the user typed and lets the one resolver refuse it.
         """
-        body = self._request("GET", f"{NOTES_PATH}/{ref}")
+        body = self._request("GET", f"{NOTES_PATH}/{quote(ref, safe='')}")
         return Payload.entity(
             noun=NOTE_NOUN,
             envelope_key=NOTE_ENVELOPE,

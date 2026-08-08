@@ -26,13 +26,22 @@ program parsing ``kaya``'s output must be able to read the whole of stdout as th
 forty-line usage block interleaved with a machine row would make the row findable only by scanning,
 and "scan stdout for a line starting with ``error``" is a rule that fails silently the first time a
 note's title starts with the word.
+
+### The output flags, and why resolving them is not shaping
+
+``--format`` and ``--json`` are declared here and resolved here. That is not a violation of ADR
+0004: what this module decides is which *name* the user asked for, and every byte of what that name
+means lives in `kaya_client.serialization`. The vocabulary itself is not written down in this
+package — ``choices`` comes from ``CLI_FORMATS``, which is derived from the ``Format`` enum, so a
+format published in the client is offered by the CLI without anybody editing an adapter, and an
+adapter-only format (``data``) cannot be offered by accident.
 """
 
 import argparse
 import sys
 from typing import NoReturn
 
-from kaya_client import UsageError
+from kaya_client import CLI_FORMATS, Format, UsageError
 
 
 class ParserExit(Exception):
@@ -82,3 +91,49 @@ class StructuredParser(argparse.ArgumentParser):
         if message:
             print(message, end="", file=sys.stderr)
         raise ParserExit(status)
+
+
+FORMAT_FLAG = "--format"
+JSON_FLAG = "--json"
+
+
+def output_flags() -> argparse.ArgumentParser:
+    """The ``--format``/``--json`` pair, as a parent parser every verb inherits.
+
+    A parent rather than two copies per subparser: ADR 0005 §contract 1 is a promise about *every*
+    verb, and the way that promise breaks is one verb added in V2b without the flags. Declaring them
+    once means a verb cannot be added without them.
+
+    ``--format`` defaults to ``None`` rather than to ``human`` on purpose — see `resolve_format`.
+    """
+    flags = argparse.ArgumentParser(add_help=False)
+    flags.add_argument(
+        FORMAT_FLAG,
+        choices=CLI_FORMATS,
+        default=None,
+        help=f"output format (default: {Format.HUMAN.value})",
+    )
+    flags.add_argument(
+        JSON_FLAG,
+        action="store_true",
+        help=f"alias for `{FORMAT_FLAG} {Format.JSON.value}`; {FORMAT_FLAG} wins if both are given",
+    )
+    return flags
+
+
+def resolve_format(args: argparse.Namespace) -> str:
+    """Which format the user asked for. ADR 0005 §contract 1's precedence, in one place.
+
+    **``--format`` wins if both are given**, and that is why ``--format``'s default is ``None``: a
+    default of ``"human"`` makes "the user typed ``--format human``" and "the user typed nothing"
+    the same value, so ``kaya note list --format human --json`` would emit JSON — the alias
+    overruling the explicit flag it is an alias *for*. The absent default is the whole mechanism,
+    and `tests/test_output_flags.py` pins the case it exists for.
+
+    Returns ``human`` for an invocation with no output flags at all, which includes every path that
+    never reached a verb: a usage error is reported in the format nobody had a chance to choose.
+    """
+    chosen = getattr(args, "format", None)
+    if chosen:
+        return str(chosen)
+    return Format.JSON if getattr(args, "json", False) else Format.HUMAN

@@ -72,6 +72,7 @@ EXIT_FOR_CODE: Mapping[str, int] = MappingProxyType(
     {
         "usage": EXIT_USAGE,
         "unreachable": EXIT_RUNTIME,
+        "no_credential": EXIT_RUNTIME,
         "runtime": EXIT_RUNTIME,
     }
 )
@@ -81,6 +82,11 @@ Keys are ``KayaError.code`` values from `kaya_client.errors`, which is why a rai
 meaning and never a number — ``raise TransportError(…)`` names ``unreachable`` and this dict decides
 what that costs. Read-only at runtime as well as by rule, so a verb cannot register a code by
 mutating the table from the outside; adding one is editing this file, in a diff a reviewer sees.
+
+``no_credential`` is KAN-541's addition and is `1`, not `3`, per SLICES §V2a's failure table. A
+missing ``KAYA_TOKEN`` is not a rejected credential: nothing was refused because nothing was asked,
+and a script that re-authenticated on `3` would be minting a PAT to replace one that was never
+presented. The distinction is the same one `errors.py` draws between ``TransportError`` and a `401`.
 """
 
 EXIT_FOR_STATUS: Mapping[int, int] = MappingProxyType(

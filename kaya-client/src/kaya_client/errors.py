@@ -98,6 +98,28 @@ class UnknownFormat(UsageError, ValueError):
     """
 
 
+class MissingCredential(KayaError):
+    """No token was configured, so no request was made.
+
+    Distinct from ``ApiError(401)`` for the same reason ``TransportError`` is: nothing was refused,
+    because nothing was asked. SLICES §V2a's failure table puts it at exit `1`, not `3` — a script
+    that re-authenticated on `3` would be re-authenticating a credential that was never presented,
+    and the fix is a line of configuration rather than a new PAT.
+
+    ``arg`` carries the environment variable's name, so the row a consumer reads names the thing to
+    set. **Never the token itself, and never a fragment of one** — this class exists on the path
+    where there isn't one, and the surrounding rule (Q41/Q42) is that no rendered failure may carry
+    a bearer in any form.
+
+    A ``KayaError`` in the shared client rather than a `kaya-cli` exception, because
+    ``no_credential`` is a published code string and V6's MCP server resolves the same
+    configuration: a second class for one meaning is the drift ADR 0004 forbids, in the one place a
+    consumer is explicitly told to branch.
+    """
+
+    code: ClassVar[str] = "no_credential"
+
+
 class TransportError(KayaError):
     """The API could not be *asked* — DNS, connection refused, timeout, TLS.
 
