@@ -1,0 +1,43 @@
+# treehouse — a bounded, recycled pool of git worktrees for parallel agent sessions.
+# https://github.com/kunchenguid/treehouse
+#
+# Why this exists: a fresh worktree per agent task silently accumulates full checkouts
+# and clogs disk (dev-playbook §10). A pool recycles a fixed set instead.
+#
+#   treehouse get                 # acquire a tree + open a subshell (exit returns it)
+#   p=$(treehouse get --lease)    # acquire without a subshell; prints the path
+#   treehouse return <path>       # release a leased tree back to the pool
+#   treehouse status              # the pool, and who holds what
+#   treehouse prune --yes         # reclaim idle, merged, clean trees
+#
+# Warm a fresh tree with `make install` — kaya is five packages, so that is four
+# `uv sync` runs plus an `npm ci`, and it is the reason the pool is small rather
+# than generous. The pre-push hook needs no setup: worktrees share `.git/hooks`.
+
+# Small on purpose. Every tree is a full checkout plus four `.venv`s and a
+# `node_modules`. Three concurrent agents is already more than this repo's
+# strict branch protection will let you *land* in parallel.
+max_trees = 4
+
+# Empty = $HOME, so trees live under ~/.treehouse/ — outside this repo, where they
+# cannot show up as untracked files or be committed by accident.
+root = ""
+
+# ---------------------------------------------------------------------------------
+# One difference from the sibling project worth knowing, because it removes a trap
+# rather than adding one.
+#
+# pandan's treehouse config warns that every tree needs its own database, because
+# worktrees share a filesystem and one branch's migration stamps a revision the
+# others don't have. In kaya that applies to `make dev` and `make db` ONLY.
+# `make test-integration` self-provisions a throwaway Postgres per session via
+# testcontainers (`backend/tests/integration/conftest.py`), so the test layer is
+# already isolated and needs nothing here.
+#
+# If you do run the dev loop in a tree, give it its own database as CLAUDE.md
+# §Conventions describes:
+#
+#   COMPOSE_PROJECT_NAME=kaya-<tree> KAYA_DB_PORT=5433 make db
+#
+# and point that tree's DATABASE_URL at the port you chose.
+# ---------------------------------------------------------------------------------
