@@ -56,8 +56,9 @@ Each one is a place where the obvious implementation is wrong.
    Projection, truncation, aggregates and serialization go through one `render()` seam. The CLI and
    the MCP server both call it. A projection rule appearing in `kaya-cli/` or `mcp/` is a bug, not a
    local optimisation. `kaya_cli.verbs` is what a verb is allowed to be — open a session, call one
-   client method, return the `Payload` — and `__main__.main` calls `render()` on exactly one line. Pandan put shaping in its CLI, so its MCP adapter inherited none of it and one
-   `list_cards` call costs 44,902 tokens against 2,689 for the equivalent CLI read.
+   client method, return the `Payload` — and `__main__.main` calls `render()` on exactly one line.
+   Pandan put shaping in its CLI, so its MCP adapter inherited none of it and one `list_cards` call
+   costs 44,902 tokens against 2,689 for the equivalent CLI read.
 2. **Kaya has no token format and no prefix logic** ([ADR 0002](docs/adr/0002-identity-pandan-as-provider.md)).
    Authentication forwards the bearer to pandan's `GET /api/v1/me` and caches the answer keyed on
    `sha256(token)`. Do not add a `startswith` guard: pandan still accepts pre-rebrand `kanban_pat_…`

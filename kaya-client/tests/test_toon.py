@@ -162,6 +162,25 @@ def test_non_ascii_is_not_escaped() -> None:
 # ------------------------------------------------------------------ the round trip
 
 
+AWKWARD_ROWS = {
+    "notes": [
+        {"ref": "NOTE-1", "title": "Milk, eggs, bread", "body": "key: value\nnext"},
+        {"ref": "NOTE-2", "title": "-a leading dash", "body": 'he said "hi", loudly'},
+        {"ref": "NOTE-3", "title": "12", "body": ""},
+    ]
+}
+"""A uniform table whose **cells** contain every character the row grammar depends on.
+
+Written after a mutation showed the earlier corpus was not reaching the rule it meant to test.
+Removing the delimiter check from ``_is_safe_unquoted`` reddened only the byte-for-byte corpus, not
+the round trip, because the only comma-bearing value in it sat at a ``key: value`` position — where
+a bare ``a,b`` decodes back to ``"a,b"`` and the round trip survives a genuinely broken encoder. A
+delimiter is only ambiguous **inside a tabular row**, so that is where the corpus now puts one.
+
+CLAUDE.md's rule, met in the wild: watch what the mutation actually reaches. A guard that fires only
+through some other rule's success is not a guard over the rule you meant to test.
+"""
+
 ROUND_TRIP = [
     {"notes": [GROCERIES, READING_LIST]},
     {"notes": [GROCERIES]},
@@ -173,6 +192,7 @@ ROUND_TRIP = [
     *[value for _, value, _ in GRAMMAR if value != {}],
     {"awkward": ['he said "hi"', "a\\b", "line\nbreak", "  padded  ", "#hash", "[brackets]"]},
     {"numbers": [0, -1, 1.5, 1e21, 1e-7, 0.1]},
+    AWKWARD_ROWS,
 ]
 
 
