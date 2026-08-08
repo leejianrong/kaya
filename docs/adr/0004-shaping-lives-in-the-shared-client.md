@@ -110,14 +110,29 @@ the envelope key, the default human columns, and the prose allow-list truncation
 this decision applied to itself — those facts are shaping inputs, and the alternative is every
 adapter re-deriving them.
 
-**`-> str | dict` is spelled `fmt="data"`.** The decision names three formats and types the seam as a
-union, but all three named formats are strings, leaving the `dict` arm without a spelling. It is a
-fourth `fmt` value returning the shaped dict itself — the output of steps 1–3, before any encoder
-touches it. It exists for the MCP adapter V6 will write: an MCP tool returning `structuredContent`
-hands its host a JSON object, and without `data` the obvious workaround is
-`json.loads(render(..., fmt="json"))` in the adapter, which is a shaping decision leaking back out
-of the client. **`data` is the only value that returns a `dict`; every other format returns a
-`str`.**
+**`-> str | dict` is spelled `fmt="data"`, and `data` is adapter-facing only.** The decision names
+three formats and types the seam as a union, but all three named formats are strings, leaving the
+`dict` arm without a spelling. It is a fourth `fmt` value returning the shaped dict itself — the
+output of steps 1–3, before any encoder touches it. It exists for the MCP adapter V6 will write: an
+MCP tool returning `structuredContent` hands its host a JSON object, and without `data` the obvious
+workaround is `json.loads(render(..., fmt="json"))` in the adapter, which is a shaping decision
+leaking back out of the client. **`data` is the only value that returns a `dict`; every other format
+returns a `str`.**
+
+`data` is **not** a `--format` value, and that distinction is structural rather than documentary.
+The serialization module carries two vocabularies over one registry: `Format` holds only what a
+person may type after `--format` — ADR 0005 §contract 1's published `{human, json, toon}` — and
+`AdapterFormat` holds `data`. So `choices=[fmt.value for fmt in Format]`, the obvious line an
+adapter author writes, yields the published contract and *cannot* yield `data`. The `UnknownFormat`
+message lists the user-facing set only, because a suggestion in an error message is a contract too
+and that message reaches a shell.
+
+The ten lines that split the vocabularies are the same trade the rest of this slice makes. ADR 0005
+adopts pandan's exit-code scheme verbatim rather than improving it precisely because a contract
+published early cannot be cheaply withdrawn; pandan spent a whole card (KAN-442) withdrawing a `pdn`
+alias. **KAN-541 adds `toon` to both the registry and `Format`**, and a literal pin on the
+user-facing tuple makes publishing a format a conscious edit rather than a side effect of
+registering one.
 
 **Ordering, and how "structurally out of the truncator's reach" is bought.** ADR 0005 adopts
 pandan's correction that the `summary` is attached *after* truncation. That is now type-enforced

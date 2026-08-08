@@ -15,6 +15,10 @@ function" risk that ADR flags against itself has somewhere to be tested apart:
     projection → truncation → aggregate attachment → serialization
     projection.py  truncation.py  aggregates.py       serialization.py
 
+Two format vocabularies, because two audiences: ``Format`` is what a person may type after
+``--format`` and is therefore a published contract; ``AdapterFormat`` (``data``) is what an in-tree
+adapter asks for in code. ``CLI_FORMATS`` is the first as a tuple, ready for argparse's ``choices``.
+
 **V2a (KAN-540) implements the ``fmt`` dimension only.** ``fields`` and ``text_limit`` are in the
 signature, are validated for shape, and pass through untouched; `tests/test_passthrough_is_a_no_op`
 pins that, so V2b filling them in is a visible diff. ADR 0005 puts the signature before the
@@ -34,7 +38,7 @@ from kaya_client.errors import ApiError, KayaError, TransportError, UnknownForma
 from kaya_client.payloads import Kind, Payload, Shaped
 from kaya_client.projection import project
 from kaya_client.render import render
-from kaya_client.serialization import Format, serialize
+from kaya_client.serialization import CLI_FORMATS, AdapterFormat, Format, serialize
 from kaya_client.truncation import DEFAULT_TEXT_LIMIT, truncate
 
 try:
@@ -43,7 +47,9 @@ except PackageNotFoundError:  # pragma: no cover - source checkout without an in
     __version__ = "0.0.0"
 
 __all__ = [
+    "CLI_FORMATS",
     "DEFAULT_TEXT_LIMIT",
+    "AdapterFormat",
     "ApiError",
     "Format",
     "KayaClient",

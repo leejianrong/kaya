@@ -15,7 +15,17 @@ import json
 import pytest
 from conftest import GROCERIES, READING_LIST
 
-from kaya_client import Format, Payload, Shaped, UnknownFormat, render, serialize
+from kaya_client import (
+    CLI_FORMATS,
+    AdapterFormat,
+    Format,
+    Payload,
+    Shaped,
+    UnknownFormat,
+    render,
+    serialize,
+)
+from kaya_client.serialization import _SERIALIZERS
 
 STRING_FORMATS = ["human", "json"]
 
@@ -93,7 +103,20 @@ def test_an_unknown_format_names_what_it_knows(notes: Payload, fmt: str) -> None
     """
     with pytest.raises(UnknownFormat) as raised:
         render(notes, fmt=fmt)
-    assert "data, human, json" in str(raised.value)
+    assert "human, json" in str(raised.value)
+
+
+def test_the_unknown_format_message_does_not_advertise_an_adapter_format(notes: Payload) -> None:
+    """A suggestion in an error message is a contract too, and this message reaches a shell.
+
+    A CLI user who typed ``--format hunan`` must not be told ``data`` is something they may ask for.
+    That would publish an adapter-only value as a user-facing one *before* KAN-541 has written the
+    flag it appears to describe, and ADR 0005's whole lesson is that an early contract cannot be
+    cheaply withdrawn — pandan spent card KAN-442 withdrawing a `pdn` alias.
+    """
+    with pytest.raises(UnknownFormat) as raised:
+        render(notes, fmt="hunan")
+    assert "data" not in str(raised.value)
 
 
 def test_unknown_format_is_a_value_error(notes: Payload) -> None:
@@ -103,10 +126,61 @@ def test_unknown_format_is_a_value_error(notes: Payload) -> None:
         render(notes, fmt="toon")
 
 
-def test_the_enum_and_the_registry_agree(notes: Payload) -> None:
-    """A ``Format`` member that nothing serializes would be a promise the registry does not keep."""
-    for member in Format:
+def test_data_is_registered_but_not_user_facing() -> None:
+    """The split, stated as one assertion. ``data`` renders; ``data`` is not offered.
+
+    It exists for V6's MCP adapter, which hands a host ``structuredContent``. It is not a
+    ``--format`` value, and SLICES §V2a publishes exactly ``{human, json, toon}``.
+    """
+    assert AdapterFormat.DATA in _SERIALIZERS
+    assert AdapterFormat.DATA not in CLI_FORMATS
+    assert "data" not in CLI_FORMATS
+
+
+def test_the_published_cli_vocabulary_is_pinned() -> None:
+    """A literal, so publishing a format is a **conscious edit** rather than a side effect.
+
+    This is the tripwire for KAN-541. Adding ``toon`` to ``Format`` reddens this test and 541 has to
+    write ``("human", "json", "toon")`` — which is SLICES §V2a's published contract, checked against
+    the doc by a human at that moment. Making ``data`` user-facing by accident reddens it too.
+
+    ``human`` first: it is ``render``'s default and argparse prints ``choices`` in order.
+    """
+    assert CLI_FORMATS == ("human", "json")
+
+
+def test_every_user_facing_format_actually_renders(notes: Payload) -> None:
+    """Catches KAN-541 adding ``toon`` to ``Format`` but forgetting ``_SERIALIZERS``.
+
+    That is the dangerous direction: argparse would accept ``--format toon`` and the render would
+    then raise ``UnknownFormat`` from inside the client, which reads as a client bug rather than as
+    a missing encoder.
+    """
+    for name in CLI_FORMATS:
+        assert name in _SERIALIZERS
+        assert render(notes, fmt=name) is not None
+
+
+def test_every_adapter_format_actually_renders(notes: Payload) -> None:
+    """The mirror image, so an ``AdapterFormat`` member cannot outrun its serializer either."""
+    for member in AdapterFormat:
+        assert member in _SERIALIZERS
         assert render(notes, fmt=member) is not None
+
+
+def test_the_two_vocabularies_do_not_overlap() -> None:
+    """One format, one audience. A value in both would make "is this published?" unanswerable."""
+    assert not set(CLI_FORMATS) & {member.value for member in AdapterFormat}
+
+
+def test_the_registry_is_exactly_the_two_vocabularies() -> None:
+    """No format may be renderable without belonging to one audience or the other.
+
+    A serializer registered under neither enum is reachable by string and governed by nothing — it
+    would have no test above asking whether it should be advertised.
+    """
+    declared = {member.value for member in Format} | {member.value for member in AdapterFormat}
+    assert set(_SERIALIZERS) == declared
 
 
 def test_serialize_refuses_an_unshaped_payload(notes: Payload) -> None:

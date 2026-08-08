@@ -29,16 +29,35 @@ signature lands before the behaviour goes inside it.
 
 | | Today |
 |---|---|
-| `fmt` | `human`, `json`, `data`. `toon` is KAN-541's and is simply not registered yet |
+| `fmt` | User-facing: `human`, `json`. Adapter-facing: `data`. `toon` is KAN-541's and is simply not registered yet |
 | `fields` | Accepted, shape-validated, **no-op**. Vocabulary checking is V2b |
 | `text_limit` | Accepted, shape-validated, **no-op**. `0` will mean `--full` |
 | `summary` | Never attached. `Shaped` already carries the slot |
 | Verbs | `list_notes()`, `get_note(ref)`. The writes arrive with V2b's full verb set |
 
+### Two format vocabularies, because two audiences
+
+`Format` holds only what a person may type after `--format`, which makes it a published contract in
+ADR 0005's sense. `AdapterFormat` holds `data`. `_SERIALIZERS` is the full registry behind both.
+
+```python
+parser.add_argument("--format", choices=list(CLI_FORMATS), default="human")
+```
+
+`CLI_FORMATS` is `tuple(fmt.value for fmt in Format)`, so the obvious line above yields exactly
+SLICES §V2a's `{human,json,toon}` and can never yield `data`. That is deliberate: had `Format` held
+every registered format, publishing an adapter-only value to the CLI would be the *default* outcome
+of writing the obvious thing, and an early contract cannot be cheaply withdrawn. `UnknownFormat`
+lists the user-facing set only, since that message reaches a shell.
+
 `fmt="data"` is what makes the `str | dict` return type precise: it returns the shaped dict itself
 and every other format returns a string. It exists so V6's MCP adapter can hand a host
 `structuredContent` without `json.loads(render(..., fmt="json"))` — a shaping decision leaking out
-of this package one careless line at a time.
+of this package one careless line at a time. It is an argument passed in code, never a flag value.
+
+**KAN-541 adds `toon` to both `_SERIALIZERS` and `Format`.** `test_the_published_cli_vocabulary_is_pinned`
+holds a literal, so publishing a format is a conscious edit rather than a side effect of registering
+one, and the tests either side of it catch a format landing in only one of the two.
 
 If a V2b-or-later change needs to alter `render`'s signature, that is a sequencing failure, not a
 reason to push through — `src/kaya_client/render.py`'s docstring argues requirement by requirement

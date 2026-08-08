@@ -5,12 +5,35 @@ first contract line ("over **one** serializer … so formats cannot drift"). A f
 in ``_SERIALIZERS`` and nothing else; adding one is registering one, which is how ``toon`` arrives
 in KAN-541 without this module's shape changing.
 
+### Two vocabularies, because two audiences
+
+``_SERIALIZERS`` is the **full registry**: every format that can be rendered. ``Format`` is the
+**user-facing** subset — the values a person may type after ``--format``, and therefore a published
+contract in ADR 0005's sense. ``AdapterFormat`` is what only in-tree adapters ask for by name.
+
+The split is structural rather than documentary, and specifically it is arranged so that the obvious
+line an adapter author writes is the correct one::
+
+    parser.add_argument("--format", choices=[fmt.value for fmt in Format], default="human")
+
+That expression yields exactly SLICES §V2a's ``{human, json, toon}`` and can never yield ``data``,
+because ``data`` is not in ``Format`` at all. Had ``Format`` held every registered format,
+publishing an adapter-only value to the CLI would be the *default* outcome of writing the obvious
+thing — and ADR 0005's whole lesson is that a contract published early cannot be cheaply withdrawn.
+Pandan spent a whole card (KAN-442) withdrawing a ``pdn`` alias; ten lines here is the same trade
+this slice exists to make.
+
+**KAN-541 adds ``toon`` to both ``_SERIALIZERS`` and ``Format``** — the registry so it renders, the
+enum so it is offered. ``tests/test_serialization.py`` fails if it lands in only one of them, and
+the literal pin on ``CLI_FORMATS`` there makes publishing it a conscious edit rather than a side
+effect.
+
 ### Which formats exist today, and why ``toon`` does not
 
-``human``, ``json`` and ``data``. ``toon`` is KAN-541's, along with the ``--format`` flag it is
-reached through and the test-only decoder that proves its round trip (SLICES §V2a step 2). It is
-not registered here as a stub that raises, because then there would be two ways for a format to be
-unavailable and an adapter would have to handle both. It is simply not a known format yet, and
+``human`` and ``json`` are user-facing; ``data`` is adapter-facing. ``toon`` is KAN-541's, along
+with the ``--format`` flag it is reached through and the decoder that proves its round trip. It
+is not registered here as a stub that raises, because then there would be two ways for a format to
+be unavailable and an adapter would have to handle both. It is simply not a known format yet, and
 ``render(payload, fmt="toon")`` raises the same ``UnknownFormat`` as a typo would until 541
 registers it.
 
@@ -27,6 +50,9 @@ for FastMCP to parse it back would be doing a round trip to reach a value it alr
 shaping decision leaking out of the client one careless line at a time, which is the thing ADR 0004
 exists to stop. **``data`` is the only value that returns a ``dict``; every other format returns a
 ``str``.** ``tests/test_serialization.py`` pins both halves.
+
+It is deliberately **not** a `--format` value. It is an argument an adapter passes in code, where
+the audience is the person writing the adapter and not the person at a shell.
 
 ### Compact JSON, not ``indent=2``
 
@@ -49,10 +75,27 @@ COLUMN_GAP = "  "
 
 
 class Format(StrEnum):
-    """The serializers that exist. ``toon`` joins this enum in KAN-541."""
+    """**The user-facing vocabulary** — the values a person may type after ``--format``.
+
+    This enum is a published contract (ADR 0005 §contract 1, SLICES §V2a: ``{human,json,toon}``), so
+    a member added here is a member that cannot be cheaply withdrawn. Adapter-only formats live in
+    ``AdapterFormat`` and are absent from here on purpose: iterating this enum for an argparse
+    ``choices`` list is the obvious thing to write, and it has to be the right thing to write.
+
+    ``toon`` joins this enum in KAN-541, at the same time as it joins ``_SERIALIZERS``.
+    """
 
     HUMAN = "human"
     JSON = "json"
+
+
+class AdapterFormat(StrEnum):
+    """Formats an in-tree adapter asks for **by name in code**, never by a value a person typed.
+
+    Not a user-facing contract, and not reachable through ``--format``. See ``data``'s section in
+    this module's docstring for why the MCP adapter needs one.
+    """
+
     DATA = "data"
 
 
@@ -63,7 +106,12 @@ def serialize(shaped: Shaped, fmt: str) -> str | dict[str, Any]:
     try:
         serializer = _SERIALIZERS[str(fmt)]
     except KeyError:
-        known = ", ".join(sorted(_SERIALIZERS))
+        # The user-facing set only. This message is reachable from a shell — a CLI user who typed
+        # `--format hunan` must not be told that `data` is something they may ask for, because a
+        # suggestion in an error message is a contract too, and it would be published before
+        # KAN-541 has written the flag it appears to describe. An adapter author who mistypes an
+        # `AdapterFormat` gets a slightly thinner message; they have this module open.
+        known = ", ".join(CLI_FORMATS)
         raise UnknownFormat(f"unknown format {fmt!r} — known formats are {known}") from None
     return serializer(shaped)
 
@@ -159,7 +207,14 @@ def _cell(value: Any) -> str:
 _SERIALIZERS: dict[str, Callable[[Shaped], Any]] = {
     Format.HUMAN: _as_human,
     Format.JSON: _as_json,
-    Format.DATA: _as_data,
+    AdapterFormat.DATA: _as_data,
 }
-"""The registry. One entry per format, so "one serializer" is a fact about this dict rather than a
-claim in a doc. KAN-541 adds ``toon`` by adding a line here."""
+"""The **full** registry, user-facing and adapter-facing alike. One entry per format, so "one
+serializer" is a fact about this dict rather than a claim in a doc. KAN-541 adds ``toon`` here *and*
+to ``Format``; a format in this dict is merely renderable, not advertised."""
+
+CLI_FORMATS: tuple[str, ...] = tuple(fmt.value for fmt in Format)
+"""What ``--format`` may be given, in declaration order — ``human`` first because it is the default.
+
+Derived from ``Format`` rather than written out again, so the enum stays the single place the
+published vocabulary is decided. This is what KAN-541 hands to argparse's ``choices``."""

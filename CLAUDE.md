@@ -10,7 +10,7 @@ the API server liked the YAML (ADR 0010).
 | Package | What's in it |
 |---|---|
 | `backend/` | The whole of V1: migration `0001`, `app/auth/` (principal resolver, `authorize_note`), `app/api/` (`/api/v1/notes` CRUD, the central ref resolver, ADR 0009's `409`), `app/spa.py`, `app/observability/` |
-| `kaya-client/` | KAN-540: `KayaClient` over httpx (`list_notes`, `get_note`) and the `render()` seam as four composable steps. Only the `fmt` dimension is implemented — `human`, `json`, `data`; `fields` and `text_limit` are **pinned no-ops**. No `toon`, no write verbs |
+| `kaya-client/` | KAN-540: `KayaClient` over httpx (`list_notes`, `get_note`) and the `render()` seam as four composable steps. Only the `fmt` dimension is implemented — `human`/`json` user-facing, `data` adapter-only; `fields` and `text_limit` are **pinned no-ops**. No `toon`, no write verbs |
 | `kaya-cli/` | The `kaya` console script, one entry point, **no verbs** |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
 | `frontend/` | Svelte 5 + Vite + TS, a shell page, the dev proxy for `/api` |
@@ -127,6 +127,16 @@ each in ADR 0004's fixed order, and the order is **type-enforced**: `truncate` t
 that, so V2b arrives as a visible diff. The default human row is pinned byte-for-byte in
 `tests/test_human_row_is_pinned.py`; if a later slice reddens it while `--fields` was omitted, that
 is the guard working, not a stale test to update.
+
+**A `--format` value is a published contract; a registered serializer is not.** `Format` holds only
+what a person may type (`CLI_FORMATS` is that as a tuple, for argparse `choices`); `AdapterFormat`
+holds `data`, which exists for MCP's `structuredContent` and is reachable in code only.
+`_SERIALIZERS` is the full registry behind both, and `UnknownFormat` lists the user-facing set only,
+because a suggestion in an error message is a contract too and that message reaches a shell. Adding
+a format to the registry must not advertise it — ADR 0005 adopts pandan's exit codes verbatim rather
+than improving them for exactly this reason, and pandan spent a whole card (KAN-442) withdrawing a
+`pdn` alias. **KAN-541 adds `toon` to both**, and the literal pin in
+`test_the_published_cli_vocabulary_is_pinned` makes that a conscious edit.
 
 **A cold pandan currently `503`s a valid PAT.** Measured (`make measure-auth`): a cache hit is
 1.6 µs, a warm miss 387 ms, a cold miss **21.8 s** against a 10 s timeout. The fix is decided but

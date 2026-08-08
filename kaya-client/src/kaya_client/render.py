@@ -38,9 +38,11 @@ how a config layer ends up disagreeing with a flag.
 
 ### When it returns a ``str`` and when a ``dict``
 
-``fmt="data"`` returns the shaped dict; every other format returns a string. See
-`serialization`'s module docstring for why ``data`` exists at all. Both halves are pinned in
-``tests/test_serialization.py``.
+``fmt="data"`` returns the shaped dict; every other format returns a string. ``data`` is
+adapter-facing — it lives in ``AdapterFormat``, not in the user-facing ``Format``, so it is not a
+``--format`` value and cannot become one by someone iterating the wrong enum for an argparse
+``choices`` list. See `serialization`'s module docstring for why it exists at all. Both halves are
+pinned in ``tests/test_serialization.py``.
 """
 
 from collections.abc import Sequence
