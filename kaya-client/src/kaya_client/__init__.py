@@ -9,6 +9,12 @@ Two things live here, and the second is the reason the first must not return a `
   reimplements any of it, and a projection or truncation rule appearing in `kaya-cli/` or `mcp/` is
   a bug rather than a local optimisation.
 
+A third, smaller thing sits alongside them for the same reason: ``version_line()`` in `provenance`,
+which turns the build stamp into ADR 0007's two ``--version`` forms. It is here rather than in
+`kaya-cli` because the sha is a fact about the repository both adapters are built from, and because
+V6's MCP server reports its own provenance by calling it. It deliberately does *not* go through
+``render``, whose signature ADR 0005 freezes until V2b — see `provenance`'s module docstring.
+
 ``render`` is four composable steps in ADR 0004's fixed order, one module each, so the "god
 function" risk that ADR flags against itself has somewhere to be tested apart:
 
@@ -37,6 +43,7 @@ from kaya_client.client import KayaClient
 from kaya_client.errors import ApiError, KayaError, TransportError, UnknownFormat
 from kaya_client.payloads import Kind, Payload, Shaped
 from kaya_client.projection import project
+from kaya_client.provenance import SOURCE_CHECKOUT, build_sha, version_line
 from kaya_client.render import render
 from kaya_client.serialization import CLI_FORMATS, AdapterFormat, Format, serialize
 from kaya_client.truncation import DEFAULT_TEXT_LIMIT, truncate
@@ -49,6 +56,7 @@ except PackageNotFoundError:  # pragma: no cover - source checkout without an in
 __all__ = [
     "CLI_FORMATS",
     "DEFAULT_TEXT_LIMIT",
+    "SOURCE_CHECKOUT",
     "AdapterFormat",
     "ApiError",
     "Format",
@@ -61,8 +69,10 @@ __all__ = [
     "UnknownFormat",
     "__version__",
     "attach_summary",
+    "build_sha",
     "project",
     "render",
     "serialize",
     "truncate",
+    "version_line",
 ]

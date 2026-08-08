@@ -1,9 +1,9 @@
 [project]
 name = "kaya-client"
-# 0.2.0 — KAN-540 gives this package its contents: `KayaClient` and the `render()` seam. A
-# `[project.dependencies]` change becomes `Requires-Dist` in the wheel and is behavioural, so it
-# bumps in the same PR (ADR 0007, CLAUDE.md §Conventions).
-version = "0.2.0"
+# 0.3.0 — KAN-543 adds `provenance`, the build stamp both adapters read. 0.2.0 was KAN-540's
+# `KayaClient` and `render()` seam. A behavioural change to a shipped package bumps it in the same
+# PR (ADR 0007 §3, CLAUDE.md §Conventions §Versioning).
+version = "0.3.0"
 description = "The shared core for kaya: the API client and the one payload-shaping seam"
 readme = "README.md"
 license = "Apache-2.0"
