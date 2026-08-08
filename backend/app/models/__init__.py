@@ -1,13 +1,27 @@
 """Declarative models.
 
-Empty of tables on purpose: the ``user`` mirror and the ``note`` table land in KAN-533. The
-``Base`` and this module both exist now because ``alembic/env.py`` imports this package to build
-``target_metadata`` — an autogenerate run against metadata that never imported the models emits a
-migration that *drops* every table it doesn't know about.
+Every model is imported here so it reaches ``Base.metadata``. That is not tidiness:
+``alembic/env.py`` imports this package to build ``target_metadata``, and an autogenerate run
+against metadata that never imported a model emits a migration that *drops* the tables it cannot
+see.
 
-When a model is added, import it here so it reaches ``Base.metadata``.
+A new model goes in its own module and gets an import below. Both, always.
 """
 
 from app.models.base import Base
+from app.models.note import (
+    NOTE_REF_PREFIX,
+    NOTE_REF_SEQUENCE,
+    NOTE_REF_SEQUENCE_NAME,
+    Note,
+)
+from app.models.user import User
 
-__all__ = ["Base"]
+__all__ = [
+    "NOTE_REF_PREFIX",
+    "NOTE_REF_SEQUENCE",
+    "NOTE_REF_SEQUENCE_NAME",
+    "Base",
+    "Note",
+    "User",
+]
