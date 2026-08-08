@@ -7,7 +7,7 @@ CI, but they hold almost nothing (KAN-531):
 
 | Package | What's actually in it |
 |---|---|
-| `backend/` | FastAPI app, `GET /health`, one sync engine, migration `0001` (the `user` mirror, `note`, the `NOTE-` sequence), `app/auth/` (principal resolver, `get_principal`, `authorize_note`, `notes_owned_by`), `app/api/`: **`/api/v1/notes` CRUD** over the central ref resolver with ADR 0009's `409` precondition on `PATCH`, and `app/spa.py` serving the built SPA from the same origin |
+| `backend/` | FastAPI app, `GET /health`, one sync engine, migration `0001` (the `user` mirror, `note`, the `NOTE-` sequence), `app/auth/` (principal resolver, `get_principal`, `authorize_note`, `notes_owned_by`), `app/api/`: **`/api/v1/notes` CRUD** over the central ref resolver with ADR 0009's `409` precondition on `PATCH`, `app/spa.py` serving the built SPA from the same origin, and `app/observability/` (one JSON log line per request on stdout, a request id, credential redaction) |
 | `kaya-client/` | An importable package and a version. No `KayaClient`, no `render()` — those are V2a |
 | `kaya-cli/` | The `kaya` console script, one entry point, **no verbs** |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
@@ -53,6 +53,16 @@ and `#NOTE-12` is a `400` usage error (ADR 0008). A route never sees a string �
 `NoteFromRef` and is handed a `Note`, which is what makes V5's `/links` and `/backlinks` inherit the
 guarantee without writing any ref handling. If you add a ref-taking verb, take the dependency; if
 you find yourself parsing an identifier in a route, that is the bug ADR 0008 exists to prevent.
+
+**Never log a header, a request object, or anything built from a bearer** (Q41/Q42, KAN-700,
+`backend/app/observability/`). One JSON line per request goes to stdout, carrying `ACCESS_FIELDS`
+and nothing else — no header of any name, and no query string. The redaction rule sits at
+*serialization*, so a record any call site emits is scrubbed whether or not its author knew the rule
+existed; that is why the fix for "I need to see the headers" is never to log them here. ADR 0002
+buys one property with everything it costs — kaya holds no replayable credential — and a log line is
+the cheapest way to give it away. `tests/unit/test_log_redaction.py` asserts against every
+contiguous *fragment* of a fake token, not the whole string, because a truncated token is still a
+token.
 
 **The API error shape is `{"error": {"code", "message", …}}`** — flat, un-nested, and the same for
 every failure including Starlette's own `404`/`405` and body validation (`app/api/errors.py`).
