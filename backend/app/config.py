@@ -68,6 +68,21 @@ class Settings(BaseSettings):
     a retry loop must not become one pandan round trip per request. Kept well under the positive
     TTL so a token that was rejected because it hadn't been minted yet becomes usable quickly."""
 
+    log_level: str = Field(
+        default="INFO",
+        validation_alias="KAYA_LOG_LEVEL",
+    )
+    """Threshold for the one stdout handler (``app/observability/logs.py``, Q41).
+
+    ``INFO`` gives one JSON line per request. ``DEBUG`` adds the liveness probe, which is left out
+    of ``INFO`` on purpose — the kubelet hits `/health` every few seconds forever and would
+    otherwise be almost the whole log.
+
+    Deliberately not validated against the known level names. ``Logger.setLevel`` already raises on
+    an unknown one, with a message naming the string it was handed; a pydantic validator would
+    duplicate that and turn a typo'd *log level* into a service that refuses to boot, which is the
+    observability layer causing the outage it exists to explain."""
+
     spa_dist: Path | None = Field(
         default=None,
         validation_alias="KAYA_SPA_DIST",
