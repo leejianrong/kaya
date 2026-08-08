@@ -10,13 +10,16 @@ the API server liked the YAML (ADR 0010).
 | Package | What's in it |
 |---|---|
 | `backend/` | The whole of V1: migration `0001`, `app/auth/` (principal resolver, `authorize_note`), `app/api/` (`/api/v1/notes` CRUD, the central ref resolver, ADR 0009's `409`), `app/spa.py`, `app/observability/` |
-| `kaya-client/` | A package and a version. No `KayaClient`, no `render()`; those are V2a |
-| `kaya-cli/` | The `kaya` console script, one entry point, **no verbs** |
+| `kaya-client/` | KAN-540: `KayaClient` over httpx (`list_notes`, `get_note`) and the `render()` seam as four composable steps. Only the `fmt` dimension is implemented — `human`/`json` user-facing, `data` adapter-only; `fields` and `text_limit` are **pinned no-ops**. No `toon`, no write verbs. KAN-543: `provenance.version_line()` and the `_build_stamp.COMMIT` a release rewrites |
+| `kaya-cli/` | The `kaya` console script, one entry point, **no verbs**. KAN-543: an argparse parser with `--version` and `--help` on it, and nothing else |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
 | `frontend/` | Svelte 5 + Vite + TS, a shell page, the dev proxy for `/api` |
 | *root* | `Dockerfile` (bases pinned by digest), `docker-compose.yml`, `deploy/k8s/` |
 
-Next: V2a builds `kaya-client` and the `render()` seam. Still unbuilt anywhere are `?q=` search
+Next: KAN-541 puts the CLI verbs (`kaya note list`, `kaya note get`), `--format` and the `toon`
+encoder on top of that seam, KAN-542 the error/exit-code contract, and KAN-544 the release workflow
+that populates KAN-543's build stamp plus the version-bump guard. Still unbuilt anywhere are `?q=`
+search
 (KAN-558/559), `/links` and `/backlinks` (KAN-566), and the SPA's real UI (V3).
 
 **Trust the code over the docs.** When this file and the repository disagree, the repository is
@@ -106,6 +109,18 @@ specification*. A write touching only `title` or `path` is unguarded even with a
 one touching `body` as well is refused whole. The comparison is exact to the microsecond, so a token
 that loses precision anywhere in the round trip refuses *every* correct write.
 
+**A build that can't identify itself says so; it never invents a sha** (ADR 0007,
+`kaya_client/provenance.py`). `--version` prints `kaya X.Y.Z (a1b2c3d)` or
+`kaya X.Y.Z (source checkout, not a released build)`, and there is no third form — a bare number is
+the pandan bug this exists to avoid. The sha comes from `_build_stamp.COMMIT`, **always empty in the
+repository** and rewritten by `scripts/stamp-build.sh` immediately before packaging; both ends
+validate it, so an unexpanded `${GITHUB_SHA}`, a sentinel word or the null sha degrades to the
+source-checkout wording rather than being printed as provenance. Stamp *after* the tests: a test
+asserts the committed stamp is empty, because a committed sha makes every checkout claim to be a
+release. `version_line()` lives in `kaya-client` and not in the CLI because V6's MCP server reports
+provenance through the same function (ADR 0004) — and deliberately *not* through `render()`, whose
+signature ADR 0005 freezes until V2b.
+
 **Base images are pinned by digest, never by tag.** A tag is a mutable pointer, so provenance labels
 on a floating base describe nothing (pandan's KAN-475). `scripts/check-image-pins.sh` runs in the
 pre-push hook and in CI, and `scripts/image-build.sh` is the only build path that produces true
@@ -114,6 +129,28 @@ labels.
 **The API error shape is `{"error": {"code", "message", …}}`**, flat and identical for every failure
 including Starlette's own `404`/`405` and body validation. `error_body` is the single builder;
 `detail` is FastAPI's word and never reaches the wire.
+
+**`KayaClient` returns a `Payload`, never a response body, and `render()` refuses a raw `dict`.**
+That is ADR 0004 at its sharpest point: the moment a dict crosses that boundary, whoever formats it
+has to re-derive list-vs-entity, the field vocabulary and the prose allow-list, and the obvious
+place to put that derivation is the adapter — which is pandan's 11.4×. The four steps are one module
+each in ADR 0004's fixed order, and the order is **type-enforced**: `truncate` takes and returns a
+`Payload`, `attach_summary` returns a `Shaped`, and `serialize` accepts only a `Shaped`, so ADR
+0005's "the summary is structurally out of the truncator's reach" is a fact rather than a convention.
+`fields` and `text_limit` are **no-ops until V2b** and `tests/test_passthrough_is_a_no_op.py` pins
+that, so V2b arrives as a visible diff. The default human row is pinned byte-for-byte in
+`tests/test_human_row_is_pinned.py`; if a later slice reddens it while `--fields` was omitted, that
+is the guard working, not a stale test to update.
+
+**A `--format` value is a published contract; a registered serializer is not.** `Format` holds only
+what a person may type (`CLI_FORMATS` is that as a tuple, for argparse `choices`); `AdapterFormat`
+holds `data`, which exists for MCP's `structuredContent` and is reachable in code only.
+`_SERIALIZERS` is the full registry behind both, and `UnknownFormat` lists the user-facing set only,
+because a suggestion in an error message is a contract too and that message reaches a shell. Adding
+a format to the registry must not advertise it — ADR 0005 adopts pandan's exit codes verbatim rather
+than improving them for exactly this reason, and pandan spent a whole card (KAN-442) withdrawing a
+`pdn` alias. **KAN-541 adds `toon` to both**, and the literal pin in
+`test_the_published_cli_vocabulary_is_pinned` makes that a conscious edit.
 
 **A cold pandan used to `503` a valid PAT. KAN-666 split the deadline and coalesced the misses.**
 KAN-539 measured (`make measure-auth`) a cache hit at 1.6 µs, a warm miss at 387 ms and a cold miss
@@ -126,10 +163,12 @@ genuine outage would then take 30 s to report.
 
 `make measure-auth MEASURE_ARGS=--split-only` is the experiment that justifies the split. It times
 one introspection at the socket and reports connect (DNS + TCP + TLS) apart from read (the wait for
-the first response byte). Connect is **67–103 ms [n=5] and flat** while read varies over 392–650 ms,
-and the `*.fly.dev` wildcard certificate arrives from fly's shared edge two `fly.io` proxy hops in
-front of pandan — so pandan's machine is not a participant in the handshake and cannot make it slow.
-**Honest limit: all five KAN-666 samples came back warm**, because pandan would not stay idle long
+the first response byte). Connect is **67–105 ms [n=8]** while read varies over 392–662 ms, and the
+part of connect that actually touches fly — TCP + TLS, excluding local DNS — is **48.6–56.7 ms**, an
+8 ms spread against the read's 270 ms. The `*.fly.dev` **wildcard** certificate arrives from fly's
+shared edge two `fly.io` proxy hops in front of pandan, which no per-app machine could hold, so
+pandan's machine is not a participant in the handshake and cannot make it slow.
+**Honest limit: all eight KAN-666 samples came back warm**, because pandan would not stay idle long
 enough, so the cold *connect* figure is inferred from that mechanism rather than measured. The split
 is still safe, because it cannot be worse than the single deadline it replaces: a slow connect would
 fail at 5 s where it used to fail at 10 s, and a fast one succeeds where it used to fail outright.
