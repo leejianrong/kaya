@@ -66,11 +66,21 @@ def leaked_fragments(output: str, secret: str = TOKEN) -> list[str]:
 
 
 def build_app() -> FastAPI:
-    """The real surface, on a bare app, with one route that leaks on purpose.
+    """The real surface, on a bare app, with two routes that leak on purpose.
 
-    ``/boom`` raises an exception whose *message* contains the bearer — the accident this has to
-    survive. Nobody writes that deliberately; somebody writes ``raise ValueError(f"rejected
-    {credentials}")`` while debugging and it reaches production.
+    Two, and the difference between them is the whole point. Both raise an exception whose
+    *message* contains the bearer — the accident this has to survive; nobody writes it
+    deliberately, somebody writes it while debugging and it reaches production.
+
+    - ``/boom`` leaks it with ``Authorization: Bearer `` in front, so ``_HEADER_ASSIGNMENT``
+      recognises it.
+    - ``/bare`` leaks it **naked**: no header name, no scheme, just the token in a sentence. That
+      is ``raise ValueError(f"rejected {credentials}")``, the exact shape this module's own
+      docstring names, and it is reachable *only* by ``_SUITE_PAT``.
+
+    The second was missing for a while, and the omission was invisible: every fragment assertion
+    went through the header path, so a partial failure in ``_SUITE_PAT`` alone left ten characters
+    of a token in a traceback while every one of these tests passed.
     """
     app = FastAPI()
     install_observability(app)
@@ -83,6 +93,11 @@ def build_app() -> FastAPI:
     @app.get("/boom")
     def boom() -> dict[str, str]:
         raise RuntimeError(f"could not resolve Authorization: Bearer {TOKEN}")
+
+    @app.get("/bare")
+    def bare() -> dict[str, str]:
+        # No `Authorization`, no `Bearer`. Nothing here but the credential itself.
+        raise ValueError(f"rejected {TOKEN}")
 
     return app
 
@@ -155,6 +170,45 @@ def test_an_unhandled_exception_carrying_the_bearer_is_scrubbed(
     assert errors[0]["error"]["type"] == "RuntimeError"
     assert "Traceback" in errors[0]["error"]["traceback"]
     assert errors[0]["request_id"], "an error with no request id cannot be correlated"
+
+
+def test_a_bare_token_with_no_header_and_no_scheme_around_it_is_scrubbed_whole(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A credential in text with **nothing** to recognise it by except its own prefix.
+
+    This is the shape ``raise ValueError(f"rejected {credentials}")`` produces, and it is the one
+    case ``_HEADER_ASSIGNMENT`` and ``_BEARER_SCHEME`` cannot reach — there is no header name and
+    no scheme in it. ``_SUITE_PAT`` alone stands between that string and stdout.
+
+    It is asserted separately from ``/boom`` because for a while it was not, and the gap was
+    invisible: every other fragment assertion in this file supplies an ``Authorization:`` or a
+    ``Bearer `` that gets redacted *first*, so a partial failure in ``_SUITE_PAT`` — say, keeping a
+    ten-character tail "so operators can tell two tokens apart" — left ten characters of a live
+    token in a traceback with the whole suite green. An emptiness assertion that can only be
+    reached through another rule's success is not a guard over this rule at all.
+    """
+    configure_logging("INFO")
+    client = TestClient(build_app(), raise_server_exceptions=False)
+
+    assert client.get("/bare").status_code == 500
+
+    raw = capsys.readouterr().out
+    assert leaked_fragments(raw) == [], (
+        "ADR 0002: a bare bearer reached stdout. Nothing in this string names a header or a "
+        f"scheme, so _SUITE_PAT is the only rule that could have caught it. Leaked: "
+        f"{leaked_fragments(raw)}"
+    )
+
+    errors = [json.loads(line) for line in raw.splitlines() if '"error"' in line]
+    assert errors, "the unhandled exception produced no error line"
+    assert errors[0]["error"]["type"] == "ValueError"
+    # Whole, not partial: what is left names the redaction rather than a fragment of the token.
+    assert "rejected [redacted]" in errors[0]["error"]["message"]
+
+    # And the same shape outside an exception, since a plain `logger.info` is the likelier route.
+    get_logger("test").info("rejected %s", TOKEN)
+    assert leaked_fragments(capsys.readouterr().out) == []
 
 
 def test_the_formatter_scrubs_a_header_mapping_someone_logged(
@@ -392,6 +446,14 @@ def test_uvicorns_access_logger_does_not_duplicate_the_line() -> None:
 
 def test_the_fast_path_cannot_skip_anything_the_patterns_match() -> None:
     """``TRIGGERS`` is an optimisation over the scrubber, and a wrong one would disable it silently.
+
+    **Not only a performance test.** Together with
+    ``test_a_bare_token_with_no_header_and_no_scheme_around_it_is_scrubbed_whole`` this is the
+    guard over ``_SUITE_PAT``, the rule that catches a token written down with no header name and
+    no ``Bearer`` in front of it. If you are changing this test, that is what you are changing —
+    in particular, making ``unconditional`` call ``scrub_text`` instead of running the three
+    patterns itself would make it agree with anything, including a scrubber that had stopped
+    scrubbing.
 
     ``scrub_text`` returns early when a string contains none of ``TRIGGERS``. If that set ever
     misses a shape one of the three patterns *would* have matched, the scrubber stops scrubbing
