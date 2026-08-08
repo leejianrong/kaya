@@ -15,13 +15,15 @@ No database: a ``Note`` constructed in memory is enough, because nothing here qu
 """
 
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 
-from app.api.concurrency import attempted_version, note_conflict
+from app.api.concurrency import attempted_version, enforce_precondition, note_conflict
 from app.api.schemas import NoteRead, NoteUpdate
 from app.models import Note
 
@@ -56,6 +58,25 @@ def update(**fields: Any) -> NoteUpdate:
 
 def error(exception: Any) -> dict[str, Any]:
     return exception.detail["error"]
+
+
+class FakeSession:
+    """Enough of a ``Session`` for the check: something that re-reads a row on demand.
+
+    ``on_refresh`` is what another writer committing looks like from in here — the row comes back
+    saying something different from what this transaction had. That is the whole reason the check
+    re-reads instead of trusting the copy the ref resolver loaded, so it needs to be expressible in
+    the fast layer rather than only against a real Postgres.
+    """
+
+    def __init__(self, on_refresh: Callable[[Note], None] | None = None) -> None:
+        self.on_refresh = on_refresh
+        self.locks: list[bool] = []
+
+    def refresh(self, instance: Note, with_for_update: bool = False) -> None:
+        self.locks.append(with_for_update)
+        if self.on_refresh is not None:
+            self.on_refresh(instance)
 
 
 # --- SLICES §V1: the `409` body carries both versions ---------------------------------------------
@@ -222,6 +243,66 @@ def test_the_precondition_is_never_written_to_the_note() -> None:
 
     assert changes == {"body": "mine"}
     assert "if_updated_at" not in changes
+
+
+# --- Enforcement: which writes are actually stopped -----------------------------------------------
+
+
+def test_a_stale_precondition_stops_the_write() -> None:
+    """The wiring, not just the payload. Every assertion above is about what a `409` *contains*, and
+    all of them still pass against an ``enforce_precondition`` that never raises one."""
+    note = stored_note()
+
+    with pytest.raises(HTTPException) as raised:
+        enforce_precondition(
+            FakeSession(), note, update(body="mine", if_updated_at=CREATED_AT)
+        )
+
+    assert raised.value.status_code == 409
+    assert error(raised.value)["code"] == "note_conflict"
+
+
+def test_a_matching_precondition_lets_the_write_through() -> None:
+    """The other half. An implementation that refuses everything passes the test above."""
+    payload = update(body="mine", if_updated_at=STORED_AT)
+
+    assert enforce_precondition(FakeSession(), stored_note(), payload) is None
+
+
+def test_an_unguarded_write_is_neither_stopped_nor_locked() -> None:
+    """A write that omits the precondition is specified to be a plain overwrite, so it must not pay
+    for one either — locking the row would serialise exactly the callers who opted out."""
+    session = FakeSession()
+
+    assert enforce_precondition(session, stored_note(), update(body="mine")) is None
+    assert enforce_precondition(session, stored_note(), update(title="renamed")) is None
+    assert session.locks == [], "an unguarded write took a row lock it does not need"
+
+
+def test_the_row_is_re_read_under_a_lock_before_the_comparison() -> None:
+    """The guard's own blind spot, in the fast layer.
+
+    ``note`` was loaded earlier in this transaction. If the comparison trusts that copy, two writers
+    who both read before either committed each compare against their own stale snapshot, both pass,
+    and the second silently overwrites the first — the exact loss this module exists to prevent,
+    living inside the guard against it. So: a session whose re-read reports somebody else's commit
+    must produce a `409` even though the in-memory value matched.
+    """
+    note = stored_note()
+    someone_else_committed = STORED_AT + timedelta(seconds=5)
+
+    def commit_by_another_writer(instance: Note) -> None:
+        instance.updated_at = someone_else_committed
+        instance.body = "theirs"
+
+    session = FakeSession(on_refresh=commit_by_another_writer)
+
+    with pytest.raises(HTTPException) as raised:
+        enforce_precondition(session, note, update(body="mine", if_updated_at=STORED_AT))
+
+    assert session.locks == [True], "the re-read must take the row lock"
+    assert error(raised.value)["stored"].body == "theirs", "the diff shows what is really there"
+    assert error(raised.value)["stored"].updated_at == someone_else_committed
 
 
 # --- The microsecond round trip -------------------------------------------------------------------
