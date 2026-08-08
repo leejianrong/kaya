@@ -10,10 +10,14 @@ likely to be "improved" back into bugs are written down at the top of the module
   the same load without knowing anything about the token.
 
 Import layering, deliberately one-way: ``principal`` ← ``cache``/``upstream`` ← ``resolver`` ←
-``dependencies``/``mirror``. Only the last pair knows FastAPI and SQLAlchemy exist, which is why
-the entire resolver is exercisable by the no-infrastructure test layer.
+``authorization`` ← ``dependencies``, with ``mirror`` off to one side. ``resolver`` and
+``authorization`` reach for ``fastapi.HTTPException`` and nothing else of the framework — no
+``Depends``, no request, no session — so the entire HTTP contract, status codes and error bodies
+included, is exercisable by the no-infrastructure test layer. ``dependencies`` is the only module
+that knows FastAPI's dependency machinery exists, and ``mirror`` the only one holding a session.
 """
 
+from app.auth.authorization import authorize_note, notes_owned_by
 from app.auth.cache import PrincipalCache, digest
 from app.auth.dependencies import get_principal, get_resolver, reset_auth
 from app.auth.mirror import SqlAlchemyPrincipalMirror
@@ -36,10 +40,12 @@ __all__ = [
     "SqlAlchemyPrincipalMirror",
     "TokenRejected",
     "UpstreamUnavailable",
+    "authorize_note",
     "digest",
     "error_body",
     "get_principal",
     "get_resolver",
+    "notes_owned_by",
     "principal_from_bearer",
     "reset_auth",
 ]

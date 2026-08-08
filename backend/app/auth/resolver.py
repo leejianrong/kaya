@@ -6,7 +6,7 @@ The five steps, unchanged from the ADR:
 2. Look up ``sha256(raw_token)`` in a TTL cache.
 3. On a miss, call pandan's ``GET /api/v1/me`` with the bearer forwarded unchanged.
 4. On success, ensure a local ``user`` mirror row exists, keyed on pandan's UUID.
-5. Return it. (``authorize_note`` is step 5 proper and lands in KAN-535.)
+5. Return it. (Step 5 proper — ``authorize_note`` — is ``app.auth.authorization``, KAN-535.)
 
 Nothing here touches FastAPI's dependency machinery — that is ``app.auth.dependencies``, which is
 wiring and nothing else. The split is what lets the status codes and error bodies below, including

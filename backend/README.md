@@ -3,9 +3,11 @@
 FastAPI over **sync** SQLAlchemy and psycopg v3, with Alembic wired up from day one
 ([ADR 0001](../docs/adr/0001-stack-inherited-from-pandan.md)).
 
-Right now this is the walking skeleton from KAN-531: an app that boots, `GET /health`, and the
-database and migration plumbing. There is no note model, no principal resolver and no `/api/v1`
-yet — those are KAN-533, KAN-534 and KAN-535/536.
+Right now: an app that boots and serves `GET /health`, migration `0001` (the `user` mirror, `note`,
+and the `NOTE-` sequence — KAN-533), and `app/auth/` — the principal resolver (KAN-534) plus
+`authorize_note` and the owner-scoped list statement (KAN-535). **There is still nothing under
+`/api/v1`**, so nothing in the app depends on any of it yet; the routes are KAN-536, and they are
+written against these seams rather than the other way round (ADR 0005).
 
 ```bash
 uv sync --all-extras
@@ -24,11 +26,16 @@ pandan, so it needs no async user store. `tests/unit/test_no_async_engine.py` fa
 runs at collection, before the fixture sets `DATABASE_URL`, so the engine binds to the wrong
 database — it passes locally and fails in CI. That is pandan's "PR #17 trap".
 
+**Every list of notes composes onto `app.auth.authorization.notes_owned_by`.** The owner filter is a
+`WHERE` on the statement, not a pass over rows Postgres already returned, so another user's note is
+never fetched. `tests/unit/test_no_unscoped_note_query.py` fails if `Note` reaches a `select()`
+anywhere else in `app/`. Fetching a *single* note unscoped is fine and necessary — that is what
+lets `authorize_note` answer `403` rather than `404` for someone else's.
+
 ## Migrations
 
-Alembic is initialised with no revisions yet (KAN-533 writes `0001`). `alembic/env.py` imports
-`app.models` so `--autogenerate` sees the metadata; without that import it would emit a migration
-that drops every table.
+`alembic/env.py` imports `app.models` so `--autogenerate` sees the metadata; without that import it
+would emit a migration that drops every table.
 
 ```bash
 uv run alembic revision --autogenerate -m "..."

@@ -7,14 +7,19 @@ CI, but they hold almost nothing (KAN-531):
 
 | Package | What's actually in it |
 |---|---|
-| `backend/` | FastAPI app that boots, `GET /health`, one sync engine, migration `0001` (the `user` mirror, `note`, the `NOTE-` sequence), and `app/auth/`: the principal resolver and its `get_principal` dependency. No routes under `/api/v1` yet, so nothing depends on `get_principal` in the app itself |
+| `backend/` | FastAPI app that boots, `GET /health`, one sync engine, migration `0001` (the `user` mirror, `note`, the `NOTE-` sequence), and `app/auth/`: the principal resolver with its `get_principal` dependency, plus `authorize_note` and `notes_owned_by`. No routes under `/api/v1` yet, so nothing in the app depends on any of it |
 | `kaya-client/` | An importable package and a version. No `KayaClient`, no `render()` — those are V2a |
 | `kaya-cli/` | The `kaya` console script, one entry point, **no verbs** |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
 | `frontend/` | Svelte 5 + Vite + TS toolchain, a shell page, and the dev proxy for `/api` |
 
-Not built yet: `authorize_note` and owner-scoped lists (KAN-535), anything under `/api/v1`
-(KAN-536), the container image and manifests (KAN-538).
+Not built yet: anything under `/api/v1` — routes, the central `NOTE-n`/id ref resolver, and the
+`409` precondition (KAN-536/537) — and the container image and manifests (KAN-538).
+
+**A note list is scoped in SQL, in one place.** Compose onto `app.auth.notes_owned_by`, which
+carries `WHERE owner_id = :caller`; `backend/tests/unit/test_no_unscoped_note_query.py` fails if
+`Note` reaches a `select()` anywhere else under `app/`. A *single* note is fetched unscoped on
+purpose — `authorize_note` cannot answer `403` for someone else's note if the fetch never found it.
 
 Introspection latency is now **measured** (KAN-539, re-runnable as `make measure-auth`): a cache hit
 is **1.6 µs**, a warm miss **387 ms**, and a **cold miss 21.8 s** (measured with the harness's
