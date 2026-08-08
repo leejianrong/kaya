@@ -10,17 +10,18 @@ the API server liked the YAML (ADR 0010).
 | Package | What's in it |
 |---|---|
 | `backend/` | The whole of V1: migration `0001`, `app/auth/` (principal resolver, `authorize_note`), `app/api/` (`/api/v1/notes` CRUD, the central ref resolver, ADR 0009's `409`), `app/spa.py`, `app/observability/` |
-| `kaya-client/` | KAN-540: `KayaClient` over httpx (`list_notes`, `get_note`) and the `render()` seam as four composable steps. Only the `fmt` dimension is implemented — `human`/`json` user-facing, `data` adapter-only; `fields` and `text_limit` are **pinned no-ops**. No `toon`, no write verbs. KAN-543: `provenance.version_line()` and the `_build_stamp.COMMIT` a release rewrites |
-| `kaya-cli/` | The `kaya` console script, one entry point, **no verbs**. KAN-543: an argparse parser with `--version` and `--help` on it, and nothing else |
+| `kaya-client/` | KAN-540: `KayaClient` over httpx (`list_notes`, `get_note`) and the `render()` seam as four composable steps. Only the `fmt` dimension is implemented — `human`/`json` user-facing, `data` adapter-only; `fields` and `text_limit` are **pinned no-ops**. No `toon`, no write verbs. KAN-543: `provenance.version_line()` and the `_build_stamp.COMMIT` a release rewrites. KAN-542: the failure half of the layer — `error_payload()` / `render_error()`, and a `code` on every exception class so a raise site names a meaning |
+| `kaya-cli/` | The `kaya` console script, one entry point, **no verbs**. KAN-543: an argparse parser with `--version` and `--help` on it. KAN-542: that parser subclassed so it raises instead of exiting, plus `failures.py` (ADR 0005's exit table, and the only place a meaning becomes a number) and `parsing.py` (`usage:` on stderr *and* the structured row on stdout, from one event) |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
 | `frontend/` | Svelte 5 + Vite + TS, a shell page, the dev proxy for `/api` |
 | *root* | `Dockerfile` (bases pinned by digest), `docker-compose.yml`, `deploy/k8s/` |
 
 Next: KAN-541 puts the CLI verbs (`kaya note list`, `kaya note get`), `--format` and the `toon`
-encoder on top of that seam, KAN-542 the error/exit-code contract, and KAN-544 the release workflow
-that populates KAN-543's build stamp plus the version-bump guard. Still unbuilt anywhere are `?q=`
-search
-(KAN-558/559), `/links` and `/backlinks` (KAN-566), and the SPA's real UI (V3).
+encoder on top of that seam — it adds `toon` to `_SERIALIZERS`, `_ERROR_SERIALIZERS` and `Format`,
+and hangs its subparsers off `build_parser()`, which already fails correctly — and KAN-544 the
+release workflow that populates KAN-543's build stamp, plus the version-bump guard. Still unbuilt
+anywhere are `?q=` search (KAN-558/559), `/links` and `/backlinks` (KAN-566), and the SPA's real UI
+(V3).
 
 **Trust the code over the docs.** When this file and the repository disagree, the repository is
 right and this file is stale. Fix it in the same PR.
@@ -129,6 +130,21 @@ labels.
 **The API error shape is `{"error": {"code", "message", …}}`**, flat and identical for every failure
 including Starlette's own `404`/`405` and body validation. `error_body` is the single builder;
 `detail` is FastAPI's word and never reaches the wire.
+
+**One error shape reaches the adapters too, and the exit number is the only CLI-local part.**
+`kaya_client.error_payload` is `error_body`'s mirror on the client side and `render_error()` is the
+only thing that formats a failure — `error<TAB>code<TAB>message<TAB>arg` on **stdout**, four fields
+always, or the same object under a structured format with `code`/`message`/`arg` always present. The
+row goes to stdout so an agent never merges two streams; only argparse's human `usage:` text goes to
+stderr, and `kaya_cli.parsing` intercepts `ArgumentParser.error()`/`exit()` so both are emitted from
+one event and no `SystemExit` escapes `main()`. Exit codes live in `kaya_cli/failures.py` because an
+MCP tool has no process to exit — `0` ok · `1` runtime · `2` usage · `3` 401 · `4` 403 · `5` 404,
+**add-only** and pinned by literal-value tests. A raise site picks a class, and the class carries the
+`code`; nobody writes a number. A refusal is keyed on its **status**, not on the API's code string,
+because the backend's code vocabulary grows without the client's knowledge. The `arg` slot is
+**the first scalar extra a refusal carries**, which is unambiguous only while a refusal carries one;
+`backend/tests/unit/test_error_extras_stay_addressable.py` is the alarm for that, because the client
+may never import the backend and so cannot see a second one appear.
 
 **`KayaClient` returns a `Payload`, never a response body, and `render()` refuses a raw `dict`.**
 That is ADR 0004 at its sharpest point: the moment a dict crosses that boundary, whoever formats it

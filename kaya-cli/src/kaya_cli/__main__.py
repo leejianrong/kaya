@@ -5,28 +5,44 @@ There is exactly one console script (Q39, ADR 0007 §4) and, for now, no verbs. 
 that goes through it — adding verbs here first is precisely the retrofit that ordering exists to
 avoid.
 
-What this file does own is `--version`, which ADR 0007 puts in the *first* release rather than the
-fifth: a CLI that cannot say which build it is makes every other guarantee unverifiable in the
-field. Both of its forms are printed by ``kaya_client.version_line`` — the string is shaped in the
-shared client so the MCP server reports provenance the same way in V6 (ADR 0004), and this module
-supplies only the two things that are its own: the program name a user typed and this
+What this file does own is `--version` (KAN-543), which ADR 0007 puts in the *first* release rather
+than the fifth: a CLI that cannot say which build it is makes every other guarantee unverifiable in
+the field. Both of its forms are printed by ``kaya_client.version_line`` — the string is shaped in
+the shared client so the MCP server reports provenance the same way in V6 (ADR 0004), and this
+module supplies only the two things that are its own: the program name a user typed and this
 distribution's version.
 
-### The parser, and what the next two cards attach to it
+### The failure funnel (KAN-542), and what KAN-543 left for it
 
-`build_parser()` exists as a function returning a configured parser so KAN-541 can hang
-``add_subparsers()`` off it and KAN-542 can replace the error path, neither of them restructuring
-what is here. Two choices are load-bearing for that:
+543 wrote that "`build_parser()` exists as a function returning a configured parser so KAN-541 can
+hang ``add_subparsers()`` off it and KAN-542 can replace the error path, neither of them
+restructuring what is here". That is what happened, and the two load-bearing choices it named both
+survived intact:
 
 - **`--version` is a plain flag handled in `main`, not argparse's `action="version"`.** The built-in
   action prints and raises ``SystemExit`` from inside the parser, which would put an exit path
-  outside the return value KAN-542's named-code table hangs off. Here every exit code is something
-  ``main`` returns.
-- **Argparse's own exits are funnelled back into that return value.** `--help` and a usage error
-  both raise ``SystemExit`` from `parse_args`; catching it means `main` always answers with an int
-  and there is exactly one place for KAN-542 to change when the code table lands.
+  outside the return value the named-code table hangs off. That reasoning is now stronger rather
+  than weaker: `parsing.StructuredParser` makes *every* exit from argparse a raised exception, so
+  ``main`` is the only thing in this package that decides an exit code.
+- **Argparse's own exits are funnelled back into that return value.** 543 caught ``SystemExit`` and
+  returned ``exit_request.code``; the two ``except`` clauses below replace that one. The difference
+  is not the plumbing but what reaches the user: argparse's number is now looked up in
+  `failures.EXIT_FOR_CODE` from a *named meaning*, and — the half argparse could never do — the
+  structured row goes to stdout while the human ``usage:`` block stays on stderr.
 
-Bare `kaya` still prints a banner saying which slice brings the verbs, now with the version line as
+### The shape of ``main``, and what a verb changes about it
+
+    parser = build_parser()
+    try:  parse
+    except ParserExit:  return its status      # --help
+    except KayaError:   return report(...)     # every failure, one funnel
+
+A verb adds a subparser to ``build_parser`` and a call between the parse and the return. It does not
+add an ``except``: `kaya_client.errors` gives every failure a common base and a ``code``, so the
+funnel below already covers the `401`, the `403`, the `404` and the unreachable API that KAN-541's
+verbs will be the first to actually produce. That is the point of building the layer first.
+
+Bare `kaya` still prints the banner saying which slice brings the verbs, with the version line as
 its first row, so provenance is one keystroke away even from a mistyped command.
 """
 
@@ -34,9 +50,11 @@ import argparse
 import sys
 from collections.abc import Sequence
 
-from kaya_client import version_line
+from kaya_client import KayaError, version_line
 
 from kaya_cli import __version__
+from kaya_cli.failures import EXIT_OK, report
+from kaya_cli.parsing import ParserExit, StructuredParser
 
 PROG = "kaya"
 
@@ -53,9 +71,16 @@ def version_string() -> str:
     return version_line(PROG, __version__)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """The argument parser. A function, so KAN-541 adds subparsers without moving anything."""
-    parser = argparse.ArgumentParser(
+def build_parser() -> StructuredParser:
+    """The argument parser. A function, so KAN-541 adds subparsers without moving anything.
+
+    A ``StructuredParser`` rather than an ``ArgumentParser``: same configuration, but every exit
+    argparse would take becomes an exception ``main`` can answer for, and a usage error emits both
+    halves of ADR 0005 §contract 3 instead of only the stderr one. Subparsers added here inherit it
+    automatically through ``parser_class``, so KAN-541's ``kaya note lst`` fails the same way
+    ``kaya --nope`` does.
+    """
+    parser = StructuredParser(
         prog=PROG,
         description=DESCRIPTION,
         epilog=EPILOGUE,
@@ -72,26 +97,32 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the CLI. Returns the process exit code; never calls ``sys.exit`` itself.
+    """Parse argv, do the thing, return the process exit code.
 
-    Returning an int rather than exiting is what lets a test assert on the code without catching
-    ``SystemExit``, and it is the single hook KAN-542's named-code table replaces.
+    Returns an int rather than calling ``sys.exit`` so the exit code is a value a test can assert
+    on without catching ``SystemExit`` — and so ADR 0005's table has exactly one place it is read
+    from. ``argv`` defaults to ``sys.argv[1:]`` at call time; passing ``[]`` and passing nothing are
+    therefore different, which is what lets a test drive a bare invocation without touching the real
+    argv.
     """
     parser = build_parser()
+    argv = sys.argv[1:] if argv is None else argv
+
     try:
-        args = parser.parse_args(list(argv) if argv is not None else None)
-    except SystemExit as exit_request:
-        # `--help` (code 0) and a usage error (argparse's 2) both arrive here. KAN-542 replaces
-        # this branch with the named-code table; until then argparse's own numbers already agree
-        # with SLICES §V2a, which puts an unknown flag at 2.
-        return int(exit_request.code or 0)
+        args = parser.parse_args(list(argv))
+    except ParserExit as ended:
+        # `--help`, and nothing else today. Argparse has already printed; there is no failure to
+        # report and no error object it would be honest to emit.
+        return ended.status
+    except KayaError as failure:
+        return report(failure)
 
     if args.version:
         print(version_string())
-        return 0
+        return EXIT_OK
 
     print(f"{version_string()}\n{EPILOGUE}")
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised via the console script

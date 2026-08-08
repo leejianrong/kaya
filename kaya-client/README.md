@@ -4,7 +4,7 @@ The shared core. Two in-tree adapters consume it — [`kaya-cli`](../kaya-cli/) 
 [`mcp`](../mcp/) — and **neither of them is allowed to shape a payload**
 ([ADR 0004](../docs/adr/0004-shaping-lives-in-the-shared-client.md)).
 
-Three things live here:
+Four things live here, and the last two are small only in line count:
 
 - **`KayaClient`** over httpx — the only thing in the suite that speaks to `/api/v1`. Its methods
   return a `Payload`, never a response body.
@@ -15,6 +15,20 @@ Three things live here:
   projection  →  truncation  →  aggregate attachment  →  serialization
   projection.py  truncation.py  aggregates.py           serialization.py
   ```
+
+- **`render_error(failure, *, fmt="human") -> str | dict`** — the same layer for the other half of
+  the contract, because an output layer that only shapes successes is half a layer. It produces
+  ADR 0005 §contract 3's `error<TAB>code<TAB>message<TAB>arg` row, or the `{"error": {…}}` object
+  with `code`/`message`/`arg` always present, over the same format vocabulary.
+  `error_payload(failure)` builds that object for a caller that wants the dict rather than a
+  rendering; it is `backend/app/api/errors.py`'s `error_body` mirrored on this side of the wire, so
+  there is one error shape to learn across HTTP, the CLI and MCP.
+
+  Every exception class carries a `code` — `usage`, `unreachable`, `runtime`, or the API's own
+  string on an `ApiError` — so a raise site names a **meaning** and the CLI's exit table is a lookup
+  rather than a judgement. The table itself is not here: an MCP tool has no process to exit, so
+  `kaya-cli/src/kaya_cli/failures.py` owns it. That is ADR 0004's review question ("why isn't this
+  in the client?") answered honestly in both directions.
 
 - **`version_line(program, version)`** in `provenance.py` — ADR 0007's two `--version` forms, and
   the build stamp behind them. Small, but here for the same reason as `render`: both adapters print
@@ -33,7 +47,7 @@ signature lands before the behaviour goes inside it.
 
 | | Today |
 |---|---|
-| `fmt` | User-facing: `human`, `json`. Adapter-facing: `data`. `toon` is KAN-541's and is simply not registered yet |
+| `fmt` | User-facing: `human`, `json`. Adapter-facing: `data`. `toon` is KAN-541's and is simply not registered yet. `_ERROR_SERIALIZERS` has the same keys as `_SERIALIZERS`, pinned by a test, so a format cannot render a note list but not a `404` |
 | `fields` | Accepted, shape-validated, **no-op**. Vocabulary checking is V2b |
 | `text_limit` | Accepted, shape-validated, **no-op**. `0` will mean `--full` |
 | `summary` | Never attached. `Shaped` already carries the slot |
