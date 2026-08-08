@@ -25,6 +25,12 @@ run "secret scan"              scripts/secret-scan.sh
 # Offline and instant — it reads the shape of an image reference rather than asking a
 # registry. KAN-538: a base image on a floating tag makes the provenance labels a lie.
 run "image pins"               scripts/check-image-pins.sh
+# ADR 0007 §3 wants this "enforced by a pre-push hook and a CI job", and it sits with the other
+# offline guards rather than inside the kaya-cli block for the same reason its CI job is not
+# gated on `detect`: it covers all three shipped packages, and a push touching only kaya-client
+# or only mcp has to reach it. A few `git` calls and one `tomllib` parse per package — no
+# network, no virtualenv, nothing that would teach anyone to reach for --no-verify. KAN-544.
+run "version-bump guard"       scripts/check-version-bump.sh
 
 if [ -d backend ] && command -v uv >/dev/null 2>&1; then
   run "backend lint"           bash -c 'cd backend && uv run ruff check .'
@@ -39,12 +45,6 @@ fi
 if [ -d kaya-cli ] && command -v uv >/dev/null 2>&1; then
   run "cli lint"               bash -c 'cd kaya-cli && uv run ruff check .'
   run "cli unit tests"         bash -c 'cd kaya-cli && uv run pytest -q'
-  # ADR 0007: a behavioural change bumps the version in the SAME PR, diffed against
-  # the merge-base with main — NOT the remote tip, which false-positives on merge
-  # commits (pandan's open KAN-484).
-  if [ -x scripts/check-version-bump.sh ]; then
-    run "version-bump guard"   scripts/check-version-bump.sh
-  fi
 fi
 
 if [ -d mcp ] && command -v uv >/dev/null 2>&1; then

@@ -167,10 +167,10 @@ updates:
 # explicit block would now be an override rather than a necessity, and `github-actions` does not
 # support the option at all.
 #
-# HOW THESE PRs MEET ADR 0007's VERSION-BUMP GUARD. The guard is not implemented yet — CI prints
-# "guard not implemented yet (KAN-544)" — so nothing here fails today. When KAN-544 lands it must
-# classify by WHICH TABLE changed, not by filename, or every bot PR into `kaya-client`, `kaya-cli`
-# or `mcp` becomes a red check somebody has to hand-fix:
+# HOW THESE PRs MEET ADR 0007's VERSION-BUMP GUARD. KAN-544 built it: `scripts/check-version-bump.sh`
+# runs in the pre-push hook and in CI's `version-bump` job on every PR. It classifies by WHICH TABLE
+# changed, not by filename — which is what stops every bot PR into `kaya-client`, `kaya-cli` or `mcp`
+# becoming a red check somebody has to hand-fix:
 #
 #   * `uv.lock` alone      → the development and CI environment for that package. It is not in the
 #                            wheel and a consumer resolving from PyPI never sees it. NOT
@@ -184,5 +184,15 @@ updates:
 #                          → also wheel metadata, but only reachable via `pip install pkg[dev]`,
 #                            i.e. the test toolchain. Judgement call, recorded here as NOT
 #                            behavioural: a `pytest` bump is not a release.
+#   * `[build-system].requires`
+#                          → the version of the tool that BUILDS the wheel, not anything inside it.
+#                            NOT behavioural. Commit 84278e2 ("Update hatchling requirement from
+#                            >=1.27 to >=1.31.0 in /mcp") is a merged bot PR whose entire diff is
+#                            that one line, and it was replayed against the guard as a test.
+#                            `build-backend` itself IS behavioural — a different backend builds a
+#                            different artifact — but no bot rewrites that key.
 #
-# This note is recorded on KAN-544 as well, so it is not lost if this file is rewritten.
+# The full table list, and the "could a consumer of the built wheel tell?" rule behind it, is in
+# `scripts/lib/pyproject_diff.py`. If a bot PR ever does go red, the fix is that classifier, not a
+# hand-applied bump. This note is recorded on KAN-544 as well, so it is not lost if this file is
+# rewritten.

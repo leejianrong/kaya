@@ -1,0 +1,95 @@
+name: Release
+
+# Build the `kaya` executable for a tag, and refuse to hand it over if it cannot say which commit
+# it came from (ADR 0007 §2). KAN-544.
+#
+# WHAT THIS WORKFLOW DOES NOT DO: it does not push a tag and it does not create a GitHub Release.
+# That is KAN-545. This job's whole job is to produce the artifact and prove it is identifiable;
+# publishing it is a separate decision with a separate permission (`contents: write`), and keeping
+# them apart is why the token below is read-only.
+#
+# STEP ORDER IS LOAD-BEARING IN EXACTLY ONE PLACE: tests run BEFORE the stamp. `kaya-client`'s
+# `test_the_committed_stamp_is_empty` asserts the repository's `_build_stamp.py` is unstamped —
+# that assertion is what stops a real sha ever being committed, and stamping first turns it red.
+# CI already tested this commit on the way to main; the suite here is a last look at the exact tree
+# about to be packaged, not a second opinion.
+#
+# The action pin styles match ci.yml and are deliberate rather than inconsistent: `actions/*` track
+# a floating major, `astral-sh/setup-uv` takes an exact patch tag because upstream stopped
+# publishing major and minor tags at v8 (astral-sh/setup-uv#830) and `@v9` fails as unresolvable.
+
+on:
+  push:
+    tags: ["v*"]
+  # So the gate can be exercised against a real build without cutting a tag first. The
+  # tag/version agreement step below is the only one that needs a tag, and it skips.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the CLI artifact and prove it can identify itself
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: kaya-cli/uv.lock
+
+      - working-directory: kaya-client
+        run: uv sync --frozen --all-extras
+      - working-directory: kaya-cli
+        run: uv sync --frozen --all-extras
+
+      # A tag that disagrees with the version it claims to release is its own kind of
+      # unidentifiable artifact, and it is far cheaper to catch here than after the upload.
+      - name: The tag and [project].version agree
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(python3 -c '
+          import tomllib
+          with open("kaya-cli/pyproject.toml", "rb") as f:
+              print(tomllib.load(f)["project"]["version"])
+          ')
+          if [ "$GITHUB_REF_NAME" != "v${version}" ]; then
+            echo "✗ tag ${GITHUB_REF_NAME} does not match kaya-cli's version ${version}"
+            echo "  ADR 0007 §3: the bump lands in the PR, and the tag names what was bumped to."
+            exit 1
+          fi
+          echo "✓ ${GITHUB_REF_NAME} releases kaya-notes ${version}"
+
+      # BEFORE the stamp. See the header.
+      - working-directory: kaya-client
+        run: uv run pytest -q
+      - working-directory: kaya-cli
+        run: uv run pytest -q
+
+      # From here the checkout is dirty on purpose and must never be committed or pushed.
+      - name: Stamp the build with this commit
+        run: scripts/stamp-build.sh "$GITHUB_SHA"
+
+      - name: Build the onefile executable
+        run: scripts/build-cli-artifact.sh dist
+
+      # ADR 0007 §2. The one step this workflow exists for: run what was just built, read
+      # `--version`, and compare the WHOLE line against the version in the repository and the
+      # commit being released. Proven by watching it fail on an unstamped build (ADR 0007 §5).
+      - name: Gate — the artifact reports a real commit sha
+        run: scripts/check-release-artifact.sh dist/kaya "$GITHUB_SHA"
+
+      # A build artifact, not a release asset. KAN-545 decides what gets published, and whether a
+      # macOS/Windows matrix is worth its runtime — a onefile executable is per-platform, and this
+      # job deliberately claims only what one Linux runner can prove.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kaya-linux-x86_64
+          path: dist/kaya
+          if-no-files-found: error

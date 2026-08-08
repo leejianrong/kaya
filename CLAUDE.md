@@ -14,14 +14,14 @@ the API server liked the YAML (ADR 0010).
 | `kaya-cli/` | The `kaya` console script, one entry point, **no verbs**. KAN-543: an argparse parser with `--version` and `--help` on it. KAN-542: that parser subclassed so it raises instead of exiting, plus `failures.py` (ADR 0005's exit table, and the only place a meaning becomes a number) and `parsing.py` (`usage:` on stderr *and* the structured row on stdout, from one event) |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
 | `frontend/` | Svelte 5 + Vite + TS, a shell page, the dev proxy for `/api` |
-| *root* | `Dockerfile` (bases pinned by digest), `docker-compose.yml`, `deploy/k8s/` |
+| *root* | `Dockerfile` (bases pinned by digest), `docker-compose.yml`, `deploy/k8s/`. KAN-544: `scripts/check-version-bump.sh` (+ `lib/pyproject_diff.py`), `scripts/build-cli-artifact.sh`, `scripts/check-release-artifact.sh`, `.github/workflows/release.yml` |
 
 Next: KAN-541 puts the CLI verbs (`kaya note list`, `kaya note get`), `--format` and the `toon`
 encoder on top of that seam — it adds `toon` to `_SERIALIZERS`, `_ERROR_SERIALIZERS` and `Format`,
-and hangs its subparsers off `build_parser()`, which already fails correctly — and KAN-544 the
-release workflow that populates KAN-543's build stamp, plus the version-bump guard. Still unbuilt
-anywhere are `?q=` search (KAN-558/559), `/links` and `/backlinks` (KAN-566), and the SPA's real UI
-(V3).
+and hangs its subparsers off `build_parser()`, which already fails correctly. KAN-545 cuts the first
+release: KAN-544's `.github/workflows/release.yml` builds and gates the artifact but deliberately
+publishes nothing. Still unbuilt anywhere are `?q=` search (KAN-558/559), `/links` and `/backlinks`
+(KAN-566), and the SPA's real UI (V3).
 
 **Trust the code over the docs.** When this file and the repository disagree, the repository is
 right and this file is stale. Fix it in the same PR.
@@ -259,12 +259,20 @@ mutation actually reaches: a guard that only fires through some *other* rule's s
 over the rule you meant to test.
 
 **Versioning.** A behavioural change to a shipped package bumps its version in the same PR
-([ADR 0007](docs/adr/0007-release-provenance-from-the-first-release.md)), diffed against the
-**merge-base with `main`**, not the remote tip. When that guard is built (KAN-544) it must classify
-by **which table in `pyproject.toml` changed, not by filename**, or every Dependabot PR into
-`kaya-client` / `kaya-cli` / `mcp` becomes a red check someone hand-fixes. A `uv.lock`-only change is
-the dev environment and is not behavioural; a `[project.dependencies]` change becomes `Requires-Dist`
-in the wheel and is; a `dev` extra is the test toolchain and is not.
+([ADR 0007](docs/adr/0007-release-provenance-from-the-first-release.md)), enforced by
+`scripts/check-version-bump.sh` in the pre-push hook and in CI's `version-bump` job — which runs on
+**every** PR rather than only ones touching `kaya-cli`, because the guard's scope is all three
+shipped packages. It diffs against the **merge-base with `main`**, never the remote tip: that is
+pandan's open KAN-484, where a two-dot diff against a moved tip reports main's own commits as the
+branch's, backwards, and reddens a docs-only PR.
+
+It classifies a `pyproject.toml` change by **which table moved, not by the filename**
+(`scripts/lib/pyproject_diff.py`), or every Dependabot PR into `kaya-client` / `kaya-cli` / `mcp`
+becomes a red check someone hand-fixes. A `uv.lock`-only change is the dev environment and is not
+behavioural; a `[project.dependencies]` change becomes `Requires-Dist` in the wheel and is; a `dev`
+extra is the test toolchain and is not. `[build-system].requires` is not either — commit `84278e2`
+is a merged Dependabot PR whose entire diff is that one line. The rule the table list encodes is
+"could a consumer of the built wheel tell?", and an unrecognised key inside `[project]` fails closed.
 
 **Dependencies.** Lockfiles committed, installs frozen, updates by **Dependabot** (not renovate;
 `.github/dependabot.yml` says why), vulnerabilities by `make audit`. **Do not move the audit into the

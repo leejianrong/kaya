@@ -105,14 +105,18 @@ scripts/stamp-build.sh "$GITHUB_SHA"     # rewrites COMMIT; refuses anything tha
 cd kaya-client && uv build               # or pyinstaller, for the release asset
 ```
 
-**KAN-544's release gate** (ADR 0007 §2) then executes what it built and compares the **whole
-line**, not just the sha:
+**The release gate** (ADR 0007 §2) then executes what it built and compares the **whole line**, not
+just the sha. KAN-544 built it as `scripts/check-release-artifact.sh`, which
+`.github/workflows/release.yml` runs immediately after `scripts/build-cli-artifact.sh`:
 
 ```bash
-got=$("$ARTIFACT" --version)
-want="kaya ${VERSION} (${GITHUB_SHA:0:7})"
-[ "$got" = "$want" ] || { echo "artifact cannot identify itself: $got"; exit 1; }
+scripts/stamp-build.sh "$GITHUB_SHA"            # after the tests, before the build
+scripts/build-cli-artifact.sh dist              # the onefile recipe, one place
+scripts/check-release-artifact.sh dist/kaya "$GITHUB_SHA"
 ```
+
+The gate reads the expected version from `kaya-cli/pyproject.toml` rather than asking the artifact
+what version it thinks it is — checking a binary against itself is not a check.
 
 Comparing the whole line matters because a wrong-version-right-sha artifact is the **only** way this
 mechanism can fail quietly. Every other failure prints the source-checkout wording, which any

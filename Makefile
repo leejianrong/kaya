@@ -35,6 +35,12 @@ secret-scan-history: ## Same scanner over every commit. An audit, deliberately N
 image-pins: ## Fail if any external container image is referenced by tag instead of digest
 	@scripts/check-image-pins.sh
 
+# ADR 0007 §3. Diffed against the merge-base with main and never the remote tip, and classified by
+# which pyproject.toml table moved rather than by which file did. KAN-544.
+.PHONY: version-bump
+version-bump: ## Fail if a shipped package changed behaviourally without a version bump
+	@scripts/check-version-bump.sh
+
 # Deliberately NOT a dependency of `check` and not in the pre-push hook, for the same reason
 # `secret-scan-history` is not: it needs the network, and it goes red on a third party's timetable
 # rather than on anything the pusher did. A scheduled workflow runs it weekly and reports into one
@@ -123,7 +129,7 @@ build: ## Build the SPA into frontend/dist
 	@cd frontend && npm run build
 
 .PHONY: check
-check: docs-links secret-scan image-pins lint test ## Everything the pre-push hook runs
+check: docs-links secret-scan image-pins version-bump lint test ## Everything the pre-push hook runs
 	@echo "✓ all checks that apply to the current tree passed"
 
 # ------------------------------------------------------------------- (V3+)

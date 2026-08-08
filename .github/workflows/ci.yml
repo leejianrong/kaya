@@ -146,17 +146,24 @@ jobs:
         run: uv run ruff check .
       - working-directory: kaya-cli
         run: uv run pytest -q
-      # ADR 0007: the guard diffs against the merge-base with main, not the remote
-      # tip. The existence check is in the shell rather than the `if:` expression,
-      # because `hashFiles` is not usable in a conditional.
-      - name: Version-bump guard (vs merge-base, not remote tip)
-        if: github.event_name == 'pull_request'
-        run: |
-          if [ -x scripts/check-version-bump.sh ]; then
-            scripts/check-version-bump.sh
-          else
-            echo "guard not implemented yet (KAN-544)"
-          fi
+
+  # KAN-544. A job of its own, and NOT gated on `detect`, because ADR 0007 §3 scopes the guard to
+  # all three shipped packages. It lived in the `cli` job until this card, where a PR touching only
+  # `kaya-client` or only `mcp` never ran it — two thirds of the packages it is supposed to cover.
+  # There is exactly one of these; the placeholder that used to sit in `cli` is gone.
+  version-bump:
+    name: Version-bump guard
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Non-negotiable. The guard diffs against `git merge-base HEAD origin/main` — never the
+          # remote tip, which is pandan's open KAN-484 — and a shallow clone has no merge-base to
+          # find. It fails loudly rather than skipping in that case, so this line going missing is
+          # a red check and not a silently disabled guard.
+          fetch-depth: 0
+      - run: scripts/check-version-bump.sh
 
   mcp:
     name: MCP (lint + unit)
@@ -222,7 +229,7 @@ jobs:
   # a required check permanently pending and blocks every PR.
   ci-gate:
     name: CI gate
-    needs: [detect, docs, backend, client, cli, mcp, frontend, integration]
+    needs: [detect, docs, backend, client, cli, version-bump, mcp, frontend, integration]
     if: always()
     runs-on: ubuntu-latest
     steps:
