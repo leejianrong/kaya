@@ -1,13 +1,13 @@
 # kaya
 
-A cloud-hosted, Obsidian-like **markdown notes** app — API-first and agent-drivable. It is the docs
+A cloud-hosted, Obsidian-like **markdown notes** app, API-first and agent-drivable. It is the docs
 half of the `kayatoast` suite, sibling to [pandan](https://github.com/leejianrong/pandan), the kanban
 board. Where pandan tracks *work*, kaya holds the *knowledge*: specs, notes, runbooks, meeting notes,
 cross-linked to the board.
 
-> **Status: a walking skeleton, not a product.** The backend stores and serves notes over
-> `/api/v1/notes`, authenticated by a pandan PAT, and ships as one container image serving the SPA
-> and the API from a single origin. The SPA itself is still a shell, and the shared client, the
+> **Status: the API works; the product doesn't exist yet.** A pandan PAT creates, reads, edits and
+> deletes notes over `/api/v1/notes`, and the whole stack ships as one container image serving the
+> SPA and the API from a single origin. The SPA itself is still a shell, and the shared client, the
 > `kaya` CLI and the MCP adapter are still empty.
 > See [`docs/PLAN.md`](docs/PLAN.md) for what is being built,
 > [`docs/SLICES.md`](docs/SLICES.md) for the order, and [`CLAUDE.md`](CLAUDE.md) for what is
@@ -29,14 +29,14 @@ one credential throughout.
 |---|---|
 | [`docs/PLAN.md`](docs/PLAN.md) | Problem, solution, scope, requirements, the shape, affordances, testing approach, open risks |
 | [`docs/SLICES.md`](docs/SLICES.md) | Seven vertical slices, each with a build plan and acceptance criteria |
-| [`docs/QUESTIONS.md`](docs/QUESTIONS.md) | The decision register — what was decided, what is a default, what is deferred |
+| [`docs/QUESTIONS.md`](docs/QUESTIONS.md) | The decision register: what was decided, what is a default, what is deferred |
 | [`docs/adr/`](docs/adr/) | Ten architectural decisions, with what was rejected and why |
 | [`docs/kaya-vision.md`](docs/kaya-vision.md) | The founding statement of intent, kept verbatim |
 
 Start with `PLAN.md`. The ADRs worth reading first are
 [0002 (identity)](docs/adr/0002-identity-pandan-as-provider.md) and
-[0004 (why payload shaping lives in the shared client)](docs/adr/0004-shaping-lives-in-the-shared-client.md) —
-between them they carry most of what makes this project different from a generic notes app.
+[0004 (why payload shaping lives in the shared client)](docs/adr/0004-shaping-lives-in-the-shared-client.md).
+Between them they carry most of what makes this project different from a generic notes app.
 
 ## Development
 
@@ -57,7 +57,7 @@ There is no hosted deployment, on purpose: the image and the Kubernetes manifest
 exercised locally, and the k8s homelab is kaya's first and only deploy
 ([ADR 0010](docs/adr/0010-no-hosted-deploy-until-the-homelab.md)).
 
-Five packages in one repo — `backend/`, `frontend/`, `kaya-client/`, `kaya-cli/`, `mcp/` — with the
+Five packages in one repo (`backend/`, `frontend/`, `kaya-client/`, `kaya-cli/`, `mcp/`) with the
 dependency arrow pointing one way: adapters depend on the client, and nothing depends on an adapter
 ([ADR 0001](docs/adr/0001-stack-inherited-from-pandan.md)).
 
