@@ -77,6 +77,10 @@ test: ## Fast, no-infra test layer (what pre-push runs)
 test-integration: ## Real Postgres via testcontainers (needs Docker)
 	@cd backend && uv run pytest tests/integration -q
 
+.PHONY: measure-auth
+measure-auth: ## Re-measure introspection latency (needs Docker and a real PAT; KAN-539)
+	@cd backend && uv run scripts/measure_introspection_latency.py
+
 .PHONY: build
 build: ## Build the SPA into frontend/dist
 	@cd frontend && npm run build

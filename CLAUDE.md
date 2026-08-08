@@ -14,8 +14,14 @@ CI, but they hold almost nothing (KAN-531):
 | `frontend/` | Svelte 5 + Vite + TS toolchain, a shell page, and the dev proxy for `/api` |
 
 Not built yet: `authorize_note` and owner-scoped lists (KAN-535), anything under `/api/v1`
-(KAN-536), the container image and manifests (KAN-538). Introspection latency is implemented but
-**unmeasured** — that number is KAN-539's, and PLAN §Open risks still carries it.
+(KAN-536), the container image and manifests (KAN-538).
+
+Introspection latency is now **measured** (KAN-539, re-runnable as `make measure-auth`): a cache hit
+is **1.6 µs**, a warm miss **387 ms**, and a **cold miss 21.8 s**. That last number is more than
+twice `KAYA_PANDAN_TIMEOUT_SECONDS`'s 10 s default, so a cold pandan currently answers a *valid* PAT
+with a `503`. **Do not fix that by raising the timeout** — it converts the `503` into a 22-second
+request holding a Postgres connection, which is worse. PLAN §Open risks carries the escalation and
+the argument; read it before touching `app/auth/` or that setting.
 
 CI gates each language job on its **directory existing**, so all five now run on every PR. A
 package that can't be made green does not belong in the tree.
@@ -89,7 +95,13 @@ make test-integration  # real Postgres via testcontainers (needs Docker)
 make lint              # ruff × 4 packages + eslint + svelte-check
 make check             # docs-links + secret-scan + lint + test
 make build             # SPA into frontend/dist
+make measure-auth      # re-measure introspection latency (Docker + a real PAT; KAN-539)
 ```
+
+`make measure-auth` is the odd one out: it is a measurement, not a gate, and it is the only target
+that reads a credential. It takes the PAT from `KAYA_MEASURE_PAT` or `~/.config/pandan/config.toml`,
+never prints it, and **exits 0 having done nothing when there is no PAT** — so it can be run
+anywhere, and CI never needs a secret to keep it green.
 
 Still stubs, and they say which card unblocks them: `make up` (KAN-538), `make k3d` (KAN-538),
 `make test-e2e` (KAN-552).
