@@ -11,7 +11,7 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.52.1",
     "sqlalchemy>=2.0.36",
-    "psycopg[binary]>=3.2",
+    "psycopg[binary]>=3.3.4",
     "alembic>=1.19.0",
     "pydantic-settings>=2.7",
     # Runtime, not just test tooling, since KAN-534: the principal resolver calls pandan's
