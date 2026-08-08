@@ -181,6 +181,14 @@ def _implied_arg(detail: dict[str, Any]) -> str:
     A refusal whose only extras are *objects* — ADR 0009's `409` — yields ``""``, which is correct.
     Two whole notes do not fit in a tab-separated column, and they are still there in full under a
     structured format. An empty ``arg`` is a value, not a missing key.
+
+    **"At most one scalar" is a property of the backend, and it is guarded from both sides.**
+    ``tests/test_arg_slot.py`` holds every ``error_body(...)`` shape `backend/app/` emits, with the
+    ``arg`` each resolves to and the source it was copied from, plus the tie-break this function
+    would apply if two scalars ever arrived — specified, so nobody inherits it by accident. The
+    alarm that a second scalar has *appeared* cannot live here, because this package must never
+    import the backend; it lives at the place the change would be made, in
+    ``backend/tests/unit/test_error_extras_stay_addressable.py``.
     """
     for value in detail.values():
         if isinstance(value, str | int | float) and not isinstance(value, bool):

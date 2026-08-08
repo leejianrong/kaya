@@ -141,7 +141,10 @@ one event and no `SystemExit` escapes `main()`. Exit codes live in `kaya_cli/fai
 MCP tool has no process to exit — `0` ok · `1` runtime · `2` usage · `3` 401 · `4` 403 · `5` 404,
 **add-only** and pinned by literal-value tests. A raise site picks a class, and the class carries the
 `code`; nobody writes a number. A refusal is keyed on its **status**, not on the API's code string,
-because the backend's code vocabulary grows without the client's knowledge.
+because the backend's code vocabulary grows without the client's knowledge. The `arg` slot is
+**the first scalar extra a refusal carries**, which is unambiguous only while a refusal carries one;
+`backend/tests/unit/test_error_extras_stay_addressable.py` is the alarm for that, because the client
+may never import the backend and so cannot see a second one appear.
 
 **`KayaClient` returns a `Payload`, never a response body, and `render()` refuses a raw `dict`.**
 That is ADR 0004 at its sharpest point: the moment a dict crosses that boundary, whoever formats it
