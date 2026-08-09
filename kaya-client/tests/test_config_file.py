@@ -192,14 +192,35 @@ def test_a_json_number_and_a_json_string_resolve_alike(home: dict[str, str]) -> 
     assert max_text_chars(home) == 0
 
 
-def test_a_bad_text_limit_in_the_file_names_the_file(home: dict[str, str]) -> None:
+def test_a_bad_text_limit_in_the_file_names_the_file_by_path(home: dict[str, str]) -> None:
     """Two tiers can each hold a value, so "which of my configurations is wrong?" is the caller's
-    next question and the message has to answer it."""
+    next question — and "the config file" does not answer it, because the caller does not know
+    where that is. KAN-551's review found the eager resolution made `config path` refuse for this
+    very reason, so the refusal now names the path the way `read_settings_file`'s already does.
+
+    The path is in the **message**. ``arg`` stays the variable to fix: it is "the first scalar
+    extra a refusal carries", guarded from the backend side by
+    `test_error_extras_stay_addressable.py`, and a second scalar would risk that alarm to say
+    something message text says for nothing.
+    """
     put(home, {"max_text_chars": "lots"})
 
-    with pytest.raises(UsageError, match="config file") as raised:
+    with pytest.raises(UsageError) as raised:
         max_text_chars(home)
+
+    assert str(config_path(home)) in str(raised.value)
     assert raised.value.arg == MAX_TEXT_CHARS_ENV
+
+
+def test_a_bad_text_limit_in_the_environment_does_not_name_a_file(home: dict[str, str]) -> None:
+    """The other half, so the path is not pasted into every refusal regardless of where the value
+    came from — which would send a caller to edit a file that does not contain the problem."""
+    env = {**home, MAX_TEXT_CHARS_ENV: "lots"}
+
+    with pytest.raises(UsageError, match="the environment") as raised:
+        max_text_chars(env)
+
+    assert "config.json" not in str(raised.value)
 
 
 def test_a_malformed_file_is_a_refusal_not_a_shrug(home: dict[str, str]) -> None:

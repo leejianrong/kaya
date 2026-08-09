@@ -264,6 +264,54 @@ def test_path_says_when_the_file_is_there(capsys) -> None:
     assert json.loads(capsys.readouterr().out)["exists"] is True
 
 
+def test_path_answers_even_when_the_configured_values_are_unusable(capsys) -> None:
+    """**The escape hatch has to work precisely when everything else does not.**
+
+    A config file holding ``"max_text_chars": "lots"`` is a value nothing can resolve, and the
+    refusal that produces tells the caller to fix *the config file*. If the one verb whose entire
+    job is to answer "which file?" refuses for the same reason, the caller is locked out of their
+    own configuration with a message naming a thing they cannot find.
+
+    Reporting a path does not require a text limit, so this must not merely be *ordered* correctly
+    — nothing about `config path` may depend on the file's **contents** at all.
+    """
+    put({"max_text_chars": "lots", "api_url": "https://kaya.example"})
+
+    assert main(["config", "path", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["path"] == str(config_file())
+
+
+def test_a_refusal_about_a_file_value_names_the_file(capsys, answering) -> None:
+    """"Fix the config file" is not actionable without saying which one.
+
+    The path goes in the **message**, not in a new key: ``arg`` is "the first scalar extra a refusal
+    carries" and `backend/tests/unit/test_error_extras_stay_addressable.py` guards that from the
+    other side, so a second top-level scalar here would risk reddening a cross-package alarm to say
+    something message text says for free. `read_settings_file`'s malformed-JSON refusal already
+    names the path this way; this is the same wording for the same reason.
+    """
+    put({"max_text_chars": "lots"})
+    answering(200, {"notes": []})
+
+    assert main(["note", "list"]) == 2
+    row = capsys.readouterr().out
+
+    assert str(config_file()) in row
+    assert row.split("\t")[3].rstrip("\n") == config.MAX_TEXT_CHARS_ENV
+
+
+def test_path_answers_over_a_file_that_cannot_even_be_parsed(capsys) -> None:
+    """The other way a file can be unusable. `config path` never reads the contents at all, which
+    is what makes "the escape hatch works precisely when everything else does not" a property of
+    the code rather than an ordering that a later edit could undo."""
+    path = config_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"api_url": ', encoding="utf-8")
+
+    assert main(["config", "path"]) == 0
+    assert str(path) in capsys.readouterr().out
+
+
 def test_path_is_one_line_a_shell_can_use(capsys) -> None:
     """The human rendering of an entity puts the label first, so ``kaya config path | awk '{print
     $2}'`` works; the structured form is there for anything that wants it typed."""

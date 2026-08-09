@@ -367,7 +367,7 @@ def max_text_chars(env: Mapping[str, str] | None = None) -> int:
     if not raw:
         return DEFAULT_TEXT_LIMIT
 
-    where = "the config file" if source == FILE_SOURCE else "the environment"
+    where = _where(source, env)
     try:
         value = int(raw)
     except ValueError:
@@ -384,6 +384,33 @@ def max_text_chars(env: Mapping[str, str] | None = None) -> int:
             arg=MAX_TEXT_CHARS_ENV,
         )
     return value
+
+
+def _where(source: str, env: Mapping[str, str] | None) -> str:
+    """Which configuration a value came from, as a phrase a refusal can name — **with the path**.
+
+    "Fix the config file" is not actionable without saying *which* file, and a caller who cannot
+    resolve a setting is precisely the caller who cannot ask `config path` to find out under the
+    old eager resolution (KAN-551's review). `read_settings_file` already names the path in its
+    malformed-JSON refusal; this is the same wording, for the same reason, on the other failure a
+    file can cause.
+
+    **The path goes in the message and not in a new key.** ``arg`` is "the first scalar extra a
+    refusal carries", and `backend/tests/unit/test_error_extras_stay_addressable.py` guards that
+    property from the other side of a boundary this package may not import across. A second
+    top-level scalar would risk reddening that alarm to say something message text says for free,
+    so ``arg`` stays the variable to fix.
+
+    ``config_path`` cannot fail on this branch — a ``FILE_SOURCE`` value proves a path was found —
+    but it is guarded anyway, because a diagnostic that raises while explaining a failure replaces
+    a fixable message with a confusing one.
+    """
+    if source != FILE_SOURCE:
+        return "the environment"
+    try:
+        return str(config_path(env))
+    except KayaError:  # pragma: no cover - unreachable: the value came from a file that was read
+        return "the config file"
 
 
 # --------------------------------------------------------------------- the config verbs

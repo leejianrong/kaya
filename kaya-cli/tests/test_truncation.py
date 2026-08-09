@@ -164,18 +164,38 @@ def test_a_bad_limit_is_exit_two_on_stdout_with_empty_stderr(capsys, answering, 
     assert captured.err == ""
 
 
-def test_a_bad_limit_is_refused_before_a_request_is_made(answering, monkeypatch) -> None:
-    """A misconfigured shell should not cost a round trip.
+def test_a_bad_limit_is_refused_and_nothing_is_printed(answering, monkeypatch) -> None:
+    """A misconfigured limit refuses the read rather than silently rendering it untruncated.
 
-    This is why `main` resolves the limit before calling the verb rather than inline on the
-    ``render`` line next to ``resolve_fields`` — which is genuinely different, since a projection
-    refusal *needs* the payload to know the vocabulary.
+    **This test used to assert the refusal came before the request** — KAN-547 resolved the limit
+    eagerly in `main`, so a bad value cost no round trip. KAN-551's review withdrew that: the eager
+    call made *every* verb pay for a setting most of them never use, including `config path`, whose
+    entire job is to answer the "which config file?" question that this very refusal asks the
+    caller to go and fix. That was a lockout, so the limit is now resolved from the payload and
+    only when there is prose to cut (see `main`).
+
+    What survives is what the guarantee was actually for: the caller gets exit `2` and a row naming
+    the variable, and never a rendering that quietly ignored their setting. What is given up is one
+    read request against a misconfigured shell, which is the cheaper half by a wide margin.
     """
     monkeypatch.setenv(config.MAX_TEXT_CHARS_ENV, "-5")
-    seen = answering(200, NOTES)
+    answering(200, NOTES)
 
     assert main(["note", "list"]) == 2
-    assert seen == []
+
+
+def test_a_verb_with_no_prose_never_resolves_the_limit(capsys, monkeypatch) -> None:
+    """The other side of that trade, and the reason it is a payload fact rather than a verb list.
+
+    `config path` renders no prose, so there is no limit for it to need — and it must answer
+    whatever the configuration says, because it is the escape hatch from a configuration nobody can
+    resolve. A verb added later inherits this by having an empty ``prose_fields``, not by being
+    remembered.
+    """
+    monkeypatch.setenv(config.MAX_TEXT_CHARS_ENV, "lots")
+
+    assert main(["config", "path"]) == 0
+    assert "path" in capsys.readouterr().out
 
 
 def test_a_bad_limit_does_not_stop_the_cli_identifying_itself(capsys, monkeypatch) -> None:

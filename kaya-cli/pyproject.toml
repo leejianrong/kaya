@@ -11,7 +11,10 @@ name = "kaya-notes"
 # §contract 9 structurally. Behavioural on every axis: argv that used to be a usage error now
 # writes a note, and `config set` writes a file. Shaping, resolution and the file format are all
 # `kaya-client`'s; this package's share is the subparsers, one file read and a merge it does not
-# perform.
+# perform. One behaviour moved rather than arrived: `main` resolves `KAYA_MAX_TEXT_CHARS`
+# from the payload instead of before the verb, so a value nothing can parse no longer
+# refuses `config path` — the verb that answers which file to fix. `note list` still exits
+# `2` on one, but now after its request rather than before it.
 # 0.7.0 — KAN-547 adds `--full` to every verb and reads `KAYA_MAX_TEXT_CHARS`, so prose is cut to
 # 500 characters by default with a hint carrying the true total. Behavioural for every existing
 # invocation that prints a long body, and a new exit `2` path: a `KAYA_MAX_TEXT_CHARS` that is not

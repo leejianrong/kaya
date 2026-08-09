@@ -5,7 +5,8 @@ There is exactly one console script (Q39, ADR 0007 §4). Since KAN-551 it has ni
 0005 §contract 1 publishes. ADR 0005 sequences the output layer *before* the behaviour that goes
 through it, and the whole of this file is what that sequencing bought: the verbs are a subparser and
 a dispatch table, because the layer they print through was already finished when they arrived.
-KAN-551 quadrupled the verb count and ``main`` below did not change at all.
+KAN-551 quadrupled the verb count; ``main`` below gained one conditional, and only after a
+review found the eager one was a lockout (the comment there has it).
 
 `--version` (KAN-543) is here too, in the *first* release rather than the fifth: a CLI that cannot
 say which build it is makes every other guarantee unverifiable in the field. Both of its forms are
@@ -32,7 +33,9 @@ Three lines of that are load-bearing and each is load-bearing for a different re
   ``--fields`` (KAN-546) and ``--full`` (KAN-547) arrive on that same line and **not** through
   `verbs.run`, which is the boundary doing its job: a verb that took a projection or a truncation
   argument would be a verb with an opinion about the payload's shape, and the client's steps already
-  have the only ones there are. `verbs.py` has not changed for either card.
+  have the only ones there are. `verbs.py` has not changed for either card. KAN-551 split the
+  ``verbs.run(args)`` call out of that statement onto its own line so the payload can be inspected
+  before it is rendered — see the comment there — but ``render`` is still called exactly once.
 
 `--version` is a plain flag handled here rather than argparse's ``action="version"``: the built-in
 prints and raises ``SystemExit`` from inside the parser, which would put an exit path outside the
@@ -58,6 +61,7 @@ from kaya_cli.parsing import (
     API_URL_FLAG,
     BODY_FILE_FLAG,
     BODY_FLAG,
+    NO_TEXT_LIMIT,
     PATH_FLAG,
     PRECONDITION_FLAG,
     TITLE_FLAG,
@@ -302,12 +306,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"{version_string()}\n{EPILOGUE}")
             return EXIT_OK
 
-        # Resolved before the verb runs, like `fmt` and unlike `fields`: this one reads the
-        # environment, and a misconfigured `KAYA_MAX_TEXT_CHARS` should be exit `2` without having
-        # spent a request first. `--version` and the banner above never reach it, so a bad value
-        # cannot stop the CLI identifying itself.
-        text_limit = resolve_text_limit(args)
-        print(render(verbs.run(args), fields=resolve_fields(args), text_limit=text_limit, fmt=fmt))
+        # Resolved from the payload, **after** the verb, and only when there is prose to cut. It
+        # was eager here until KAN-551's review, and the bug that caused is worth writing down
+        # because it is the kind a reviewer meets and an author does not.
+        #
+        # A `max_text_chars` the resolver cannot parse is exit `2` with a message telling the
+        # caller to fix "the config file" — and an eager call made *every* verb pay for it,
+        # including `config path`, whose entire job is to answer "which config file?". The user was
+        # locked out of their own configuration by a message naming a thing only the refused verb
+        # could have found. Under KAN-547's environment-only tier it was unreachable, because the
+        # bad value was in the caller's own shell where they could already see it; the file tier is
+        # what turned it into a trap.
+        #
+        # The guard is a fact about the payload rather than a list of verb names, so a verb added
+        # later inherits it. `prose_fields` is empty for exactly the payloads truncation would
+        # leave alone — `truncate` returns those untouched at any limit — which is why
+        # `NO_TEXT_LIMIT` here is not a behaviour choice: there is nothing for the number to do.
+        #
+        # What this gives up is the old comment's "without having spent a request first": a
+        # `note list` against a bad limit now makes its request before refusing. That was the
+        # weaker half of the trade — the refusal is identical and the request is a read — and it
+        # bought nothing at all for the verbs that never truncate.
+        payload = verbs.run(args)
+        text_limit = resolve_text_limit(args) if payload.prose_fields else NO_TEXT_LIMIT
+        print(render(payload, fields=resolve_fields(args), text_limit=text_limit, fmt=fmt))
         return EXIT_OK
     except ParserExit as ended:
         # `--help`, and nothing else today. Argparse has already printed; there is no failure to
