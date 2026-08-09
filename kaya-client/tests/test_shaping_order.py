@@ -72,3 +72,16 @@ def test_the_shaped_dict_does_not_alias_the_payload(notes: Payload) -> None:
 def test_an_empty_collection_survives_the_whole_pipeline() -> None:
     shaped = attach_summary(truncate(project(note_collection(), None), 500))
     assert shaped.as_dict() == {"notes": []}
+
+
+def test_render_refuses_a_raw_response_body() -> None:
+    """The chain's entrance, and the mistake this whole package exists to prevent.
+
+    Moved here from the retired `test_passthrough_is_a_no_op.py`, because it is the same assertion
+    as `test_projection_is_first_and_takes_a_payload` one step further out: a client that returned a
+    ``dict`` for an adapter to format is pandan's 11.4× (ADR 0004). If ``render`` accepted one, the
+    payload's ``kind`` and prose allow-list would have to be re-derived by whoever called it, and
+    the obvious place to put that derivation is the adapter.
+    """
+    with pytest.raises(TypeError, match="ADR 0004"):
+        render({"notes": []})  # type: ignore[arg-type]

@@ -199,8 +199,9 @@ def _entity(shaped: Shaped) -> str:
 
     Prose is printed **unlabelled and last** because it is the thing the reader opened the note for,
     and because a multi-line value inside an aligned block destroys the alignment. That layout is
-    also what makes V2b's truncation hint have somewhere to go — it appends to the prose section
-    without disturbing a single byte of the block above it.
+    what gave KAN-547's truncation hint somewhere to go: the hint is part of the string `truncation`
+    produced, so it arrives after a blank line at the end of the prose without this function knowing
+    it exists and without disturbing a single byte of the block above.
     """
     payload = shaped.payload
     record = payload.record
@@ -230,6 +231,11 @@ def _cell(value: Any) -> str:
     Collapsing whitespace is layout, not shaping: it applies only to a value being placed in an
     aligned column, and the prose section above prints its values untouched. A `title` with a
     newline in it would otherwise silently shift every row below it one column left.
+
+    Since KAN-546 made ``body`` reachable in a cell (``--fields ref,body``) this is also what a
+    *truncated* value meets on the table path: the hint `truncation` appended after a blank line
+    collapses to one space and the row stays one line, so the grid holds without either module
+    branching on which of the two renderings it is feeding.
     """
     if value is None:
         return ""

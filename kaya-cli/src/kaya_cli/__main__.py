@@ -28,9 +28,10 @@ Three lines of that are load-bearing and each is load-bearing for a different re
 - **``render`` is called here and nowhere else in this package.** `verbs.run` returns a ``Payload``
   and this line turns it into bytes. That is the entire ADR 0004 boundary, visible in one statement:
   if a second place in `kaya-cli` ever formats a payload, it will be a line added next to this one.
-  ``--fields`` (KAN-546) arrives on that same line and **not** through `verbs.run`, which is the
-  boundary doing its job: a verb that took a projection argument would be a verb with an opinion
-  about the payload's shape, and the client's projection step already has the only one there is.
+  ``--fields`` (KAN-546) and ``--full`` (KAN-547) arrive on that same line and **not** through
+  `verbs.run`, which is the boundary doing its job: a verb that took a projection or a truncation
+  argument would be a verb with an opinion about the payload's shape, and the client's steps already
+  have the only ones there are. `verbs.py` has not changed for either card.
 
 `--version` is a plain flag handled here rather than argparse's ``action="version"``: the built-in
 prints and raises ``SystemExit`` from inside the parser, which would put an exit path outside the
@@ -58,6 +59,7 @@ from kaya_cli.parsing import (
     output_flags,
     resolve_fields,
     resolve_format,
+    resolve_text_limit,
 )
 
 PROG = "kaya"
@@ -65,8 +67,9 @@ PROG = "kaya"
 DESCRIPTION = "kaya — markdown notes, API-first."
 
 EPILOGUE = (
-    "Reads only: `note list` and `note get`. `--fields a,b,c` selects columns on a list; the\n"
-    "write verbs and truncation are still to come. See docs/SLICES.md."
+    "Reads only: `note list` and `note get`. `--fields a,b,c` selects columns on a list, and\n"
+    "prose is cut to KAYA_MAX_TEXT_CHARS (default 500) unless `--full`. The write verbs are\n"
+    "still to come. See docs/SLICES.md."
 )
 
 NOTE_HELP = "read the notes you own"
@@ -149,7 +152,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"{version_string()}\n{EPILOGUE}")
             return EXIT_OK
 
-        print(render(verbs.run(args), fields=resolve_fields(args), fmt=fmt))
+        # Resolved before the verb runs, like `fmt` and unlike `fields`: this one reads the
+        # environment, and a misconfigured `KAYA_MAX_TEXT_CHARS` should be exit `2` without having
+        # spent a request first. `--version` and the banner above never reach it, so a bad value
+        # cannot stop the CLI identifying itself.
+        text_limit = resolve_text_limit(args)
+        print(render(verbs.run(args), fields=resolve_fields(args), text_limit=text_limit, fmt=fmt))
         return EXIT_OK
     except ParserExit as ended:
         # `--help`, and nothing else today. Argparse has already printed; there is no failure to

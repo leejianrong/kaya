@@ -28,9 +28,10 @@ is the first as a tuple, ready for argparse's ``choices``. The ``toon`` encoder 
 stdlib-only and **encode-only**: the round-trip contract is proven by a decoder that lives in
 ``tests/``, because nothing in the product reads TOON back.
 
-``config`` resolves PLAN §Config's ``KAYA_API_URL`` and ``KAYA_TOKEN`` from the environment and
-hands back a ``KayaClient``, so both adapters agree about which deployment they are talking to. Its
-file tiers and the ``config`` verbs are V2b's.
+``config`` resolves PLAN §Config's ``KAYA_API_URL``, ``KAYA_TOKEN`` and — since KAN-547 —
+``KAYA_MAX_TEXT_CHARS`` from the environment, and hands back a ``KayaClient``, so both adapters
+agree about which deployment they are talking to and how much prose a read returns. Its file tiers
+and the ``config`` verbs are KAN-551's.
 
 **Failures render through the same layer** (KAN-542). ``render_error(failure, fmt=…)`` produces ADR
 0005 §contract 3's ``error<TAB>code<TAB>message<TAB>arg`` row or the ``{"error": {…}}`` object, with
@@ -40,17 +41,19 @@ the exit number — ADR 0005's exit table is `kaya-cli`'s, because an MCP tool h
 exception class here carries a ``code``, so a raise site names a meaning and the CLI's table is a
 lookup rather than a judgement.
 
-**V2a (KAN-540) implemented the ``fmt`` dimension only; KAN-546 added ``fields``.** Projection
-selects a subset of the record's own keys — vocabulary from ``Payload.field_names()``, an unknown
-name refused by name, ``fields`` on a single entity a ``UsageError`` — and it does the same thing in
-every format, because the CLI's ``--fields`` and MCP's ``fields`` are one parameter through one
-seam. ``text_limit`` is still a validated no-op; `tests/test_passthrough_is_a_no_op` pins that half,
-so KAN-547 filling it is a visible diff. ADR 0005 puts the signature before the behaviour on purpose
-— **``render``'s signature did not move for KAN-546 and must not move for what follows**; if a later
-card needs it to change, that is the signal the sequencing broke, not a reason to push through.
-``render``'s module docstring argues requirement by requirement why.
+**V2a (KAN-540) implemented the ``fmt`` dimension only; KAN-546 added ``fields`` and KAN-547
+``text_limit``.** Projection selects a subset of the record's own keys — vocabulary from
+``Payload.field_names()``, an unknown name refused by name, ``fields`` on a single entity a
+``UsageError`` — and it does the same thing in every format, because the CLI's ``--fields`` and
+MCP's ``fields`` are one parameter through one seam. Truncation cuts the fields named by
+``Payload.prose_fields`` and appends a hint carrying the **true** total in-band, so the total
+survives into ``json``, ``toon`` and ``data``; ``0`` disables it and is what ``--full`` resolves to.
+ADR 0005 puts the signature before the behaviour on purpose — **``render``'s signature did not move
+for either card and must not move for what follows**; if a later card needs it to change, that is
+the signal the sequencing broke, not a reason to push through. ``render``'s module docstring argues
+requirement by requirement why.
 
-Still to come: truncation and aggregates (KAN-547 onwards), the write verbs, search and links
+Still to come: aggregates (KAN-548), content-first and ``help[]``, the write verbs, search and links
 (KAN-558/559, KAN-566).
 """
 
@@ -58,7 +61,14 @@ from importlib.metadata import PackageNotFoundError, version
 
 from kaya_client.aggregates import attach_summary
 from kaya_client.client import KayaClient
-from kaya_client.config import API_URL_ENV, TOKEN_ENV, api_url, open_client
+from kaya_client.config import (
+    API_URL_ENV,
+    MAX_TEXT_CHARS_ENV,
+    TOKEN_ENV,
+    api_url,
+    max_text_chars,
+    open_client,
+)
 from kaya_client.errors import (
     ARG_KEY,
     CODE_KEY,
@@ -85,7 +95,7 @@ from kaya_client.serialization import (
     serialize,
     serialize_error,
 )
-from kaya_client.truncation import DEFAULT_TEXT_LIMIT, truncate
+from kaya_client.truncation import DEFAULT_TEXT_LIMIT, hint, truncate
 
 try:
     __version__ = version("kaya-client")
@@ -100,6 +110,7 @@ __all__ = [
     "CONTRACT_KEYS",
     "DEFAULT_TEXT_LIMIT",
     "ERROR_MARKER",
+    "MAX_TEXT_CHARS_ENV",
     "MESSAGE_KEY",
     "ROW_SEPARATOR",
     "SOURCE_CHECKOUT",
@@ -121,6 +132,8 @@ __all__ = [
     "attach_summary",
     "build_sha",
     "error_payload",
+    "hint",
+    "max_text_chars",
     "open_client",
     "project",
     "render",

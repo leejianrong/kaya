@@ -29,12 +29,12 @@ note's title starts with the word.
 
 ### The output flags, and why resolving them is not shaping
 
-``--format``, ``--json`` and ``--fields`` are declared here and resolved here. That is not a
-violation of ADR 0004: what this module decides is which *name* the user asked for, and every byte
-of what that name means lives in `kaya_client`. The vocabularies themselves are not written down in
-this package — ``choices`` comes from ``CLI_FORMATS``, which is derived from the ``Format`` enum, so
-a format published in the client is offered by the CLI without anybody editing an adapter, and an
-adapter-only format (``data``) cannot be offered by accident.
+``--format``, ``--json``, ``--fields`` and ``--full`` are declared here and resolved here. That is
+not a violation of ADR 0004: what this module decides is which *name* the user asked for, and every
+byte of what that name means lives in `kaya_client`. The vocabularies themselves are not written
+down in this package — ``choices`` comes from ``CLI_FORMATS``, which is derived from the ``Format``
+enum, so a format published in the client is offered by the CLI without anybody editing an adapter,
+and an adapter-only format (``data``) cannot be offered by accident.
 
 ``--fields`` is the same trade with a sharper edge, because projection is the concern ADR 0004 was
 written about. So this module does exactly one thing with it: **split the comma-separated argv value
@@ -43,13 +43,20 @@ projected at all, and what the narrowed payload looks like are all decided in
 `kaya_client.projection` — see `resolve_fields`. Pandan put projection in its CLI and its MCP
 adapter inherited none of it; the one line below is the whole of kaya's version of that decision,
 and if it ever grows a second line the review question is "why isn't this in the client?".
+
+``--full`` (KAN-547) is the same shape again and the share is even smaller. What truncation *is* —
+the allow-list, the cut, the true total, the hint's wording — is `kaya_client.truncation`'s, and
+what the default number is, is `kaya_client.config.max_text_chars`'s, so an MCP server started from
+the same shell reads the same ``KAYA_MAX_TEXT_CHARS``. What is left here is a precedence between a
+flag and a deployment setting, which is the same thing `resolve_format` does for ``--format`` over
+``--json``, and it exists only because only an adapter has an argv. See `resolve_text_limit`.
 """
 
 import argparse
 import sys
 from typing import NoReturn
 
-from kaya_client import CLI_FORMATS, Format, UsageError
+from kaya_client import CLI_FORMATS, Format, UsageError, max_text_chars
 
 
 class ParserExit(Exception):
@@ -104,6 +111,12 @@ class StructuredParser(argparse.ArgumentParser):
 FORMAT_FLAG = "--format"
 JSON_FLAG = "--json"
 FIELDS_FLAG = "--fields"
+FULL_FLAG = "--full"
+
+NO_TEXT_LIMIT = 0
+"""What ``--full`` resolves to. ADR 0005's ``--full`` and ``KAYA_MAX_TEXT_CHARS=0`` are **one
+state**, spelled once, in the client: `kaya_client.truncation` treats ``0`` as "do not truncate",
+which is why ``render`` has no ``full=True`` and this module has no second opinion to hold."""
 
 FIELDS_SEPARATOR = ","
 """What ``--fields`` splits on. A comma, per ADR 0005 §contract 2's own spelling (``--fields
@@ -111,7 +124,7 @@ a,b,c``) and pandan's V42, so an operator's muscle memory carries between the tw
 
 
 def output_flags() -> argparse.ArgumentParser:
-    """The ``--format``/``--json``/``--fields`` set, as a parent parser every verb inherits.
+    """The ``--format``/``--json``/``--fields``/``--full`` set, as a parent parser every verb gets.
 
     A parent rather than a copy per subparser: ADR 0005 §contract 1 is a promise about *every* verb,
     and the way that promise breaks is one verb added later without the flags. Declaring them once
@@ -126,6 +139,10 @@ def output_flags() -> argparse.ArgumentParser:
     server — which has no argparse — would be left to reimplement it. So the parser accepts it
     everywhere and `kaya_client.projection` refuses it where it does not apply, which is the one
     place both adapters inherit the refusal from.
+
+    ``--full`` is on every verb for the plainer reason that it applies to every verb: a list of
+    notes has prose in it the moment ``--fields ref,body`` asks for it, so a flag that existed only
+    on `note get` would be a rule about which verbs *happen* to show a body today.
     """
     flags = argparse.ArgumentParser(add_help=False)
     flags.add_argument(
@@ -144,6 +161,11 @@ def output_flags() -> argparse.ArgumentParser:
         default=None,
         metavar="a,b,c",
         help="select these columns, in this order, on a list verb (default: the standard row)",
+    )
+    flags.add_argument(
+        FULL_FLAG,
+        action="store_true",
+        help="print prose in full instead of truncating it (same as KAYA_MAX_TEXT_CHARS=0)",
     )
     return flags
 
@@ -185,3 +207,26 @@ def resolve_fields(args: argparse.Namespace) -> list[str] | None:
     if given is None:
         return None
     return str(given).split(FIELDS_SEPARATOR)
+
+
+def resolve_text_limit(args: argparse.Namespace) -> int:
+    """How much prose this invocation prints: ``0`` for ``--full``, else ``KAYA_MAX_TEXT_CHARS``.
+
+    **The flag beats the deployment setting**, which is the only decision made here and is the same
+    shape as `resolve_format`'s: an explicit thing the user typed on this command line outranks a
+    thing their shell profile said once. It is one-way — there is no ``--truncate`` to argue the
+    other direction — because ``--full`` names a state (``0``) rather than a toggle, and a flag
+    whose only job is to restore the default would be a second spelling of "do not pass ``--full``".
+
+    Everything the number *means* is `kaya_client`'s. The default, the parse and the refusal of a
+    value that is not a whole number are `kaya_client.config.max_text_chars`, so V6's MCP server
+    started from the same shell truncates to the same length without importing this module; the
+    cut itself, the allow-list and the hint are `kaya_client.truncation`. ADR 0004 leaves an
+    adapter "how it gets its arguments", and a ``store_true`` plus this precedence is all of it.
+
+    Read at call time rather than at parse time, for the reason `kaya_client.config` gives about
+    ``env``: a test's ``monkeypatch.setenv`` and a real shell are then the same code path.
+    """
+    if getattr(args, "full", False):
+        return NO_TEXT_LIMIT
+    return max_text_chars()

@@ -43,7 +43,7 @@ is half a contract.
 | 3 | Errors **structured on stdout**: `error<TAB><code><TAB><message><TAB><arg>`, or an `{"error": {...}}` object under a structured format, with all keys always present | Human `usage:` text still goes to stderr |
 | 4 | Exit codes: `0` ok · `1` runtime · `2` usage — the caller's input was rejected, by argparse or by the API (`400`) · `3` 401 · `4` 403 · `5` 404 | **Pandan's scheme, adopted verbatim.** Branch on the stable `code` string, never on message text. `2`'s wording widened by the 2026-08-09 amendment below; no number moved |
 | 5 | A pre-computed `summary` on every list verb, describing **the returned set** — under a filter or `--limit`, the returned set, not the whole corpus | A trailing line for humans, a `summary` object for structured consumers, both from the same dict |
-| 6 | Text truncated by default with a **true** total and `--full` to opt out; an allow-list of prose fields, never "any long string" | A truncated value stays a string: no key added, removed or retyped |
+| 6 | Text truncated by default with a **true** total and `--full` to opt out; an allow-list of prose fields, never "any long string" | A truncated value stays a string: no key added, removed or retyped. **Where** the total is written was left open here, and settled by the 2026-08-09 (KAN-547) amendment below: in-band, inside the string, so it reaches the structured formats too. The multi-byte guarantee is code points |
 | 7 | Bare `kaya` prints live state and exits `0`; `--help` still prints usage | No token → a structured auth error, not a stack trace |
 | 8 | Results carry `help[]` next-step **templates** with placeholders left unfilled | Every hint must parse as a real command, pinned by a test |
 | 9 | No verb prompts when stdin isn't a tty | A structured failure instead of a hang |
@@ -195,3 +195,76 @@ this is an amendment and not a breaking change, and why it could be settled by t
 implements it rather than by a new ADR. The 2026-08-09 (KAN-718) amendment above is the precedent
 for the form: correct the wording where it named the wrong thing, keep the guarantee it was reaching
 for, and do not re-litigate an accepted decision.
+
+## Amendment (2026-08-09, KAN-547): the truncation hint is **in-band**, and the guarantee is code points
+
+§contract 6 asks for two things in one row — a **true** total, and "a truncated value stays a
+string: no key added, removed or retyped" — and says nothing about where the total is written down.
+`kaya-client/src/kaya_client/truncation.py` recorded that gap in V2a rather than guessing at it,
+because V2a builds the seam and V2b fills it. This is V2b filling it.
+
+**The decision: the hint is appended to the truncated string itself.** A cut `body` is the first
+`text_limit` characters, a blank line, then
+`(truncated, 2847 chars total — use --full to see complete body)`. No key is added, the value is
+still a `str`, and the total therefore reaches `json`, `toon` and `data` as well as `human`.
+
+**Why the alternative does not survive contract 6 read as a whole.** The obvious other design is a
+human-only hint, with structured output carrying a silently shortened string. Truncation is step 2
+of [ADR 0004](0004-shaping-lives-in-the-shared-client.md)'s ordering and serialization is step 4, so
+by the time `human` could print a hint the original length no longer exists. The only two ways to
+carry it that far are a second key — which the same sentence of contract 6 forbids — or truncating
+inside the serializer, which is ADR 0004's rule broken and would put a shaping decision in the one
+step that branches on format. In-band is what is left once both are excluded, and it is also the
+only reading under which the promise is kept to the consumer who needs it: under a human-only hint
+an agent on `--format json` cannot distinguish a 500-character note from a truncated 3,000-character
+one, so "a true total" would be a promise kept only to the audience who could have counted.
+
+The sibling tool already does this. `pandan get KAN-716` prints
+`… (truncated, 1940 chars total — use --full to see complete body)` inside the description text, and
+pandan's V45 is the slice this contract row was derived from.
+
+**What it costs, stated rather than hidden.** A consumer that wants the prose alone gets the hint
+with it. The answer is `--full`, which is the flag contract 6 pairs with the total in the first
+place, and `KAYA_MAX_TEXT_CHARS=0` for a deployment that always wants whole notes.
+
+**The multi-byte guarantee is code points, not grapheme clusters.** SLICES §V2b's unit line says
+"truncation never splits a multi-byte character", and that is what is implemented and tested: `str`
+slicing is by code point, so no cut can produce a lone surrogate, a broken UTF-8 sequence or a
+replacement character, and `text_limit` and the total are the same unit. A cut *can* fall inside a
+grapheme cluster — between a letter and its combining accent, inside a ZWJ emoji sequence, between a
+base emoji and its skin-tone modifier — and `kaya-client/tests/test_truncation.py` demonstrates that
+rather than hiding it. Closing that gap needs a UAX #29 segmentation table, i.e. a dependency, and
+SLICES §V2a fixes `kaya-client` at exactly one runtime dependency. Claiming clusters while
+implementing code points would be the "full parity" mistake in miniature, so the narrower claim is
+the one made.
+
+**`--full` and `KAYA_MAX_TEXT_CHARS=0` are one state with one spelling.** `render` gained no
+`full=True`; `--full` resolves to `text_limit=0` in `kaya_cli.parsing.resolve_text_limit`, whose
+entire content is that the flag outranks the environment. The number itself is
+`kaya_client.config.max_text_chars`, so V6's MCP server started from the same shell truncates to the
+same length without importing an adapter. **`render`'s signature did not move**, which is the third
+consecutive V2b card for which that is true.
+
+**Measured on kaya's own corpus** (40 notes, `o200k_base`, through the shipped `render`, via
+`kaya-client/scripts/measure_toon_delta.py`), against `--full` as the baseline because that is what
+a read cost before this card:
+
+| `note list`, 40 notes, complete records | compact JSON | vs `--full` | toon | vs `--full` | `note get` JSON | vs `--full` |
+|---|---:|---:|---:|---:|---:|---:|
+| mean body 1,351 chars, default `500` | 7,298 | −41.7% | 6,672 | −44.1% | 182 | −49.7% |
+| mean body 1,351 chars, `200` | 5,237 | −58.1% | 4,611 | −61.3% | 132 | −63.5% |
+| mean body 3,495 chars, default `500` | 7,329 | −72.8% | 6,703 | −74.6% | 183 | −80.0% |
+
+**And the honest counter-result: on a corpus of short notes the default costs a little rather than
+saving.** At a mean body of 266 characters *no* note exceeds 500, so the default is a byte-identical
+no-op; forcing the limit down to 200 makes a `note list` **+1.0%** larger in JSON, because the hint
+has a fixed cost of roughly twenty tokens and cutting a 266-character body to 200 recovers fewer
+than that. That is the correct behaviour rather than a defect — the hint is what makes the total
+true — but it is why truncation is a saving on *documents* and not on one-line notes, and it is the
+kind of number ADR 0004's "measure, don't assert" rule exists to surface.
+
+**Nothing is withdrawn from a user.** Truncation had never shipped; V2a published `--format`,
+`--json` and the exit table, and this ADR's §Negative consequence about a frozen contract is about
+promises already made. The precedent for the form is the two amendments above: correct or complete
+the wording where it under-specified something, keep the guarantee it was reaching for, and do not
+re-litigate an accepted decision.

@@ -49,15 +49,16 @@ uv run ruff check .
 
 ## What is and is not implemented
 
-**V2a implements the `fmt` dimension only**, per ADR 0005's sequencing rule: the signature lands
-before the behaviour goes inside it.
+**V2a implemented the `fmt` dimension only**, per ADR 0005's sequencing rule: the signature lands
+before the behaviour goes inside it. V2b has since filled `fields` (KAN-546) and `text_limit`
+(KAN-547) without that signature moving.
 
 | | Today |
 |---|---|
 | `fmt` | User-facing: `human`, `json`, `toon`. Adapter-facing: `data`. `_ERROR_SERIALIZERS` has the same keys as `_SERIALIZERS`, pinned by a test, so a format cannot render a note list but not a `404` |
-| `fields` | Accepted, shape-validated, **no-op**. Vocabulary checking is V2b |
-| `text_limit` | Accepted, shape-validated, **no-op**. `0` will mean `--full` |
-| `summary` | Never attached. `Shaped` already carries the slot |
+| `fields` | **Live** (KAN-546). Narrows `records` *and* `columns`, in the caller's order, uniformly for every format. Vocabulary from `Payload.field_names()`; an unknown name and a single-entity payload are both `UsageError` |
+| `text_limit` | **Live** (KAN-547). Cuts the fields `Payload.prose_fields` names, appending a hint with the **true** total in-band so it reaches the structured formats. `0` means `--full`; the default is `config.max_text_chars()` over `KAYA_MAX_TEXT_CHARS` |
+| `summary` | Never attached. `Shaped` already carries the slot (KAN-548) |
 | Verbs | `list_notes()`, `get_note(ref)`. The writes arrive with V2b's full verb set |
 
 ### Two format vocabularies, because two audiences

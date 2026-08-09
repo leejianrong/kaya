@@ -66,9 +66,9 @@ class Payload:
     rather than a hope."""
 
     prose_fields: frozenset[str] = frozenset()
-    """The truncation allow-list (ADR 0005: named prose fields, never a length heuristic). Still
-    unused — ``truncation.truncate`` is a no-op until KAN-547 — but supplied from the first call, so
-    that card adds a step rather than a parameter.
+    """The truncation allow-list (ADR 0005: named prose fields, never a length heuristic). Read by
+    `truncation.truncate` since KAN-547, and supplied from the very first call, which is why that
+    card added a step rather than a parameter.
 
     **It survives `narrowed_to` whole**, deliberately: it is a fact about the *API's schema* (which
     columns are unbounded ``TEXT``), not about which columns a caller asked to see. Narrowing it to
@@ -138,6 +138,19 @@ class Payload:
         """The same records under a different row. Half of what ``--fields`` needs; see
         `narrowed_to` for the other half and for why KAN-546 did not settle for this one alone."""
         return replace(self, columns=tuple(columns))
+
+    def with_records(self, records: Iterable[Record]) -> "Payload":
+        """The same shape carrying different values. This is how `truncation` rewrites prose.
+
+        A **new** payload, and the records are copied: the one this was called on is the complete
+        API response and ADR 0004 §Consequences requires it to stay that way, because ``--full`` and
+        anything else that wants the untruncated text has nowhere else to get it. ``columns``,
+        ``kind`` and ``prose_fields`` come through untouched — truncation changes what a value says,
+        never which keys exist (ADR 0005 §contract 6), and the *caller* is what guarantees that:
+        this method would take a narrower record, which is why `truncation._cut_record` rebuilds
+        from ``record.items()`` rather than from a field list.
+        """
+        return replace(self, records=tuple(dict(record) for record in records))
 
     def narrowed_to(self, fields: Sequence[str]) -> "Payload":
         """The same payload with ``records`` **and** ``columns`` cut to ``fields``, in that order.

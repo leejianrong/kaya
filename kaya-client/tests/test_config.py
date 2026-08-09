@@ -10,8 +10,21 @@ as what it does.
 import httpx
 import pytest
 
-from kaya_client import MissingCredential, api_url, open_client
-from kaya_client.config import API_URL_ENV, DEFAULT_API_URL, TOKEN_ENV, token
+from kaya_client import (
+    DEFAULT_TEXT_LIMIT,
+    MissingCredential,
+    UsageError,
+    api_url,
+    max_text_chars,
+    open_client,
+)
+from kaya_client.config import (
+    API_URL_ENV,
+    DEFAULT_API_URL,
+    MAX_TEXT_CHARS_ENV,
+    TOKEN_ENV,
+    token,
+)
 
 TOKEN = "kanban_pat_notarealtokenatall"
 
@@ -98,6 +111,69 @@ def test_no_message_on_this_path_can_contain_a_fragment_of_a_token() -> None:
     reported = f"{raised.value} {raised.value.arg}"
 
     assert not [fragment for fragment in fragments if fragment in reported]
+
+
+# --------------------------------------------------------------- the text limit (KAN-547)
+
+
+def test_the_text_limit_comes_from_the_environment() -> None:
+    assert max_text_chars({MAX_TEXT_CHARS_ENV: "120"}) == 120
+
+
+def test_an_unset_text_limit_is_the_documented_default() -> None:
+    """SLICES §V2b's "default 500", taken from `truncation.DEFAULT_TEXT_LIMIT` rather than written
+    again here — two copies of one number is how a config layer starts disagreeing with the thing it
+    configures."""
+    assert max_text_chars({}) == DEFAULT_TEXT_LIMIT
+    assert DEFAULT_TEXT_LIMIT == 500
+
+
+def test_zero_survives_as_a_value(monkeypatch) -> None:
+    """``0`` disables truncation — ADR 0005's ``--full`` as a deployment setting — so it has to
+    survive a falsy check that an unset variable does not. The tempting ``or DEFAULT`` is exactly
+    the bug: it would make ``KAYA_MAX_TEXT_CHARS=0`` silently mean 500."""
+    assert max_text_chars({MAX_TEXT_CHARS_ENV: "0"}) == 0
+
+    monkeypatch.setenv(MAX_TEXT_CHARS_ENV, "0")
+    assert max_text_chars() == 0
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_a_blank_text_limit_is_treated_as_unset(value: str) -> None:
+    """An exported-but-empty variable is the common shape of a misconfigured shell profile, and the
+    same reading `api_url` and `token` already take."""
+    assert max_text_chars({MAX_TEXT_CHARS_ENV: value}) == DEFAULT_TEXT_LIMIT
+
+
+@pytest.mark.parametrize("value", ["lots", "5.5", "500 chars", "1e3"])
+def test_a_text_limit_that_is_not_a_whole_number_is_a_usage_error(value: str) -> None:
+    """Exit `2`, ADR 0005 §contract 4: the caller's input was rejected. A ``KayaError``, and not
+    the ``TypeError`` `truncation.check_text_limit` raises at the seam — ``main``'s funnel catches
+    only the first, and a shell someone can correct should not arrive as a traceback."""
+    with pytest.raises(UsageError):
+        max_text_chars({MAX_TEXT_CHARS_ENV: value})
+
+
+def test_a_negative_text_limit_is_a_usage_error() -> None:
+    """``0`` already spells "disabled", so ``-1`` is not "extra disabled"."""
+    with pytest.raises(UsageError, match="0 or more"):
+        max_text_chars({MAX_TEXT_CHARS_ENV: "-1"})
+
+
+def test_the_refusal_names_the_variable_to_fix() -> None:
+    """ADR 0005 §contract 3's ``arg`` slot is the thing the refusal is about, which here is the key
+    — the same shape `MissingCredential` uses, so one consumer rule reads both."""
+    with pytest.raises(UsageError) as raised:
+        max_text_chars({MAX_TEXT_CHARS_ENV: "lots"})
+
+    assert raised.value.arg == MAX_TEXT_CHARS_ENV
+    assert MAX_TEXT_CHARS_ENV in str(raised.value)
+
+
+def test_the_text_limit_is_read_at_call_time(monkeypatch) -> None:
+    monkeypatch.setenv(MAX_TEXT_CHARS_ENV, "7")
+
+    assert max_text_chars() == 7
 
 
 # ------------------------------------------------------------------------ the session
