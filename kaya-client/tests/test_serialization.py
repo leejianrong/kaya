@@ -32,7 +32,10 @@ STRING_FORMATS = ["human", "json", "toon"]
 
 def test_data_returns_the_shaped_dict_itself(notes: Payload) -> None:
     """The ``dict`` arm of the union, and the reason V6's MCP adapter never needs ``json.loads``."""
-    assert render(notes, fmt="data") == {"notes": [GROCERIES, READING_LIST]}
+    assert render(notes, fmt="data") == {
+        "notes": [GROCERIES, READING_LIST],
+        "summary": {"count": 2},
+    }
 
 
 def test_data_reproduces_the_api_envelope(notes: Payload, note: Payload) -> None:
@@ -41,14 +44,25 @@ def test_data_reproduces_the_api_envelope(notes: Payload, note: Payload) -> None
     That is PLAN §Implementation decisions' fixed shape, not a choice made in this package, and
     keeping it means `--format json` output can be read by anything already written against the
     API's own contract.
+
+    Since KAN-548 a collection carries ADR 0005 §contract 5's ``summary`` beside that envelope — one
+    sibling key, not a wrapper around it, so the ``notes`` array is still exactly where a consumer
+    written against `/api/v1/notes` looks for it. An entity is still the bare object, because a
+    summary describes a returned set and one note is not one.
     """
-    assert set(render(notes, fmt="data")) == {"notes"}  # type: ignore[arg-type]
+    assert set(render(notes, fmt="data")) == {"notes", "summary"}  # type: ignore[arg-type]
     assert render(note, fmt="data") == GROCERIES
 
 
-def test_no_summary_key_exists_yet(notes: Payload) -> None:
-    """V2a attaches no aggregate. When V2b does, this assertion is the one that says so."""
-    assert "summary" not in render(notes, fmt="data")  # type: ignore[operator]
+def test_the_summary_is_the_only_key_added_to_the_envelope(notes: Payload) -> None:
+    """V2a's ``test_no_summary_key_exists_yet``, turned around by the card it was waiting for.
+
+    The assertion it was making is still worth keeping in this file: exactly one key arrived, and
+    what is *in* it is `test_aggregates.py`'s subject rather than this one's.
+    """
+    rendered = render(notes, fmt="data")
+    assert isinstance(rendered, dict)
+    assert set(rendered) - {"notes"} == {"summary"}
 
 
 @pytest.mark.parametrize("fmt", STRING_FORMATS)
@@ -202,11 +216,13 @@ def test_serialize_refuses_an_unshaped_payload(notes: Payload) -> None:
 
 
 def test_a_summary_reaches_the_structured_dict_when_one_exists(notes: Payload) -> None:
-    """V2b's forward compatibility, checked now while it is free.
+    """Written in V2a as forward compatibility, and it paid out: `Shaped.as_dict` already knew where
+    an aggregate goes, so KAN-548 computed counts and changed nothing in this module below
+    ``_as_human``.
 
-    ``attach_summary`` returns ``None`` today, so this constructs a ``Shaped`` by hand — the point
-    is that `Shaped.as_dict` already knows where an aggregate goes, so V2b computes counts and
-    changes nothing about serialization.
+    Still constructed by hand rather than through ``attach_summary``, because what it asserts is
+    `serialization`'s side of the contract — *any* summary reaches the dict — and reading it back
+    out of the producer would make it a test of `aggregates` instead.
     """
     shaped = Shaped(payload=notes, summary={"count": 2})
     assert serialize(shaped, "data") == {

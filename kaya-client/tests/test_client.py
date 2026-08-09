@@ -319,5 +319,5 @@ def test_the_client_feeds_render_directly() -> None:
     """
     with client_over(responder(200, NOTE_LIST_BODY)) as client:
         assert render(client.list_notes()) == (
-            "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list"
+            "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list\n\n2 notes"
         )

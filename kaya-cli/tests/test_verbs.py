@@ -19,8 +19,13 @@ from conftest import GROCERIES, NOTES, READING_LIST
 from kaya_cli import verbs
 from kaya_cli.__main__ import build_parser, main
 
-LIST_ROWS = "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list"
-"""`kaya-client/tests/test_human_row_is_pinned.py`'s literal, character for character."""
+LIST_ROWS = "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list\n\n2 notes"
+"""`kaya-client/tests/test_human_row_is_pinned.py`'s literal, character for character.
+
+The trailing ``2 notes`` is ADR 0005 §contract 5's summary line, which KAN-548 added **in the
+client**. It is here for the same reason every other byte is: if this package ever computed a
+footer of its own, the two literals would still agree and nothing would notice — so what the
+assertion below really checks is that the adapter is still printing what ``render`` returned."""
 
 SINGLE_NOTE = (
     "ref         NOTE-12\n"
@@ -33,13 +38,22 @@ SINGLE_NOTE = (
     "eggs"
 )
 
+LISTED = {**NOTES, "summary": {"count": 2}}
+"""A structured `note list`: the API's envelope plus the aggregate beside it (KAN-548). The
+``notes`` array is untouched, so a consumer written against `/api/v1/notes` reads it unchanged."""
+
 NOTE_LIST_TOON = (
     "notes[2]{ref,id,title,body,path,created_at,updated_at}:\n"
     '  NOTE-12,12,Groceries,"milk\\neggs",home/groceries.md,'
     '"2026-08-01T09:15:00+00:00","2026-08-09T11:02:33.123456+00:00"\n'
     '  NOTE-3,3,A reading list,"","",'
-    '"2026-07-14T18:00:00+00:00","2026-07-14T18:00:00+00:00"'
+    '"2026-07-14T18:00:00+00:00","2026-07-14T18:00:00+00:00"\n'
+    "summary:\n"
+    "  count: 2"
 )
+"""KAN-548 turned this into a **mixed** TOON document: a tabular array and then a keyed object.
+That is a shape the note payloads never produced before, which is why
+`kaya-client/tests/test_aggregates.py` re-asserts the round trip over it."""
 
 
 # ------------------------------------------------------------------- what argv reaches
@@ -123,12 +137,13 @@ def test_the_default_row_matches_the_clients_pin(capsys, answering) -> None:
 
 
 def test_the_structured_output_is_the_apis_own_envelope(capsys, answering) -> None:
-    """``{"notes": [...]}``, with every field the API returned, unprojected. V2b adds ``--fields``;
-    V2a's job is to prove nothing is being dropped before it does."""
+    """``{"notes": [...]}``, with every field the API returned, unprojected, plus KAN-548's
+    ``summary`` as a sibling key. V2a's job was to prove nothing is being *dropped*, and the
+    envelope is still the API's own — the aggregate sits beside it rather than wrapping it."""
     answering(200, NOTES)
     main(["note", "list", "--format", "json"])
 
-    assert json.loads(capsys.readouterr().out) == NOTES
+    assert json.loads(capsys.readouterr().out) == LISTED
 
 
 def test_a_single_read_is_the_bare_object(capsys, answering) -> None:
@@ -286,4 +301,4 @@ def test_reading_a_note_with_a_missing_column_does_not_crash(capsys, answering) 
     answering(200, {"notes": [thin]})
 
     assert main(["note", "list"]) == 0
-    assert capsys.readouterr().out == "NOTE-3  A reading list\n"
+    assert capsys.readouterr().out == "NOTE-3  A reading list\n\n1 note\n"

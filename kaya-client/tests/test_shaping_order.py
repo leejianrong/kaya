@@ -9,10 +9,11 @@ convention*, and this file is where it is cashed: ``truncate`` takes and returns
 order of calls in which a truncator could see a summary, because by the time one exists the type the
 truncator accepts is gone.
 
-That matters more in V2b than it does now. Today every step is a no-op and the ordering is
-unobservable from outside; the tests below are what stop somebody simplifying the chain away in the
-meantime, at which point V2b would land the aggregate in the truncator's path and nothing would
-notice until a count came back describing truncated text.
+V2a wrote here that this mattered more in V2b than it did then, because every step was a no-op and
+the ordering was unobservable from outside. All four steps are live as of KAN-548, and the chain
+held: the count is computed from a ``Payload`` the truncator has already finished with, and
+`test_aggregates.py` shows the number not moving as ``text_limit`` does. The type refusals below
+are still what stops the chain being simplified away.
 """
 
 import pytest
@@ -27,9 +28,13 @@ def test_attach_summary_turns_a_payload_into_a_shaped(notes: Payload) -> None:
     assert shaped.payload is notes
 
 
-def test_v2a_attaches_no_aggregate(notes: Payload) -> None:
-    """The assertion V2b replaces with a count. Nothing else in this file changes."""
-    assert attach_summary(notes).summary is None
+def test_the_aggregate_is_a_count_of_the_returned_records(notes: Payload) -> None:
+    """What V2a wrote as ``summary is None`` and KAN-548 replaced with a count.
+
+    Nothing else in this file changed for that card, which is the ordering being load-bearing rather
+    than incidental. What the summary *contains* is `test_aggregates.py`'s subject.
+    """
+    assert attach_summary(notes).summary == {"count": 2}
 
 
 def test_the_truncator_cannot_be_handed_a_shaped_payload(notes: Payload) -> None:
@@ -71,7 +76,7 @@ def test_the_shaped_dict_does_not_alias_the_payload(notes: Payload) -> None:
 
 def test_an_empty_collection_survives_the_whole_pipeline() -> None:
     shaped = attach_summary(truncate(project(note_collection(), None), 500))
-    assert shaped.as_dict() == {"notes": []}
+    assert shaped.as_dict() == {"notes": [], "summary": {"count": 0}}
 
 
 def test_render_refuses_a_raw_response_body() -> None:

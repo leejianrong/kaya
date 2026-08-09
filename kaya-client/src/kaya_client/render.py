@@ -11,11 +11,12 @@ and does not touch this one.
 
     render(payload, *, fields=None, text_limit=500, fmt="human") -> str | dict
 
-ADR 0005's sequencing rule says this signature has to absorb V2b without moving. **Two V2b items
-have now landed and this file's diff for both is docstring** — projection went live entirely inside
-`projection`, including the single-entity refusal that the list below predicted would be the one to
-force a fifth parameter, and truncation went live entirely inside `truncation`, hint and all. Taking
-V2b's build plan item by item:
+ADR 0005's sequencing rule says this signature has to absorb V2b without moving. **Three V2b items
+have now landed and this file's diff for all three is docstring** — projection went live entirely
+inside `projection`, including the single-entity refusal that the list below predicted would be the
+one to force a fifth parameter; truncation went live entirely inside `truncation`, hint and all; and
+the aggregate went live entirely inside `aggregates`, which needed no argument because it is handed
+the very records it describes. Taking V2b's build plan item by item:
 
 - **``--fields a,b,c``, vocabulary from the payload's own keys.** ``fields`` is here; the vocabulary
   is ``Payload.field_names()``, which is already derived from the records rather than from a list
@@ -32,10 +33,12 @@ V2b's build plan item by item:
   signature, since a total travelling beside the value would need somewhere to travel.
 - **``--full``** is ``text_limit=0``, and **``KAYA_MAX_TEXT_CHARS``** is `config.max_text_chars`
   resolving to the same integer. Neither is a new parameter; both proved to be exactly that.
-- **A ``summary`` describing the returned set, attached after truncation.** Computed inside
-  `aggregates`, from the records this call actually returned — not by the caller, and not passed in.
-  The ordering below is what makes "after truncation" true, and the ``Payload``/``Shaped`` type
-  split is what makes it unfalsifiable.
+- **A ``summary`` describing the returned set, attached after truncation.** Landed in KAN-548, and
+  the prediction held exactly: computed inside `aggregates`, from the records this call actually
+  returned — not by the caller, and not passed in. ``attach_summary`` still takes one parameter, so
+  "the returned set and not the corpus" is a property of what is *in scope* rather than a rule
+  somebody follows. The ordering below is what makes "after truncation" true, and the
+  ``Payload``/``Shaped`` type split is what makes it unfalsifiable.
 
 The one thing V2b will find missing is deliberate: there is no ``full=True`` flag, because ADR
 0005's ``--full`` already has a spelling here (``text_limit=0``) and two spellings of one state is
@@ -89,6 +92,11 @@ def render(
     ``payload.prose_fields`` names and appends a hint carrying the true total (KAN-547); ``0``
     disables it, and a payload with nothing over the limit comes back as the same object, which is
     the other half of that same byte-identity pin.
+
+    A **collection** also comes back carrying ``{"count": n}`` over the rows it actually returned
+    (KAN-548) — a trailing ``2 notes`` under ``human``, a ``summary`` key under everything else.
+    That is the one thing this card did change about a default render, and
+    ``tests/test_human_row_is_pinned.py`` records which bytes moved and which did not.
     """
     if not isinstance(payload, Payload):
         raise TypeError(

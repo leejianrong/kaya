@@ -15,7 +15,13 @@ from kaya_client import CLI_FORMATS
 
 from kaya_cli.__main__ import build_parser, main
 
-LIST_ROWS = "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list"
+LIST_ROWS = "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list\n\n2 notes"
+"""`kaya-client/tests/test_human_row_is_pinned.py`'s literal, footer included since KAN-548."""
+
+LISTED = {**NOTES, "summary": {"count": 2}}
+"""What a structured `note list` carries: the API's own envelope plus ADR 0005 §contract 5's
+aggregate beside it. The `notes` array is untouched — the summary is a sibling key, not a
+wrapper — so anything written against `/api/v1/notes` still reads it from the same place."""
 
 TOON_FIRST_LINE = "notes[2]{ref,id,title,body,path,created_at,updated_at}:"
 
@@ -98,7 +104,7 @@ def test_the_alias_alone_selects_json(capsys, answering) -> None:
     answering(200, NOTES)
 
     assert main(["note", "list", "--json"]) == 0
-    assert json.loads(capsys.readouterr().out) == NOTES
+    assert json.loads(capsys.readouterr().out) == LISTED
 
 
 def test_the_alias_and_the_flag_produce_identical_bytes(capsys, answering) -> None:

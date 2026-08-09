@@ -42,7 +42,7 @@ is half a contract.
 | 2 | `--fields a,b,c` selects named columns on every list verb; vocabulary derived from the payload's own keys; an unknown name is a clean error naming it | **Omitting** it leaves structured output complete; supplying it narrows every format alike, which under `human` is the widening this row used to describe. Wording corrected by the 2026-08-09 (KAN-546) amendment below. A usage error on single-entity verbs, never a silent no-op |
 | 3 | Errors **structured on stdout**: `error<TAB><code><TAB><message><TAB><arg>`, or an `{"error": {...}}` object under a structured format, with all keys always present | Human `usage:` text still goes to stderr |
 | 4 | Exit codes: `0` ok · `1` runtime · `2` usage — the caller's input was rejected, by argparse or by the API (`400`) · `3` 401 · `4` 403 · `5` 404 | **Pandan's scheme, adopted verbatim.** Branch on the stable `code` string, never on message text. `2`'s wording widened by the 2026-08-09 amendment below; no number moved |
-| 5 | A pre-computed `summary` on every list verb, describing **the returned set** — under a filter or `--limit`, the returned set, not the whole corpus | A trailing line for humans, a `summary` object for structured consumers, both from the same dict |
+| 5 | A pre-computed `summary` on every list verb, describing **the returned set** — under a filter or `--limit`, the returned set, not the whole corpus | A trailing line for humans, a `summary` object for structured consumers, both from the same dict. **What is in it** was left open here and settled by the 2026-08-09 (KAN-548) amendment below: one key, `count`. A single entity gets none |
 | 6 | Text truncated by default with a **true** total and `--full` to opt out; an allow-list of prose fields, never "any long string" | A truncated value stays a string: no key added, removed or retyped. **Where** the total is written was left open here, and settled by the 2026-08-09 (KAN-547) amendment below: in-band, inside the string, so it reaches the structured formats too. The multi-byte guarantee is code points |
 | 7 | Bare `kaya` prints live state and exits `0`; `--help` still prints usage | No token → a structured auth error, not a stack trace |
 | 8 | Results carry `help[]` next-step **templates** with placeholders left unfilled | Every hint must parse as a real command, pinned by a test |
@@ -267,4 +267,84 @@ kind of number ADR 0004's "measure, don't assert" rule exists to surface.
 `--json` and the exit table, and this ADR's §Negative consequence about a frozen contract is about
 promises already made. The precedent for the form is the two amendments above: correct or complete
 the wording where it under-specified something, keep the guarantee it was reaching for, and do not
+re-litigate an accepted decision.
+
+## Amendment (2026-08-09, KAN-548): the summary is **one key**, and the zero state is a sentence
+
+§contract 5 asks for "a pre-computed `summary` … describing the returned set" and says nothing
+about what is in it. `kaya-client/src/kaya_client/aggregates.py` recorded that gap in V2a rather
+than guessing at it, because V2a builds the seam and V2b fills it. This is V2b filling it, and it is
+the third V2b card in a row for which **`render`'s signature did not move**.
+
+**The decision: `{"count": n}`, and nothing else.** `n` is `len(payload.records)` — the rows the
+call actually returned. Under `human` it renders as a footer, `2 notes`, after a blank line; under
+`json`, `toon` and `data` it is a `summary` key beside the API's envelope, never inside a record.
+
+**Why one key rather than a useful-looking handful.** This layer exists because payload breadth is
+what makes an agent read expensive (ADR 0004's 44,902 tokens), and a key here is paid on *every*
+list read by every consumer, forever — the opposite of a `--fields` narrowing, which the caller
+opts into. So a key has to answer "what does a caller *do* with it?", and only the count does: it
+is how a reader knows whether the rows in front of it are all of them, which is the question a
+filter or a `--limit` creates and the reason this row says "the returned set". The candidates
+considered and rejected — a date range over `updated_at`, a breakdown by `path` — are derivable
+from records the caller already has and change no decision. Measured: on a narrow read the
+summary is already **+2.4%** in JSON (table below); a five-key summary would spend more than the
+projection two cards ago saved.
+
+**"The returned set, not the corpus" is true by construction, not by care.** `attach_summary` takes
+exactly one parameter and it is the payload. There is no corpus in scope, no total to pass in and
+nowhere for one to arrive from, so the wrong answer is not reachable from inside the function —
+producing it would mean widening a signature, which is a visible thing to do in review.
+`kaya-client/tests/test_aggregates.py` asserts the arity for that reason, alongside the data
+assertion that a payload built from a slice of a forty-note corpus counts the slice.
+
+**An empty result keeps its sentence and gains no footer.** `no notes` *is* the rendering of
+`count: 0` — SLICES §V2b's "definitive zero state rather than nothing" — and a `0 notes` line under
+it would be the same fact twice in two spellings, one of which a reader eventually takes as
+contradicting the other. The structured formats still carry `{"count": 0}`, because an object has
+no room for a sentence and a *missing* `summary` key is ambiguous: a consumer could not tell an
+empty result from a kaya that predates aggregates.
+
+**A single entity gets no summary at all.** A summary describes a returned *set*, and one note is
+not a set of anything; `count: 1` on every `note get` ever made is tokens spent to say nothing.
+`test_human_row_is_pinned.py`'s `SINGLE_NOTE` is the byte-level witness and is **unchanged** by
+this card.
+
+**The one pin this card was allowed to redden, and what moved in it.** V2a wrote into
+`kaya-client/tests/test_human_row_is_pinned.py` that a later slice reddening it while `--fields`
+was omitted would be "the guard working, not a stale test to update". That sentence did its job
+twice — KAN-546 and KAN-547 both landed with the file untouched and green, which was their evidence
+— and contract 5 is what finally required a change. Every **collection** literal gained
+`\n\n<count> <noun>`; nothing inside a table moved (columns, the two-space gap, widths from the
+returned rows, no header, no trailing whitespace, all still asserted byte-for-byte);
+`SINGLE_NOTE` and the `no notes` zero state did not change. The file now carries that record in its
+docstring, because a pin quietly edited is a pin destroyed.
+
+**The footer is separated by a blank line**, not by a single newline, so that it is a block rather
+than a third row: `2 notes` on the line directly under a two-row table is a row to anything that
+split on newlines, and the consumer most likely to do that is the agent this layer exists for. It
+is the same device `serialization._entity` already uses for a note's prose and `truncation` for its
+hint.
+
+**Measured on kaya's own corpus** (40 notes, `o200k_base`, through the shipped `render`, via
+`kaya-client/scripts/measure_toon_delta.py`), against the same render with no summary attached —
+which is literally what a read cost before this card:
+
+| `note list`, 40 notes | JSON without `summary` | with | cost | toon without | with | cost |
+|---|---:|---:|---:|---:|---:|---:|
+| complete records (7 keys) | 5,226 | 5,232 | **+0.1%** | 4,637 | 4,644 | **+0.2%** |
+| `--fields ref,title,path` | 1,072 | 1,078 | +0.6% | 866 | 874 | +0.9% |
+| `--fields ref,title` | 548 | 554 | +1.1% | 429 | 437 | +1.9% |
+| `--fields ref` | 245 | 251 | **+2.4%** | 206 | 214 | **+3.9%** |
+
+Six tokens in JSON, seven or eight in TOON, flat regardless of corpus size — so the *percentage*
+is entirely a statement about what it is being added to. On the read ADR 0004 was written about it
+rounds to nothing; on the narrowest possible projection it is 2.4%, which is the honest number and
+the reason the key count is one. TOON pays slightly more because a keyed block costs a line where
+JSON costs a brace, which is the same shape as its measured `note get` loss.
+
+**Nothing is withdrawn from a user.** Aggregates had never shipped; V2a published `--format`,
+`--json` and the exit table, and this ADR's §Negative consequence about a frozen contract is about
+promises already made. The precedent for the form is the three amendments above: complete the
+wording where it under-specified something, keep the guarantee it was reaching for, and do not
 re-litigate an accepted decision.
