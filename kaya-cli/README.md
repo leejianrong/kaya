@@ -160,6 +160,13 @@ Two modules, and the split between them is ADR 0004's review question answered t
   is the meaning; nothing in this repository writes an exit number at a raise site. The table is
   **add-only**: adding a row is free, renumbering one is breaking a published contract, and
   `tests/test_exit_codes.py` pins every shipped row by literal value so the difference is a red test.
+- **`2` is the caller's input being rejected — by argparse, or by the API.** `EXIT_FOR_STATUS` maps
+  `400 → 2` beside `401`/`403`/`404`, because [ADR 0008](../docs/adr/0008-note-identity.md) makes
+  `kaya note get '#NOTE-12'` a `400` *by design* and the unmapped default was reporting the caller's
+  own typo as exit `1`, a runtime failure a script would plausibly retry. KAN-718 added the row and
+  amended ADR 0005's wording; no number moved. `invalid_note_ref` is deliberately not a row in
+  `EXIT_FOR_CODE` — the status is what carries the meaning, so the next `400` code needs no edit —
+  and everything the tables have no row for still exits `1`.
 - **`parsing.py`** intercepts `ArgumentParser.error()` and `.exit()`. argparse's default prints usage
   to stderr and calls `sys.exit(2)`, which emits nothing a program can read and takes the process
   with it. `StructuredParser` writes argparse's stderr text verbatim and then raises, so `main()`
@@ -180,7 +187,7 @@ unedited. The format is resolved *after* the parse and *before* the verb: a fail
 reported in the format the user asked for, and a failure from the parse is reported in `human`,
 because argv never got far enough to name one.
 
-`tests/test_failure_classes.py` proves all six of SLICES §V2a's classes end to end — unknown flag
-(2), invalid enum (2), missing token (1), 404 (5), 401 (3), 403 (4) — each asserting stream, shape
-and exit code together, against an `httpx.MockTransport`. KAN-542 could only assert them at the
-seam, because it had no verbs to produce one.
+`tests/test_failure_classes.py` proves SLICES §V2a's classes end to end — unknown flag (2), invalid
+enum (2), missing token (1), 400 (2), 404 (5), 401 (3), 403 (4) — each asserting stream, shape and
+exit code together, against an `httpx.MockTransport`. KAN-542 could only assert them at the seam,
+because it had no verbs to produce one. Seven, not the six SLICES planned: the `400` is KAN-718's.

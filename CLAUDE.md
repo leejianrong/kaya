@@ -143,8 +143,14 @@ one event and no `SystemExit` escapes `main()`. Exit codes live in `kaya_cli/fai
 MCP tool has no process to exit — `0` ok · `1` runtime · `2` usage · `3` 401 · `4` 403 · `5` 404,
 **add-only** and pinned by literal-value tests. A raise site picks a class, and the class carries the
 `code`; nobody writes a number. A refusal is keyed on its **status**, not on the API's code string,
-because the backend's code vocabulary grows without the client's knowledge. The `arg` slot is
-**the first scalar extra a refusal carries**, which is unambiguous only while a refusal carries one;
+because the backend's code vocabulary grows without the client's knowledge. **`2` means the
+caller's input was rejected — by argparse *or* by the API**: KAN-718 added `400 → 2` to
+`EXIT_FOR_STATUS` and widened ADR 0005 §contract 4's wording to match, because ADR 0008 makes
+`#NOTE-12` a `400` by design and exit `1` reported the caller's own typo as kaya failing, which a
+script branching on the number would retry forever. That was an *addition* — no shipped number
+moved, and `invalid_note_ref` is deliberately **not** in `EXIT_FOR_CODE`, so the next `400` code
+exits `2` without anybody remembering to add it. Unknown statuses still default to `1`. The `arg`
+slot is **the first scalar extra a refusal carries**, which is unambiguous only while it carries one;
 `backend/tests/unit/test_error_extras_stay_addressable.py` is the alarm for that, because the client
 may never import the backend and so cannot see a second one appear.
 

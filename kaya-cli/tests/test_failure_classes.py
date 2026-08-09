@@ -1,6 +1,11 @@
-"""SLICES §V2a's six failure classes, end to end, each asserting **stream, shape and exit code**.
+"""SLICES §V2a's failure classes, end to end, each asserting **stream, shape and exit code**.
 
-    unknown flag (2) · invalid enum (2) · missing token (1) · 404 (5) · 401 (3) · 403 (4)
+    unknown flag (2) · invalid enum (2) · missing token (1) · 400 (2) · 404 (5) · 401 (3) · 403 (4)
+
+Seven, not the six SLICES planned. KAN-718 added the `400`: ADR 0008 makes a malformed ref a
+*designed* outcome of the central ref resolver, so `kaya note get '#NOTE-12'` is a refusal the CLI
+meets routinely, and it was reporting as exit `1` — "something went wrong on kaya's side" — for a
+mistake the caller made and can fix.
 
 KAN-542 built the error contract with no verbs to produce it, so it could only prove these at the
 unit seam — `kaya-client/tests/test_error_contract.py` owns the shape and
@@ -14,8 +19,8 @@ stderr satisfies every assertion about the row's bytes while destroying the reas
 table below is therefore parametrised over the *event*, and each case asserts stdout, stderr and the
 returned int together.
 
-The three refusal classes are keyed on **status** rather than on the API's code string, which is why
-each carries a code the backend does not emit today: the backend's vocabulary grows without this
+The refusal classes are keyed on **status** rather than on the API's code string, which is why each
+carries a code the backend does not emit today: the backend's vocabulary grows without this
 package's knowledge and a new `404` code must still exit `5`.
 """
 
@@ -35,6 +40,8 @@ REFUSALS = [
     (403, "note_forbidden", 4, ["note", "get", "NOTE-1"]),
     (404, "a_code_this_package_has_never_heard_of", 5, ["note", "get", "NOTE-9999"]),
     (401, "authentication_required", 3, ["note", "list"]),
+    (400, "invalid_note_ref", 2, ["note", "get", "#NOTE-12"]),
+    (400, "a_400_code_this_package_has_never_heard_of", 2, ["note", "get", "NOTE-12"]),
 ]
 
 
@@ -54,6 +61,58 @@ def test_an_api_refusal_reports_its_shape_stream_and_number(
     assert result == exit_code
     assert captured.out == f"error\t{code}\tno\t\n"
     assert captured.err == ""
+
+
+def test_a_malformed_ref_reports_its_shape_stream_and_number(capsys, answering) -> None:
+    """Class 7 (KAN-718), with the body `backend/app/api/refs.py` actually builds.
+
+    The number is the whole card. `2` and not `1`: the ref resolver refused what the caller typed,
+    which is the same *kind* of event as argparse refusing `--nope`, and the layer that noticed is
+    not a fact a script should have to branch on. Exit `1` said "kaya failed" about a typo, and a
+    script that retries a runtime failure would retry `#NOTE-12` until it gave up.
+
+    Note the `arg` slot: the offending segment comes back in the fourth column, so a caller reading
+    the row learns *what* was rejected without a second request. That is `refs.py`'s ``ref=raw``
+    surviving the whole way to stdout.
+    """
+    answering(
+        400,
+        {
+            "error": {
+                "code": "invalid_note_ref",
+                "message": "not a note reference: '#NOTE-12'. Use NOTE-12, note-12 or 12.",
+                "ref": "#NOTE-12",
+            }
+        },
+    )
+
+    result = main(["note", "get", "#NOTE-12"])
+    captured = capsys.readouterr()
+
+    assert result == 2
+    assert captured.out == (
+        "error\tinvalid_note_ref\t"
+        "not a note reference: '#NOTE-12'. Use NOTE-12, note-12 or 12.\t#NOTE-12\n"
+    )
+    assert captured.err == ""
+
+
+def test_a_malformed_ref_and_a_missing_note_are_different_numbers(capsys, answering) -> None:
+    """The distinction ADR 0008 spent a `400` on, ending where an operator can see it.
+
+    `NOTE-9999` is a note that is not there; `#NOTE-12` is not a note reference. `refs.py` will not
+    collapse them because "a typo indistinguishable from a genuine miss" costs the caller a round
+    trip to find out which — and if both arrived at the shell as one exit code, the resolver would
+    have gone to that trouble for a distinction the CLI then threw away.
+    """
+    answering(404, {"error": {"code": "note_not_found", "message": "no such note"}})
+    missing = main(["note", "get", "NOTE-9999"])
+
+    answering(400, {"error": {"code": "invalid_note_ref", "message": "no", "ref": "#NOTE-12"}})
+    malformed = main(["note", "get", "#NOTE-12"])
+
+    assert (missing, malformed) == (5, 2)
+    assert capsys.readouterr().err == ""
 
 
 def test_an_unknown_flag_reports_its_shape_stream_and_number(capsys) -> None:
@@ -171,6 +230,7 @@ def test_the_row_always_has_four_fields_whatever_failed(capsys, answering) -> No
         (lambda: main(["note", "get", "NOTE-9999"]), (404, "note_not_found")),
         (lambda: main(["note", "list"]), (401, "invalid_token")),
         (lambda: main(["note", "get", "NOTE-1"]), (403, "note_forbidden")),
+        (lambda: main(["note", "get", "#NOTE-12"]), (400, "invalid_note_ref")),
     ]
     for run, refusal in events:
         if refusal is not None:

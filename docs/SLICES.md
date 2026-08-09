@@ -136,7 +136,7 @@ change, which is why it is adopted rather than invented), Q30 (merge-base diff).
 #### End-to-end
 
 - The same payload rendered as `human`, `json` and `toon`; the `toon` output parses back to data **equal** to the `json` output.
-- Six failure classes each assert stream, shape and exit code: unknown flag (2), invalid enum (2), missing token (1), 404 (5), 401 (3), 403 (4).
+- Seven failure classes each assert stream, shape and exit code: unknown flag (2), invalid enum (2), missing token (1), 400 (2), 404 (5), 401 (3), 403 (4). The `400` is KAN-718's addition — ADR 0008 makes a malformed ref a designed outcome of the ref resolver, and ADR 0005's table had no row for it, so it reported as a runtime failure.
 - A released binary's `--version` reports a sha matching the commit it was built from; a source run says so explicitly.
 - The release job **fails** when handed an artifact whose sha is missing. **[mutate]**
 - The bump guard fires on a behavioural diff with no version change, stays quiet on a docs-only diff, and stays quiet on a merge commit. **[mutate — the merge-commit case especially, since it is the assertion pandan's guard fails today]**
