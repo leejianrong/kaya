@@ -36,8 +36,11 @@ Four things live here, and the last two are small only in line count:
 
 - **`config.py`** — PLAN §Config's environment tier (`KAYA_API_URL`, `KAYA_TOKEN`) and
   `open_client()`, the one call an adapter makes to get a session. Here rather than in `kaya-cli`
-  because V6's MCP server started from the same shell must reach the same deployment; the file tiers
-  and the `config {set,show,path}` verbs are V2b's. It never logs, echoes or returns what it
+  because V6's MCP server started from the same shell must reach the same deployment. KAN-551 added
+  the **file** tier (JSON at `$XDG_CONFIG_HOME/kaya/config.json`, consulted per key after the
+  environment) and the `config {set,show,path}` verbs as `Payload` builders; PLAN §Config's third
+  tier, the nearest `.mcp.json`, arrives with V6. The writer read-modify-writes, so a hand-set
+  `max_text_chars` survives a `config set --api-url`. It never logs, echoes or returns what it
   resolved — `MissingCredential` names the *variable*, never a value, because a truncated token is
   still a token (Q41/Q42).
 
@@ -60,7 +63,7 @@ argument at all, because it is computed from the very records it describes.
 | `fields` | **Live** (KAN-546). Narrows `records` *and* `columns`, in the caller's order, uniformly for every format. Vocabulary from `Payload.field_names()`; an unknown name and a single-entity payload are both `UsageError` |
 | `text_limit` | **Live** (KAN-547). Cuts the fields `Payload.prose_fields` names, appending a hint with the **true** total in-band so it reaches the structured formats. `0` means `--full`; the default is `config.max_text_chars()` over `KAYA_MAX_TEXT_CHARS` |
 | `summary` | **Live** (KAN-548). A collection carries `{"count": n}` over the rows it returned; an entity carries none. `human` prints it as a trailing `2 notes` after a blank line, every other format as a `summary` key beside the envelope — one mapping, two renderings. `no notes` is the human zero state and gains no footer. One key on purpose: it is paid on every list read, and it costs +0.1% on a complete record and +2.4% on `--fields ref` |
-| Verbs | `list_notes()`, `get_note(ref)`. The writes arrive with V2b's full verb set |
+| Verbs | `list_notes()`, `get_note(ref)`, `recent_notes()`, and KAN-551's writes: `create_note()`, `update_note()`, `move_note()` (which *is* `update_note`, per ADR 0008), `delete_note()`. Every ref-taking method shares one `_note_path` that percent-encodes the ref as a single segment |
 
 ### Two format vocabularies, because two audiences
 
