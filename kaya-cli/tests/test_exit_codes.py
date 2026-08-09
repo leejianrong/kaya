@@ -96,8 +96,13 @@ def test_the_table_is_add_only_not_replace_only() -> None:
 
 
 def test_no_row_maps_outside_the_published_range() -> None:
-    """A new row still has to name one of the six meanings. `7` is not a meaning anybody has."""
+    """A new row still has to name one of the six meanings. `7` is not a meaning anybody has.
+
+    Both tables, because KAN-718 established that ``EXIT_FOR_STATUS`` grows too — a row added there
+    is a status acquiring one of the six published meanings, never a seventh being invented.
+    """
     assert set(EXIT_FOR_CODE.values()) <= {0, 1, 2, 3, 4, 5}
+    assert set(EXIT_FOR_STATUS.values()) <= {0, 1, 2, 3, 4, 5}
 
 
 def test_the_table_cannot_be_mutated_at_runtime() -> None:
@@ -121,16 +126,30 @@ def test_every_client_side_failure_class_has_a_row() -> None:
 # ------------------------------------------------------------- status → meaning
 
 
-def test_the_three_status_rows_map_to_their_documented_numbers() -> None:
-    """Literals again, and the reason `errors.py` says the table is keyed on meaning for these."""
+def test_the_four_status_rows_map_to_their_documented_numbers() -> None:
+    """Literals again, and the reason `errors.py` says the table is keyed on meaning for these.
+
+    `400` is KAN-718's row and is `2`, the number argparse already owns. Adding it moved nothing:
+    the three rows below it are the same numbers this test asserted the day it was written, which is
+    the add-only rule visible as a diff — one line added, none edited.
+    """
+    assert EXIT_FOR_STATUS[400] == 2
     assert EXIT_FOR_STATUS[401] == 3
     assert EXIT_FOR_STATUS[403] == 4
     assert EXIT_FOR_STATUS[404] == 5
 
 
+def test_the_status_table_is_add_only_too() -> None:
+    """A superset, for the same reason ``EXIT_FOR_CODE``'s is one: KAN-718 adds a row and reddens
+    nothing, while moving `404` off `5` reddens exactly the row that moved."""
+    assert {400: 2, 401: 3, 403: 4, 404: 5}.items() <= dict(EXIT_FOR_STATUS).items()
+
+
 @pytest.mark.parametrize(
     ("status", "code", "expected"),
     [
+        (400, "invalid_note_ref", 2),
+        (400, "a_400_code_this_package_has_never_heard_of", 2),
         (401, "authentication_required", 3),
         (401, "invalid_token", 3),
         (403, "note_forbidden", 4),
@@ -149,14 +168,41 @@ def test_a_refusal_is_keyed_on_its_status_not_on_the_apis_code_string(
     assert exit_code_for(failure) == expected
 
 
-@pytest.mark.parametrize("status", [400, 409, 422, 500, 503])
+@pytest.mark.parametrize("status", [409, 422, 500, 503])
 def test_a_refusal_with_no_row_is_runtime_not_usage(status: int) -> None:
     """`1`, not `2`. A failure the table has no row for is not evidence that argv was wrong, and
     reporting "usage" for a server-side `422` sends a caller to re-read the manual over a refusal
-    that had nothing to do with what they typed."""
+    that had nothing to do with what they typed.
+
+    `400` used to be in this list and is now a row of its own (KAN-718). The rule it was proving is
+    untouched: the default is still `1`, and `400` left the list by *acquiring a meaning*, not by
+    the default being widened to cover statuses nobody has decided about.
+    """
     failure = ApiError(status, {"error": {"code": "something_new", "message": "no"}})
 
     assert exit_code_for(failure) == 1
+
+
+def test_a_malformed_ref_is_the_callers_error_not_a_runtime_failure() -> None:
+    """KAN-718, with the exact body `backend/app/api/refs.py` builds — ``ref`` extra and all.
+
+    ADR 0008 makes `#NOTE-12` a `400` deliberately: `404` would answer "no such note" about a string
+    that is not a note reference at all. That makes a `400` a *designed* outcome of the central ref
+    resolver rather than an edge case, so exit `1` was telling every script that a typo was kaya
+    failing — and a script branching on exit codes would plausibly retry it forever.
+    """
+    failure = ApiError(
+        400,
+        {
+            "error": {
+                "code": "invalid_note_ref",
+                "message": "not a note reference: '#NOTE-12'. Use NOTE-12, note-12 or 12.",
+                "ref": "#NOTE-12",
+            }
+        },
+    )
+
+    assert exit_code_for(failure) == 2
 
 
 # ------------------------------------------------------- meaning → number, end to end
@@ -169,6 +215,7 @@ def test_a_refusal_with_no_row_is_runtime_not_usage(status: int) -> None:
         (UnknownFormat("unknown format 'hunan'"), 2),
         (TransportError("https://kaya.example is unreachable"), 1),
         (KayaError("something"), 1),
+        (ApiError(400, {"error": {"code": "invalid_note_ref", "message": "no"}}), 2),
         (ApiError(401, {"error": {"code": "invalid_token", "message": "no"}}), 3),
         (ApiError(403, {"error": {"code": "note_forbidden", "message": "no"}}), 4),
         (ApiError(404, {"error": {"code": "note_not_found", "message": "no"}}), 5),

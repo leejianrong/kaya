@@ -41,7 +41,7 @@ is half a contract.
 | 1 | `--format {human,json,toon}` over **one** serializer in `kaya-client` (ADR 0004), so formats cannot drift | `--json` is a documented alias for `--format json`; `--format` wins if both are given |
 | 2 | `--fields a,b,c` widens the human row on every list verb; vocabulary derived from the payload's own keys; an unknown name is a clean error naming it | Does not affect structured output, which is already complete. A usage error on single-entity verbs, never a silent no-op |
 | 3 | Errors **structured on stdout**: `error<TAB><code><TAB><message><TAB><arg>`, or an `{"error": {...}}` object under a structured format, with all keys always present | Human `usage:` text still goes to stderr |
-| 4 | Exit codes: `0` ok · `1` runtime · `2` usage (argparse rejected argv) · `3` 401 · `4` 403 · `5` 404 | **Pandan's scheme, adopted verbatim.** Branch on the stable `code` string, never on message text |
+| 4 | Exit codes: `0` ok · `1` runtime · `2` usage — the caller's input was rejected, by argparse or by the API (`400`) · `3` 401 · `4` 403 · `5` 404 | **Pandan's scheme, adopted verbatim.** Branch on the stable `code` string, never on message text. `2`'s wording widened by the 2026-08-09 amendment below; no number moved |
 | 5 | A pre-computed `summary` on every list verb, describing **the returned set** — under a filter or `--limit`, the returned set, not the whole corpus | A trailing line for humans, a `summary` object for structured consumers, both from the same dict |
 | 6 | Text truncated by default with a **true** total and `--full` to opt out; an allow-list of prose fields, never "any long string" | A truncated value stays a string: no key added, removed or retyped |
 | 7 | Bare `kaya` prints live state and exits `0`; `--help` still prints usage | No token → a structured auth error, not a stack trace |
@@ -95,3 +95,48 @@ nothing it didn't mean to.
   more than the improvement, which is exactly why pandan's V43 says "do not renumber them".
 - **Ambient session context** (pandan V48) is **not** in the MVP. It's real value, but it depends on
   having enough notes for ambient state to be worth injecting. Post-MVP.
+
+## Amendment (2026-08-09, KAN-718): `2` is the caller's input being rejected, wherever it was caught
+
+§contract 4's table above described `2` as "usage (argparse rejected argv)", naming the *layer that
+noticed* rather than the meaning. It had no row for a `400` at all, so KAN-542's deliberate
+unmapped-default sent one to `1`. Observed against a real backend during V2a's demo:
+
+```
+kaya note get NOTE-9999   -> exit 5, error<TAB>note_not_found<TAB>no such note<TAB>
+kaya note get '#NOTE-12'  -> exit 1, error<TAB>invalid_note_ref<TAB>not a note reference…<TAB>#NOTE-12
+```
+
+**Why it matters more than a tidier label.** [ADR 0008](0008-note-identity.md) makes `#NOTE-12` a
+`400` *by design*: the central ref resolver refuses a malformed identifier rather than answering
+`404` about a string that is not a note reference at all, because "a typo indistinguishable from a
+genuine miss" is the exact failure that ADR exists to prevent. A `400` is therefore a **designed
+outcome of every ref-taking verb**, met routinely rather than exceptionally — and exit `1` reports
+it as a runtime failure, i.e. as something that went wrong on kaya's side. That is wrong twice over:
+it hides the caller's own mistake, and a script branching on exit codes would plausibly *retry* a
+failure it can never succeed at. Under `2` it re-reads what it typed, which is the correct action.
+
+**What changed.** `400 → 2` is a row added to `EXIT_FOR_STATUS` in `kaya-cli/src/kaya_cli/failures.py`,
+and `2`'s wording in the table above now reads *the caller's input was rejected — by argparse, or by
+the API*. Both halves of §contract 4's rule survive intact:
+
+- **It is an addition, not a renumber.** No shipped number moved; `0/1/2/3/4/5` mean what they meant
+  in V2a, and the "do not renumber them" rule below is about numbers moving, not meanings arriving.
+  `tests/test_exit_codes.py` pins each row by literal value and checks the tables as *supersets*
+  precisely so that adding a row reddens nothing while moving one reddens exactly what moved.
+- **The refusal is keyed on its status, not on the code string.** `invalid_note_ref` is deliberately
+  *not* a row in `EXIT_FOR_CODE`. The backend's code vocabulary grows without the client's
+  knowledge, so the next `400` code — a malformed cursor, a rejected path — must exit `2` without
+  anybody remembering to add it, which is the same reasoning that made `401`/`403`/`404`
+  status-keyed in the first place.
+- **The unmapped default stays `1`.** Only `400` moved, because only `400` is definitionally the
+  caller's input being rejected. Defaulting an unknown status to `2` would send a caller to re-read
+  the manual over a server-side `422`, which is the argument KAN-542 made and this amendment does
+  not disturb.
+
+The scheme was adopted from pandan verbatim so an operator scripting both tools never has to
+remember which is which, and that is why the fix had to be an addition. Widening what `2` covers
+keeps the two tools reading the same: `2` still means "you sent something wrong", so a pandan user's
+model of a kaya `2` is correct without being told. Inventing a seventh number for "the API rejected
+your input" would have been the version of this change that broke the sameness the scheme was
+adopted for.

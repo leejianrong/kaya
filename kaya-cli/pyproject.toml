@@ -3,6 +3,10 @@
 # (pandan ADR 0018 §Package-name reality). That constrains the distribution name only. The console
 # script is `kaya`, and there is exactly one of them (Q39).
 name = "kaya-notes"
+# 0.5.0 — KAN-718 adds `400` → exit `2` to `EXIT_FOR_STATUS`. Behavioural, and the reason exit
+# codes are versioned at all: a malformed ref (ADR 0008's `#NOTE-12`) used to exit `1` and now
+# exits `2`. An *addition* to the status table, not a renumber — every shipped number is where
+# ADR 0005 §contract 4 put it, and the ADR's wording for `2` was widened to match.
 # 0.4.0 — KAN-541 gives the CLI its first verbs, `note list` and `note get <ref>`, and ADR 0005
 # §contract 1's `--format {human,json,toon}` with `--json` as a documented alias. Behavioural on
 # every axis: argv that used to be a usage error now makes a request.
@@ -12,7 +16,7 @@ name = "kaya-notes"
 # 0.2.0 — KAN-543 gives the CLI argument parsing and ADR 0007's build-stamped `--version`. A
 # behavioural change to a shipped package bumps it in the same PR (ADR 0007 §3, CLAUDE.md
 # §Conventions §Versioning).
-version = "0.4.0"
+version = "0.5.0"
 description = "kaya — the notes CLI"
 readme = "README.md"
 license = "Apache-2.0"

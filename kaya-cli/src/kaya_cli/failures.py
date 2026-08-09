@@ -40,6 +40,21 @@ unreachable API, a format nobody registered.
 Anything unrecognised is exit `1`. Not `2`: a failure this table has no row for is not evidence that
 argv was wrong, and reporting "usage" for an unmapped `422` would send a caller to re-read the
 manual over a server-side refusal.
+
+### Why `400` is a *row* rather than an exception to that rule (KAN-718)
+
+`400` is the one status that is definitionally the caller's input being rejected, so it is the one
+status the unmapped default gets wrong. ADR 0008 makes ``#NOTE-12`` a `400` **by design** — the
+central ref resolver refuses a malformed identifier rather than answering `404` about a string that
+is not a note reference at all — so the CLI meets it routinely rather than exceptionally, and the
+default sent it to `1`. "Runtime" tells a script something went wrong on kaya's side, and a script
+branching on exit codes would plausibly *retry* a runtime failure that can never succeed.
+
+It is a row in ``EXIT_FOR_STATUS`` and **not** a row in ``EXIT_FOR_CODE``. Keying it on
+``invalid_note_ref`` would be the narrower fix and the wrong one for the reason directly above: the
+backend's code vocabulary grows without this package's knowledge, and the next `400` code — a
+malformed cursor, a rejected path — must exit `2` without anybody remembering to add it. The default
+for everything else stays `1`, because only `400` carries that meaning in its status alone.
 """
 
 import sys
@@ -56,7 +71,10 @@ EXIT_RUNTIME = 1
 """Something failed and no more specific meaning applies — the unreachable API, an unmapped code."""
 
 EXIT_USAGE = 2
-"""argv was rejected. Argparse's own number, which is why it is `2` and not something tidier."""
+"""The caller's input was rejected — by argparse, or by the API (`400`). Argparse's own number,
+which is why it is `2` and not something tidier. KAN-718 widened the *meaning* without moving the
+number: a malformed ref is the caller's error wherever it is caught, and which layer noticed is not
+a fact a script should have to branch on."""
 
 EXIT_UNAUTHENTICATED = 3
 """`401`. The credential is missing, malformed or rejected — re-authenticating may usefully help."""
@@ -91,13 +109,18 @@ presented. The distinction is the same one `errors.py` draws between ``Transport
 
 EXIT_FOR_STATUS: Mapping[int, int] = MappingProxyType(
     {
+        400: EXIT_USAGE,
         401: EXIT_UNAUTHENTICATED,
         403: EXIT_FORBIDDEN,
         404: EXIT_NOT_FOUND,
     }
 )
-"""ADR 0005's three status-keyed meanings. Consulted before ``EXIT_FOR_CODE`` for an ``ApiError``,
-for the reason in this module's docstring: the API's code vocabulary grows and its statuses do not.
+"""ADR 0005's status-keyed meanings. Consulted before ``EXIT_FOR_CODE`` for an ``ApiError``, for the
+reason in this module's docstring: the API's code vocabulary grows and its statuses do not.
+
+``400`` is KAN-718's addition and reuses ``EXIT_USAGE``, which is an **addition to this table**, not
+a renumber — no shipped number moved, and ADR 0005's add-only rule permits exactly this. See the
+module docstring for why it is keyed on the status rather than on ``invalid_note_ref``.
 """
 
 
