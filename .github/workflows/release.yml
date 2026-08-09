@@ -12,6 +12,11 @@ name: Release
 # apart means the write token is never in scope while pytest, PyInstaller and every transitive
 # dependency of two packages are executing.
 #
+# THE BUILD RUNS INSIDE A GLIBC-2.28 CONTAINER AND THE PUBLISH DOES NOT (KAN-719). Only `build`
+# freezes an interpreter, so only `build` needs an old userland; `publish` stays on a normal runner
+# because putting a container under the one job holding `contents: write` buys nothing and changes
+# the thing this file is most careful about.
+#
 # STEP ORDER IS LOAD-BEARING IN EXACTLY ONE PLACE: tests run BEFORE the stamp. `kaya-client`'s
 # `test_the_committed_stamp_is_empty` asserts the repository's `_build_stamp.py` is unstamped —
 # that assertion is what stops a real sha ever being committed, and stamping first turns it red.
@@ -42,18 +47,71 @@ jobs:
   build:
     name: Build the CLI artifact and prove it can identify itself
     runs-on: ubuntu-latest
+    # KAN-719. THE SHIPPED ASSET'S GLIBC FLOOR IS THE FLOOR OF WHATEVER INTERPRETER GOT FROZEN.
+    # PyInstaller does not compile an interpreter, it copies the one uv resolved — `libpython` and
+    # all. On `ubuntu-latest` (now Ubuntu 24.04) uv finds the runner's preinstalled CPython 3.12 and
+    # uses it, and that `libpython3.12.so` requires `GLIBC_2.38` (measured, `readelf -V`). That is
+    # v0.4.0: an asset that starts on the runner that built it and on nothing older, so it is dead
+    # on Ubuntu 22.04 (glibc 2.35), Debian 12 (2.36), RHEL/Rocky/Alma 9 and Amazon Linux 2023
+    # (2.34). Building in AlmaLinux 8 puts the floor at `GLIBC_2.28`: Ubuntu 20.04+, Debian 11+,
+    # RHEL 8+.
+    #
+    # A CONTAINER RATHER THAN `runs-on: ubuntu-22.04`. The runner pin looks simpler and is worse
+    # twice over: it buys a 2.35 floor instead of 2.28, and GitHub retires runner images, so it
+    # comes back as the same decision every couple of years. The container image is a version we
+    # choose and it does not rot underneath us.
+    #
+    # WHY OUR EXISTING GATE DID NOT CATCH v0.4.0: `scripts/check-release-artifact.sh` runs the
+    # artifact on the machine that built it, where the glibc that produced the binary is the glibc
+    # loading it. That is the limit of a same-host check, not a flaw in it. Moving the job into this
+    # container turns that identity gate into a portability gate for free — see the gate step below.
+    container: quay.io/pypa/manylinux_2_28_x86_64
     steps:
       - uses: actions/checkout@v7
+
+      # `scripts/build-cli-artifact.sh` and `scripts/check-release-artifact.sh` both open with
+      # `cd "$(git rev-parse --show-toplevel)"`, so this job needs a real checkout rather than the
+      # REST tarball `actions/checkout` falls back to when git is missing or too old. The image
+      # carries git 2.55, so the fallback should never fire — assert it here, where the failure
+      # names the reason, instead of meeting it three steps later as "dist/kaya is not an
+      # executable file". `safe.directory` is belt and braces: checkout writes the workspace as
+      # root and this job runs as root, so the ownership check should pass on its own.
+      - name: The checkout is a git repository the build scripts can find
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          if ! root=$(git rev-parse --show-toplevel); then
+            echo "::error::no git repository in the container — the build scripts locate the repo root with \`git rev-parse --show-toplevel\`"
+            exit 1
+          fi
+          echo "✓ repo root: $root"
 
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
           cache-dependency-glob: kaya-cli/uv.lock
 
+      # THE CONTAINER ALONE DOES NOT WORK, AND THIS IS THE STEP THAT MAKES IT WORK. Left to its own
+      # devices in this image uv resolves `/opt/python/cp312-cp312` — `/usr/bin/python3` is a
+      # symlink into it — and that CPython is built STATIC (`Py_ENABLE_SHARED = 0`, measured).
+      # PyInstaller refuses it outright: "Python was built without a shared library, which is
+      # required by PyInstaller." uv's managed CPython is python-build-standalone, which ships a
+      # *shared* libpython and requires no symbol above `GLIBC_2.17` (measured), so it freezes
+      # cleanly and sits comfortably under this container's 2.28 floor rather than raising it.
+      #
+      # `$GITHUB_ENV` rather than a job-level `env:` is deliberate: the preference has to reach
+      # every *subsequent* step, and both `uv sync` and the `uv run` inside
+      # `scripts/build-cli-artifact.sh` need it. `only-managed` is the strong form — it makes uv
+      # fail rather than quietly fall back to the static system interpreter.
+      - name: Install uv-managed CPython 3.12 (shared libpython)
+        run: |
+          echo "UV_PYTHON_PREFERENCE=only-managed" >> "$GITHUB_ENV"
+          uv python install 3.12
+
+      # `--python 3.12` pins which managed interpreter, now that there is a choice of them.
       - working-directory: kaya-client
-        run: uv sync --frozen --all-extras
+        run: uv sync --frozen --all-extras --python 3.12
       - working-directory: kaya-cli
-        run: uv sync --frozen --all-extras
+        run: uv sync --frozen --all-extras --python 3.12
 
       # A tag that disagrees with the version it claims to release is its own kind of
       # unidentifiable artifact, and it is far cheaper to catch here than after the upload.
@@ -72,6 +130,15 @@ jobs:
           fi
           echo "✓ ${GITHUB_REF_NAME} releases kaya-notes ${version}"
 
+      # KAN-719 tripwire, and it judges the INTERPRETER rather than the finished binary, before the
+      # freeze rather than after it: PyInstaller copies this `libpython` into the onefile, so its
+      # glibc floor *is* the asset's floor. If the container or the managed-CPython step ever goes
+      # away this fails in a second instead of after a build. The script says why the obvious
+      # `strings dist/kaya | grep GLIBC_` check is deliberately not here — measured, it reports the
+      # same `GLIBC_2.14` for the broken v0.4.0 asset as for a good build.
+      - name: Tripwire — the interpreter about to be frozen has a GLIBC_2.28 floor
+        run: scripts/check-freeze-interpreter.sh kaya-cli/.venv/bin/python
+
       # BEFORE the stamp. See the header.
       - working-directory: kaya-client
         run: uv run pytest -q
@@ -88,16 +155,25 @@ jobs:
       # ADR 0007 §2. The one step this workflow exists for: run what was just built, read
       # `--version`, and compare the WHOLE line against the version in the repository and the
       # commit being released. Proven by watching it fail on an unstamped build (ADR 0007 §5).
-      - name: Gate — the artifact reports a real commit sha
+      #
+      # SINCE KAN-719 THIS IS ALSO THE PORTABILITY GATE, and that is the point of putting the job
+      # in a container rather than adding a separate check. Running the artifact is what an
+      # identity gate already does; doing it in a glibc-2.28 userland makes the same run direct
+      # evidence that the bootloader and the extracted libpython both load under glibc 2.28. An
+      # asset that would die on Ubuntu 22.04 cannot reach `--version` to answer this question.
+      - name: Gate — the artifact reports a real commit sha, running under glibc 2.28
         run: scripts/check-release-artifact.sh dist/kaya "$GITHUB_SHA"
 
       # The workflow artifact, which every run produces including a dispatch. It is also how the
       # binary reaches `publish` without that job holding a write token during the build.
       #
       # ONE PLATFORM, DELIBERATELY. A onefile executable is per-platform and this job claims only
-      # what one Linux runner can prove. A macOS/Windows matrix is NOT in scope for KAN-545; it is
+      # what one Linux build can prove. A macOS/Windows matrix is NOT in scope for KAN-545; it is
       # a separate decision about runtime cost, code signing and notarisation, and adding runners
-      # to this file is the easy half of it.
+      # to this file is the easy half of it. Pandan's KAN-225 is the cautionary half: its Intel-mac
+      # leg sat `queued` forever on scarce free runners and the whole release run never reached a
+      # terminal state, so that leg was dropped. There is no matrix here and adding one is a
+      # decision, not a tidy-up.
       - uses: actions/upload-artifact@v7
         with:
           name: kaya-linux-x86_64
@@ -120,6 +196,11 @@ jobs:
     # `contents: write` in the repository.
     permissions:
       contents: write
+    # NO CONTAINER HERE, ON PURPOSE (KAN-719). Nothing in this job compiles or freezes anything, so
+    # nothing here decides the asset's glibc floor — `build` already did, and already proved it by
+    # running the binary under glibc 2.28. The gate below re-runs on this newer runner because what
+    # it is asking about is identity: the bytes that came back out of the artifact store are the
+    # bytes a downloader gets, and they must still say which commit they are.
     runs-on: ubuntu-latest
     steps:
       # `needs: build` already means the gate passed. This checkout is here so the same gate can
@@ -162,9 +243,11 @@ jobs:
 
           {
             cat <<'EOF'
-          **Linux x86_64 only.** The asset is a PyInstaller `--onefile` executable built on
-          `ubuntu-latest`. There is no macOS or Windows build: a onefile artifact is per-platform,
-          and this pipeline ships only what one runner can prove.
+          **Linux x86_64, glibc 2.28 or newer.** The asset is a PyInstaller `--onefile` executable
+          built inside a `manylinux_2_28` container, so it runs on Ubuntu 20.04+, Debian 11+,
+          RHEL/Rocky/Alma 8+ and Amazon Linux 2023 without installing anything. There is no macOS or
+          Windows build: a onefile artifact is per-platform, and this pipeline ships only what one
+          build can prove.
 
           ## Install
 

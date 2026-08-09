@@ -17,9 +17,9 @@ cross-linked to the board.
 ## Install the CLI
 
 The [latest release](https://github.com/leejianrong/kaya/releases/latest) carries one asset,
-`kaya-linux-x86_64`: a single self-contained executable, **Linux x86_64 only**. There is no macOS or
-Windows build — a onefile artifact is per-platform, and the pipeline ships only what one runner can
-prove.
+`kaya-linux-x86_64`: a single self-contained executable, **Linux x86_64, glibc 2.28 or newer** —
+Ubuntu 20.04+, Debian 11+, RHEL/Rocky/Alma 8+, Amazon Linux 2023. There is no macOS or Windows
+build — a onefile artifact is per-platform, and the pipeline ships only what one build can prove.
 
 ```bash
 mkdir -p ~/.local/bin

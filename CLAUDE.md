@@ -318,14 +318,40 @@ git push origin v0.4.0`, where the tag is exactly `v` + `kaya-cli`'s `[project].
 (`.github/workflows/release.yml` fails the run if it isn't). That is the *whole* manual step. The
 workflow builds, gates and publishes a public GitHub Release with `kaya-linux-x86_64` attached.
 
-Two things about that file are decisions rather than layout. **`contents: write` lives on the
+Three things about that file are decisions rather than layout. **`contents: write` lives on the
 `publish` job, never on the workflow**, so the write token is out of scope while pytest and
-PyInstaller run. And **`publish` is gated on `github.event_name == 'push'` as well as on the tag
+PyInstaller run. **`publish` is gated on `github.event_name == 'push'` as well as on the tag
 prefix**, because `workflow_dispatch` accepts a ref and `gh workflow run release.yml --ref v0.4.0`
 would otherwise let a rehearsal cut a public release. A dispatch must stay a rehearsal — building
 and gating without publishing is how the pipeline gets exercised, and is how KAN-544's gate was
 proven in the first place. Never push a tag from a branch; a tag is how an unreviewed commit becomes
 a public download.
+
+And **`build` runs inside `quay.io/pypa/manylinux_2_28_x86_64` while `publish` does not** (KAN-719).
+PyInstaller does not compile an interpreter, it copies the one uv resolved, so **the asset's glibc
+floor is the floor of the `libpython` that got frozen**. On `ubuntu-latest` (now 24.04) uv picks the
+runner's preinstalled CPython 3.12, whose `libpython3.12.so` requires `GLIBC_2.38` — that is v0.4.0,
+which dies on Ubuntu 22.04, Debian 12, RHEL 9 and Amazon Linux 2023, most of the installed base.
+Building in AlmaLinux 8 puts the floor at **`GLIBC_2.28`**: Ubuntu 20.04+, Debian 11+, RHEL 8+. Four
+things follow that are easy to get wrong:
+
+- **The container alone does not work.** In that image uv resolves `/opt/python/cp312-cp312`
+  (`/usr/bin/python3` is a symlink into it) and it is built *static*, `Py_ENABLE_SHARED = 0`, which
+  PyInstaller refuses. The job installs uv's managed CPython — python-build-standalone, shared
+  libpython, nothing above `GLIBC_2.17` — and exports `UV_PYTHON_PREFERENCE=only-managed` through
+  `$GITHUB_ENV` rather than a job-level `env:` so it reaches `uv sync` *and* the `uv run` inside
+  `scripts/build-cli-artifact.sh`.
+- **`scripts/check-freeze-interpreter.sh` guards the interpreter, before the freeze**, because that
+  is the thing that decides the floor and because it fails in a second instead of after a build.
+- **`strings dist/kaya | grep GLIBC_` is inert — do not add it back.** It is the obvious check and
+  pandan ships it; measured here, it reports a maximum of `GLIBC_2.14` on the broken v0.4.0 asset
+  and exactly the same on a good one, because PyInstaller ships a *prebuilt* bootloader whose
+  symbols do not vary with the build host. A guard that cannot tell the defect from the fix is worse
+  than no guard. The proof is that `scripts/check-release-artifact.sh` *runs* the binary and now
+  runs it in a glibc-2.28 userland — the identity gate became the portability gate for free, which
+  is the whole reason the container went on the job rather than into a new step.
+- **Do not pin `runs-on: ubuntu-22.04` instead.** It buys a 2.35 floor rather than 2.28 and rots
+  when GitHub retires the image, so it is a recurring decision instead of a fix.
 
 **Dependencies.** Lockfiles committed, installs frozen, updates by **Dependabot** (not renovate;
 `.github/dependabot.yml` says why), vulnerabilities by `make audit`. **Do not move the audit into the
