@@ -111,9 +111,9 @@ def update_note(note: NoteFromRef, payload: NoteUpdate, session: DbSession) -> N
     **Two write semantics, and which one you get is the caller's choice** (ADR 0009). Send
     ``if_updated_at`` and the write is guarded: an ``updated_at`` that has moved on is a `409`
     carrying both versions, and nothing is written. Omit it and the write is a plain
-    last-write-wins overwrite — specified, so that `curl` and `kaya note edit --force` work without
-    a read-first dance. The precondition is a guarantee available to clients that want it, not a tax
-    on every caller, so do not make it required.
+    last-write-wins overwrite — specified, so that `curl` and a `kaya note edit` that omits
+    `--if-updated-at` both work without a read-first dance. The precondition is a guarantee
+    available to clients that want it, not a tax on every caller, so do not make it required.
 
     The guard runs **before** anything is applied, which is what makes a refused write atomic: a
     `PATCH` carrying a title and a body is rejected whole rather than leaving the title applied and

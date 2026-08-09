@@ -119,8 +119,9 @@ class NoteUpdate(BaseModel):
 
     ``if_updated_at`` is ADR 0009's precondition, and it is **optional by specification** rather
     than by omission: a write without one is a plain last-write-wins overwrite, which is what keeps
-    the API usable from `curl` without a read-first dance and keeps `kaya note edit --force`
-    possible.
+    the API usable from `curl` without a read-first dance and is what `kaya note edit` does when the
+    caller omits `--if-updated-at` (KAN-551: the CLI spells the unguarded write by *not* passing a
+    flag, so there is no `--force`).
     """
 
     model_config = ConfigDict(extra="forbid")

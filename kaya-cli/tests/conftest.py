@@ -64,16 +64,27 @@ against, so the CLI's assertions and the client's are about the same bytes."""
 
 
 @pytest.fixture(autouse=True)
-def no_ambient_configuration(monkeypatch) -> None:
-    """Every test starts with no deployment, no credential and no text limit configured.
+def no_ambient_configuration(monkeypatch, tmp_path) -> None:
+    """Every test starts with no deployment, no credential, no text limit and an empty config file.
 
     ``KAYA_MAX_TEXT_CHARS`` joined the list with KAN-547 for a weaker reason than the other two but
     the same failure mode: a developer with it exported would see every default-row assertion in
     this package pass or fail depending on their shell, and the subprocess tests would inherit it.
+
+    **``XDG_CONFIG_HOME`` and ``HOME`` joined it with KAN-551, and for that card they are the
+    strongest line in this file.** `kaya config set` writes a real file to a real path, so a suite
+    that did not redirect the config directory would write to the developer's own
+    ``~/.config/kaya/config.json`` — and, because ``write_settings`` merges, would do it *without*
+    losing their settings, which is the version of this bug that goes unnoticed longest. Both
+    variables are pointed at a per-test ``tmp_path``: ``XDG_CONFIG_HOME`` because it is what
+    `config_path` consults first, and ``HOME`` because a test that unset the first must not fall
+    through to the second.
     """
     monkeypatch.delenv(config.API_URL_ENV, raising=False)
     monkeypatch.delenv(config.TOKEN_ENV, raising=False)
     monkeypatch.delenv(config.MAX_TEXT_CHARS_ENV, raising=False)
+    monkeypatch.setenv(config.CONFIG_HOME_ENV, str(tmp_path / "xdg"))
+    monkeypatch.setenv(config.HOME_ENV, str(tmp_path / "home"))
 
 
 @pytest.fixture

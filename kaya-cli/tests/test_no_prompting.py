@@ -35,14 +35,45 @@ name, because it is the one that would be spelled as an attribute rather than a 
 
 @pytest.mark.parametrize(
     "argv",
-    [[], ["note", "list"], ["note", "get", "NOTE-12"], ["note", "get"], ["--format", "json"]],
-    ids=["bare", "list", "get", "get with no ref", "a flag with no verb"],
+    [
+        [],
+        ["note", "list"],
+        ["note", "get", "NOTE-12"],
+        ["note", "get"],
+        ["--format", "json"],
+        ["note", "create", "A title"],
+        ["note", "create"],
+        ["note", "edit", "NOTE-12"],
+        ["note", "delete", "NOTE-12"],
+        ["config", "show"],
+        ["config", "set"],
+        ["config", "path"],
+    ],
+    ids=[
+        "bare",
+        "list",
+        "get",
+        "get with no ref",
+        "a flag with no verb",
+        "create with no body",
+        "create with nothing",
+        "edit with nothing to change",
+        "delete",
+        "config show",
+        "config set with no flags",
+        "config path",
+    ],
 )
 def test_no_invocation_waits_for_stdin(argv: list[str]) -> None:
     """Every argv shape, with stdin closed and nothing configured.
 
     ``note get`` with no ref is the case worth naming: a missing *required* argument is exactly
     where a CLI is tempted to ask for one, and the answer here is argparse's usage error.
+
+    ``note create "A title"`` is KAN-551's addition and is the one this file predicted: a note body
+    is the field a CLI most wants to open an editor or a prompt for, and `note create` with no
+    ``--body`` sends a note with an empty one instead. Its refusal to read a stream is what makes
+    `parsing.resolve_body`'s "there is no ``-``" a checked claim rather than a preference.
     """
     result = subprocess.run(
         [sys.executable, "-m", "kaya_cli", *argv],

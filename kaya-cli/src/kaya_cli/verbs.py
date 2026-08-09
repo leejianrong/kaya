@@ -1,4 +1,4 @@
-"""The verbs. `kaya note list` and `kaya note get <ref>`, and deliberately nothing else (KAN-541).
+"""The verbs. `note {list,get,create,edit,move,delete}` and `config {set,show,path}` (KAN-551).
 
 ### What a verb is allowed to be
 
@@ -17,12 +17,31 @@ What is genuinely the adapter's, and is therefore here: which client method a wo
 the positional argument reaches it. That is "how an adapter gets its arguments", which is the one
 thing ADR 0004 leaves to the adapter.
 
+**KAN-551 quadrupled the verb count and this file gained no new kind of thing**, which is ADR 0005's
+sequencing rule paying out on its own terms: "adding a verb is adding a verb". Every write below is
+one client call, every argument is passed through, and nothing here knows what a `409` is.
+
+### Two tables, because a `config` verb has no session
+
+`config show` has to work **when there is no token**, since finding that out is what it is for. So
+the dispatch is split: ``VERBS`` holds the ones that talk to the API and are handed an open
+``KayaClient``, ``LOCAL_VERBS`` holds the ones that only read and write the local configuration. One
+table with a nullable client would have made every note verb check whether it had one, and the
+mistake it invites — opening a session to run `config path` — is the one that makes the verb useless
+on the machine where it is needed.
+
+`tests/test_verbs.py` asserts the union of the two matches the parser exactly, and that they are
+disjoint, so a word cannot be added to one table, forgotten in the other, and silently dispatch to
+whichever was checked first.
+
 ### The ref is passed through untouched
 
 `kaya note get note-12` sends ``note-12``. ADR 0008 puts every spelling through one resolver in
 `backend/app/api/refs.py`, so a missing note is the same `404` byte for byte whichever spelling
 asked for it, and ``#NOTE-12`` is a `400` rather than a silent success. Normalising here would be a
-second resolver, and the first thing a second resolver does is disagree with the first.
+second resolver, and the first thing a second resolver does is disagree with the first. That now
+applies to four verbs rather than one, and none of them may grow an opinion: `edit`, `move` and
+`delete` hand ``args.ref`` to the client exactly as `get` does.
 
 ### The transport seam
 
@@ -40,18 +59,50 @@ at all — not conditionally, not behind an ``isatty`` check — so there is no 
 and a missing token is a structured refusal rather than a hang. `tests/test_no_prompting.py` guards
 it from both sides: the process answers with stdin closed, and no interactive builtin appears in the
 package's source.
+
+That guard is the reason `note create` takes ``--body`` and ``--body-file`` and **not** a bare ``-``
+for the standard input. A dash would be an explicit request rather than a prompt, so it would not
+violate contract 9 as written — but implementing it means the string the structural half of that
+test forbids appears in this package, and the guard would have to be relaxed from "there is no
+interactive read anywhere" to "there is one and it is the right one". The stronger guard is worth
+more than the convenience, and the convenience is not even lost: the shell already spells it,
+``--body-file /dev/stdin``, with no code here at all.
 """
 
 from argparse import Namespace
 from collections.abc import Callable, Mapping
 
-from kaya_client import KayaClient, Payload, open_client
+from kaya_client import (
+    API_URL_ENV,
+    TOKEN_ENV,
+    KayaClient,
+    Payload,
+    open_client,
+    path_payload,
+    settings_payload,
+    write_settings,
+)
+
+from kaya_cli.parsing import resolve_body
 
 NOTE = "note"
 LIST = "list"
 GET = "get"
+CREATE = "create"
+EDIT = "edit"
+MOVE = "move"
+DELETE = "delete"
+
+CONFIG = "config"
+SET = "set"
+SHOW = "show"
+PATH = "path"
 
 Verb = Callable[[KayaClient, Namespace], Payload]
+LocalVerb = Callable[[Namespace], Payload]
+
+
+# ------------------------------------------------------------------------------ notes
 
 
 def _note_list(client: KayaClient, _args: Namespace) -> Payload:
@@ -62,15 +113,80 @@ def _note_get(client: KayaClient, args: Namespace) -> Payload:
     return client.get_note(args.ref)
 
 
+def _note_create(client: KayaClient, args: Namespace) -> Payload:
+    return client.create_note(args.title, body=resolve_body(args), path=args.path)
+
+
+def _note_edit(client: KayaClient, args: Namespace) -> Payload:
+    return client.update_note(
+        args.ref,
+        title=args.title,
+        body=resolve_body(args),
+        path=args.path,
+        if_updated_at=args.if_updated_at,
+    )
+
+
+def _note_move(client: KayaClient, args: Namespace) -> Payload:
+    return client.move_note(args.ref, args.path)
+
+
+def _note_delete(client: KayaClient, args: Namespace) -> Payload:
+    return client.delete_note(args.ref)
+
+
+# ----------------------------------------------------------------------------- config
+
+
+def _config_show(_args: Namespace) -> Payload:
+    return settings_payload()
+
+
+def _config_path(_args: Namespace) -> Payload:
+    return path_payload()
+
+
+def _config_set(args: Namespace) -> Payload:
+    """Write the named settings and return the effective configuration afterwards.
+
+    Keyed by environment name because that is the one vocabulary `kaya_client.config` names a
+    setting in; it translates to the file's spelling itself (`file_key`), so this package holds no
+    opinion about what the file looks like.
+
+    **What comes back is the effective configuration, not the file.** If a shell exports
+    ``KAYA_API_URL`` and the caller then sets ``api_url`` in the file, the row still shows the
+    exported value with ``source`` reading ``environment`` — which is the truth, and the one thing a
+    caller in that situation most needs told. A verb that echoed the file back would confirm a write
+    that changes nothing about the next command.
+    """
+    return write_settings({API_URL_ENV: args.api_url, TOKEN_ENV: args.token})
+
+
 VERBS: Mapping[tuple[str, str], Verb] = {
     (NOTE, LIST): _note_list,
     (NOTE, GET): _note_get,
+    (NOTE, CREATE): _note_create,
+    (NOTE, EDIT): _note_edit,
+    (NOTE, MOVE): _note_move,
+    (NOTE, DELETE): _note_delete,
 }
-"""``(command, subcommand)`` → the client method that answers it.
+"""``(command, subcommand)`` → the client method that answers it, for the verbs that need a session.
 
 A table rather than an ``if`` chain, so `build_parser` and this module cannot drift about which
 words exist: `tests/test_verbs.py` asserts that every parser word has a row and every row is a
-parser word. V2b's write verbs are rows here plus subparsers there, and nothing else.
+parser word.
+"""
+
+LOCAL_VERBS: Mapping[tuple[str, str], LocalVerb] = {
+    (CONFIG, SET): _config_set,
+    (CONFIG, SHOW): _config_show,
+    (CONFIG, PATH): _config_path,
+}
+"""The verbs that never open a session. See this module's docstring for why they are a second table.
+
+They still return a ``Payload`` and are still printed by ``render``: "local" is about the transport,
+not about the output contract, and a `config show` that formatted itself would be exactly the ADR
+0004 leak this package exists not to have.
 """
 
 
@@ -78,9 +194,20 @@ def run(args: Namespace) -> Payload:
     """Dispatch one parsed invocation and return the payload it produced.
 
     Every failure leaves as a ``KayaError`` — ``MissingCredential`` from the configuration,
-    ``TransportError`` or ``ApiError`` from the client — and ``main``'s single funnel turns it into
-    a structured row and an exit number. This function catches nothing on purpose.
+    ``TransportError`` or ``ApiError`` from the client, ``UsageError`` from a write that named
+    nothing to change — and ``main``'s single funnel turns it into a structured row and an exit
+    number. This function catches nothing on purpose.
+
+    A note verb resolves its credential *before* it reads a ``--body-file``, because the session is
+    opened first. Both are refusals with their own exit code and neither hides the other across two
+    runs, so the order is not worth an extra branch here.
     """
-    verb = VERBS[(args.command, args.note_command)]
+    word = (args.command, args.subcommand)
+
+    local = LOCAL_VERBS.get(word)
+    if local is not None:
+        return local(args)
+
+    verb = VERBS[word]
     with open_client() as client:
         return verb(client, args)

@@ -187,7 +187,8 @@ def test_a_write_omitting_the_precondition_is_a_plain_overwrite() -> None:
     """SLICES §V1's other unit row, and ADR 0009 §Decision in one assertion.
 
     The precondition is "a guarantee available to any client that wants it, not a tax on every
-    caller": `curl` works without a read-first dance, and `kaya note edit --force` stays possible.
+    caller": `curl` works without a read-first dance, and `kaya note edit` without `--if-updated-at`
+    is the same plain overwrite (KAN-551).
     Making it mandatory would be a different decision from the one that was accepted.
     """
     assert update(body="whatever was there before is gone").guards_the_body() is False

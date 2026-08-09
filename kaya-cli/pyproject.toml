@@ -3,6 +3,18 @@
 # (pandan ADR 0018 §Package-name reality). That constrains the distribution name only. The console
 # script is `kaya`, and there is exactly one of them (Q39).
 name = "kaya-notes"
+# 0.8.0 — KAN-551 lands SLICES §V2b step 6: the full verb set. `note create`, `note edit`,
+# `note move` and `note delete` join the two reads, and `config {set,show,path}` arrives as a
+# second dispatch table for the verbs that need no session — `config show` has to answer when
+# there is no credential, because finding that out is what it is for. `--body`/`--body-file` are
+# mutually exclusive and there is no `-`, so `tests/test_no_prompting.py` keeps proving ADR 0005
+# §contract 9 structurally. Behavioural on every axis: argv that used to be a usage error now
+# writes a note, and `config set` writes a file. Shaping, resolution and the file format are all
+# `kaya-client`'s; this package's share is the subparsers, one file read and a merge it does not
+# perform. One behaviour moved rather than arrived: `main` resolves `KAYA_MAX_TEXT_CHARS`
+# from the payload instead of before the verb, so a value nothing can parse no longer
+# refuses `config path` — the verb that answers which file to fix. `note list` still exits
+# `2` on one, but now after its request rather than before it.
 # 0.7.0 — KAN-547 adds `--full` to every verb and reads `KAYA_MAX_TEXT_CHARS`, so prose is cut to
 # 500 characters by default with a hint carrying the true total. Behavioural for every existing
 # invocation that prints a long body, and a new exit `2` path: a `KAYA_MAX_TEXT_CHARS` that is not
@@ -22,7 +34,7 @@ name = "kaya-notes"
 # 0.2.0 — KAN-543 gives the CLI argument parsing and ADR 0007's build-stamped `--version`. A
 # behavioural change to a shipped package bumps it in the same PR (ADR 0007 §3, CLAUDE.md
 # §Conventions §Versioning).
-version = "0.7.0"
+version = "0.8.0"
 description = "kaya — the notes CLI"
 readme = "README.md"
 license = "Apache-2.0"

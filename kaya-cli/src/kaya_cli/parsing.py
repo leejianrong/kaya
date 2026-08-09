@@ -44,6 +44,14 @@ projected at all, and what the narrowed payload looks like are all decided in
 adapter inherited none of it; the one line below is the whole of kaya's version of that decision,
 and if it ever grows a second line the review question is "why isn't this in the client?".
 
+``--body`` / ``--body-file`` (KAN-551) is the largest thing this module resolves and is still the
+same trade. A note body is prose: long, multi-line, and quite likely to start with a dash, so
+argv is a poor carrier for it and a path is the usual answer. **Which of the two spellings was used
+is argv's business and nothing else's** — the client takes one ``body`` string, MCP passes one
+``body`` parameter, and neither has a file. So `resolve_body` reads the file and hands over a
+string, and that is the entire extent of it: no encoding negotiation, no stripping, no templating.
+See its docstring for why there is no ``-``.
+
 ``--full`` (KAN-547) is the same shape again and the share is even smaller. What truncation *is* —
 the allow-list, the cut, the true total, the hint's wording — is `kaya_client.truncation`'s, and
 what the default number is, is `kaya_client.config.max_text_chars`'s, so an MCP server started from
@@ -54,6 +62,7 @@ flag and a deployment setting, which is the same thing `resolve_format` does for
 
 import argparse
 import sys
+from pathlib import Path
 from typing import NoReturn
 
 from kaya_client import CLI_FORMATS, Format, UsageError, max_text_chars
@@ -112,6 +121,16 @@ FORMAT_FLAG = "--format"
 JSON_FLAG = "--json"
 FIELDS_FLAG = "--fields"
 FULL_FLAG = "--full"
+
+BODY_FLAG = "--body"
+BODY_FILE_FLAG = "--body-file"
+TITLE_FLAG = "--title"
+PATH_FLAG = "--path"
+PRECONDITION_FLAG = "--if-updated-at"
+API_URL_FLAG = "--api-url"
+TOKEN_FLAG = "--token"
+"""KAN-551's write flags, named here so `__main__` builds subparsers from constants and
+`tests/test_write_verbs.py` asserts against the same ones rather than against retyped strings."""
 
 NO_TEXT_LIMIT = 0
 """What ``--full`` resolves to. ADR 0005's ``--full`` and ``KAYA_MAX_TEXT_CHARS=0`` are **one
@@ -230,3 +249,43 @@ def resolve_text_limit(args: argparse.Namespace) -> int:
     if getattr(args, "full", False):
         return NO_TEXT_LIMIT
     return max_text_chars()
+
+
+def resolve_body(args: argparse.Namespace) -> str | None:
+    """The note body this invocation carries: ``--body``'s value, a file's contents, or ``None``.
+
+    ``None`` is "the caller said nothing about the body", which `KayaClient` drops from the request
+    rather than sending as ``""`` — the difference between leaving 3,000 words alone and deleting
+    them. ``--body ""`` is a value and clears the field, deliberately, because that is what
+    `NoteUpdate` documents as the way to clear one.
+
+    **There is no ``-``.** Reading the standard input on request would not violate ADR 0005
+    §contract 9 — a dash the user typed is not a prompt — but `tests/test_no_prompting.py` proves
+    the contract *structurally*, by asserting this package contains no such read at all, and that
+    guard is stronger than any correct branch it would be relaxed to accommodate. The shell already
+    provides the feature for free by naming the stream as a file, which is why the trade is easy.
+
+    The two flags are mutually exclusive in the parser, so only one of them is ever set here.
+
+    A file that cannot be read is a ``UsageError`` — exit `2`, the caller's input was rejected —
+    and the message names the path and the reason. It is decoded as UTF-8 with no fallback: a note
+    is markdown and markdown is UTF-8, and silently decoding a mis-encoded file with ``latin-1``
+    would store mojibake that no later read can tell from prose the author meant.
+    """
+    body = getattr(args, "body", None)
+    if body is not None:
+        return str(body)
+
+    given = getattr(args, "body_file", None)
+    if given is None:
+        return None
+
+    path = Path(given)
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise UsageError(
+            f"{BODY_FILE_FLAG} {given}: {exc.strerror or 'could not be read'}", arg=given
+        ) from None
+    except UnicodeDecodeError:
+        raise UsageError(f"{BODY_FILE_FLAG} {given}: not valid UTF-8 text", arg=given) from None

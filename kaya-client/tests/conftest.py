@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from kaya_client import config
 from kaya_client.client import (
     NOTE_COLUMNS,
     NOTE_ENVELOPE,
@@ -77,3 +78,22 @@ def notes() -> Payload:
 def note() -> Payload:
     """The `note get` payload: one note."""
     return note_entity(GROCERIES)
+
+
+@pytest.fixture(autouse=True)
+def no_ambient_configuration(monkeypatch, tmp_path) -> None:
+    """No deployment, no credential, no text limit, and a config directory nobody else owns.
+
+    `kaya_client.config` resolves from the environment and then from a file on disk, so without
+    this a developer with a PAT exported would have `open_client()` reach a real deployment from
+    the fast test layer, and `write_settings` would edit their own
+    ``~/.config/kaya/config.json``. Both variables that locate the file are redirected, not only
+    the first: a test that cleared ``XDG_CONFIG_HOME`` would otherwise fall through to ``HOME``.
+
+    Autouse rather than opt-in, for the reason the CLI's copy gives — a test that forgot to ask
+    would pass on a laptop with nothing configured and fail on one that has been used.
+    """
+    for name in (config.API_URL_ENV, config.TOKEN_ENV, config.MAX_TEXT_CHARS_ENV):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(config.CONFIG_HOME_ENV, str(tmp_path / "xdg"))
+    monkeypatch.setenv(config.HOME_ENV, str(tmp_path / "home"))
