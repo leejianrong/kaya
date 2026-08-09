@@ -450,6 +450,23 @@ overwrite from the index and silently destroy uncommitted work no reflog can rec
 mutation actually reaches: a guard that only fires through some *other* rule's success is not a guard
 over the rule you meant to test.
 
+**Commit the card's work *before* you mutate anything.** The obvious way to run the paragraph above
+— edit the file, `git diff -- <file> > /tmp/mut.patch`, test, `git apply -R /tmp/mut.patch` — is
+safe only against a **clean** tree. On a dirty one that `git diff` captures the whole slice as well
+as the mutation, so reversing it deletes the card. KAN-549 lost its `__main__.py` that way and had
+to rewrite it from context; the five cards before it were safe only because they happened to have
+committed first. `git apply -R` is exactly as destructive as the `git restore` warned against above
+when the patch is wider than you think. Commit first, then mutate, then reverse, then check
+`git status --short` is clean before believing any of it.
+
+**A structural guard does not cover a behavioural claim, even when it reads as though it does.**
+`kaya-client/tests/test_aggregates.py` proves the summary cannot describe a corpus by proving
+`attach_summary` takes one parameter, so no corpus can *enter* it — which stays green when a caller
+hands that function a payload it sliced wrongly. KAN-549 needed its own end-to-end assertions on
+both sides of the boundary for that. Before citing an existing guard as covering a new card, mutate
+the new behaviour and watch that guard specifically: this is the rule above turned around, and it
+catches the reviewer rather than the author.
+
 **Versioning.** A behavioural change to a shipped package bumps its version in the same PR
 ([ADR 0007](docs/adr/0007-release-provenance-from-the-first-release.md)), enforced by
 `scripts/check-version-bump.sh` in the pre-push hook and in CI's `version-bump` job — which runs on
