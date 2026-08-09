@@ -11,8 +11,10 @@ and does not touch this one.
 
     render(payload, *, fields=None, text_limit=500, fmt="human") -> str | dict
 
-ADR 0005's sequencing rule says this signature has to absorb V2b without moving. Taking V2b's build
-plan item by item:
+ADR 0005's sequencing rule says this signature has to absorb V2b without moving. **KAN-546 is the
+first V2b item to land, and this file's diff for it is empty** — projection went live entirely
+inside `projection`, including the single-entity refusal that the list below predicted would be the
+one to force a fifth parameter. Taking V2b's build plan item by item:
 
 - **``--fields a,b,c``, vocabulary from the payload's own keys.** ``fields`` is here; the vocabulary
   is ``Payload.field_names()``, which is already derived from the records rather than from a list
@@ -78,8 +80,12 @@ def render(
 ) -> str | dict[str, Any]:
     """Shape ``payload`` and serialize it. The only way anything leaves this package as output.
 
-    In V2a ``fields`` and ``text_limit`` are validated for shape and then pass through untouched;
-    ``tests/test_passthrough_is_a_no_op.py`` proves it, so V2b's arrival is a visible diff.
+    ``fields`` selects a subset of the record's own keys, uniformly for every format (KAN-546, and
+    ADR 0005's amendment of the same date); omitting it returns the payload untouched, which is what
+    ``tests/test_human_row_is_pinned.py`` witnesses byte for byte. ``text_limit`` is still validated
+    for shape and passed through untouched — KAN-547 fills it, and
+    ``tests/test_passthrough_is_a_no_op.py`` still pins that half so its arrival is a visible diff
+    too.
     """
     if not isinstance(payload, Payload):
         raise TypeError(

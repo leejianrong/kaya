@@ -29,12 +29,20 @@ note's title starts with the word.
 
 ### The output flags, and why resolving them is not shaping
 
-``--format`` and ``--json`` are declared here and resolved here. That is not a violation of ADR
-0004: what this module decides is which *name* the user asked for, and every byte of what that name
-means lives in `kaya_client.serialization`. The vocabulary itself is not written down in this
-package — ``choices`` comes from ``CLI_FORMATS``, which is derived from the ``Format`` enum, so a
-format published in the client is offered by the CLI without anybody editing an adapter, and an
+``--format``, ``--json`` and ``--fields`` are declared here and resolved here. That is not a
+violation of ADR 0004: what this module decides is which *name* the user asked for, and every byte
+of what that name means lives in `kaya_client`. The vocabularies themselves are not written down in
+this package — ``choices`` comes from ``CLI_FORMATS``, which is derived from the ``Format`` enum, so
+a format published in the client is offered by the CLI without anybody editing an adapter, and an
 adapter-only format (``data``) cannot be offered by accident.
+
+``--fields`` is the same trade with a sharper edge, because projection is the concern ADR 0004 was
+written about. So this module does exactly one thing with it: **split the comma-separated argv value
+into a ``list[str]``**. Which names exist, what an unknown one costs, whether the verb can be
+projected at all, and what the narrowed payload looks like are all decided in
+`kaya_client.projection` — see `resolve_fields`. Pandan put projection in its CLI and its MCP
+adapter inherited none of it; the one line below is the whole of kaya's version of that decision,
+and if it ever grows a second line the review question is "why isn't this in the client?".
 """
 
 import argparse
@@ -95,16 +103,29 @@ class StructuredParser(argparse.ArgumentParser):
 
 FORMAT_FLAG = "--format"
 JSON_FLAG = "--json"
+FIELDS_FLAG = "--fields"
+
+FIELDS_SEPARATOR = ","
+"""What ``--fields`` splits on. A comma, per ADR 0005 §contract 2's own spelling (``--fields
+a,b,c``) and pandan's V42, so an operator's muscle memory carries between the two tools."""
 
 
 def output_flags() -> argparse.ArgumentParser:
-    """The ``--format``/``--json`` pair, as a parent parser every verb inherits.
+    """The ``--format``/``--json``/``--fields`` set, as a parent parser every verb inherits.
 
-    A parent rather than two copies per subparser: ADR 0005 §contract 1 is a promise about *every*
-    verb, and the way that promise breaks is one verb added in V2b without the flags. Declaring them
-    once means a verb cannot be added without them.
+    A parent rather than a copy per subparser: ADR 0005 §contract 1 is a promise about *every* verb,
+    and the way that promise breaks is one verb added later without the flags. Declaring them once
+    means a verb cannot be added without them.
 
     ``--format`` defaults to ``None`` rather than to ``human`` on purpose — see `resolve_format`.
+
+    **``--fields`` is inherited by `note get` too, and that is the design rather than an
+    oversight.** ADR 0005 §contract 2 requires it to be "a usage error on single-entity verbs,
+    **never a silent no-op**", and a flag argparse refuses to *accept* would be a usage error
+    raised by the wrong layer: the CLI would answer for a rule about payload kinds, and V6's MCP
+    server — which has no argparse — would be left to reimplement it. So the parser accepts it
+    everywhere and `kaya_client.projection` refuses it where it does not apply, which is the one
+    place both adapters inherit the refusal from.
     """
     flags = argparse.ArgumentParser(add_help=False)
     flags.add_argument(
@@ -117,6 +138,12 @@ def output_flags() -> argparse.ArgumentParser:
         JSON_FLAG,
         action="store_true",
         help=f"alias for `{FORMAT_FLAG} {Format.JSON.value}`; {FORMAT_FLAG} wins if both are given",
+    )
+    flags.add_argument(
+        FIELDS_FLAG,
+        default=None,
+        metavar="a,b,c",
+        help="select these columns, in this order, on a list verb (default: the standard row)",
     )
     return flags
 
@@ -137,3 +164,24 @@ def resolve_format(args: argparse.Namespace) -> str:
     if chosen:
         return str(chosen)
     return Format.JSON if getattr(args, "json", False) else Format.HUMAN
+
+
+def resolve_fields(args: argparse.Namespace) -> list[str] | None:
+    """``--fields`` as the ``list[str]`` ``render`` takes, or ``None`` if it was not given.
+
+    **One ``split`` and nothing else.** ADR 0004 leaves an adapter exactly one job — "how it gets
+    its arguments" — and a comma-separated string is how argv carries a list. Every decision
+    *about* the list is `kaya_client.projection`'s: which names exist (derived from the payload's
+    own keys, so it cannot drift from the API), what an unknown one costs, and that it does not
+    apply to `note get`. A validation added here would be a second opinion about a vocabulary this
+    package cannot see, and it would be one V6's MCP server does not inherit.
+
+    ``None`` and ``[]`` reach ``render`` as different values on purpose: ``None`` is "did not ask",
+    which returns the payload untouched, and there is no argv that produces ``[]`` — splitting any
+    string yields at least one segment, so ``--fields ""`` is one empty *name* and is refused as
+    one. `kaya_client.projection` refuses a genuine ``[]`` too, for a caller reaching it in code.
+    """
+    given = getattr(args, "fields", None)
+    if given is None:
+        return None
+    return str(given).split(FIELDS_SEPARATOR)

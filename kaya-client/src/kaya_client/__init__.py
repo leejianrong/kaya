@@ -40,15 +40,18 @@ the exit number — ADR 0005's exit table is `kaya-cli`'s, because an MCP tool h
 exception class here carries a ``code``, so a raise site names a meaning and the CLI's table is a
 lookup rather than a judgement.
 
-**V2a (KAN-540) implements the ``fmt`` dimension only.** ``fields`` and ``text_limit`` are in the
-signature, are validated for shape, and pass through untouched; `tests/test_passthrough_is_a_no_op`
-pins that, so V2b filling them in is a visible diff. ADR 0005 puts the signature before the
-behaviour on purpose — if a later card needs this signature to change, that is the signal the
-sequencing broke, not a reason to push through. ``render``'s module docstring argues requirement by
-requirement why V2b lands on it unmoved.
+**V2a (KAN-540) implemented the ``fmt`` dimension only; KAN-546 added ``fields``.** Projection
+selects a subset of the record's own keys — vocabulary from ``Payload.field_names()``, an unknown
+name refused by name, ``fields`` on a single entity a ``UsageError`` — and it does the same thing in
+every format, because the CLI's ``--fields`` and MCP's ``fields`` are one parameter through one
+seam. ``text_limit`` is still a validated no-op; `tests/test_passthrough_is_a_no_op` pins that half,
+so KAN-547 filling it is a visible diff. ADR 0005 puts the signature before the behaviour on purpose
+— **``render``'s signature did not move for KAN-546 and must not move for what follows**; if a later
+card needs it to change, that is the signal the sequencing broke, not a reason to push through.
+``render``'s module docstring argues requirement by requirement why.
 
-Still to come: the shaping behaviour (V2b), the write verbs (V2b), search and links (KAN-558/559,
-KAN-566).
+Still to come: truncation and aggregates (KAN-547 onwards), the write verbs, search and links
+(KAN-558/559, KAN-566).
 """
 
 from importlib.metadata import PackageNotFoundError, version

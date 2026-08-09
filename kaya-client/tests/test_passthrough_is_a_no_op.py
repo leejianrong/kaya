@@ -1,16 +1,20 @@
-"""``fields`` and ``text_limit`` do **nothing** in V2a, and that is pinned rather than assumed.
+"""``text_limit`` still does **nothing**, pinned rather than assumed. ``fields`` now does something.
 
-The card is explicit: "V2a implements only the ``fmt`` dimension; ``fields`` and ``text_limit``
-exist in the signature and pass through untouched". A no-op is the easiest thing in a codebase to
-implement by accident and the hardest to date afterwards, so these assertions exist to make V2b's
-arrival a **visible diff** — the day projection and truncation land, this file goes red in a way
-that names exactly which parameter started meaning something.
+V2a pinned both halves so that V2b's arrival would be a **visible diff** — a no-op is the easiest
+thing in a codebase to implement by accident and the hardest to date afterwards. **KAN-546 spent the
+``fields`` half**: this file went red exactly where projection started meaning something, and those
+assertions moved out to `test_projection.py`, which is what the parameter does now.
 
-The line this file draws is between the **shape** of an argument (checked now) and its
-**vocabulary** (V2b's). ``fields=["nope"]`` is accepted here on purpose: rejecting an unknown
-name is V2b's job, and doing it early would make the pass-through claim false.
-``fields="ref,title"`` is refused, because a bare string is an iterable of characters and the
-no-op would swallow it today only for V2b to project a payload down to ``r``, ``e``, ``f``.
+What is left here is the ``text_limit`` half, still a validated pass-through, and it must stay that
+way until **KAN-547** fills it. That card's diff is this file going red a second time, in the same
+way, for the other parameter. Do not pre-empt it and do not relax it: `test_a_long_body_is_not_
+truncated_anywhere` is the whole of ADR 0005 §contract 6 stated as an absence.
+
+The line this file draws is between the **shape** of an argument (a ``TypeError``, checked at the
+seam whatever the payload contains) and its **vocabulary** (a ``UsageError``, exit `2`, and for
+``fields`` that now lives in `kaya_client.projection`). ``fields="ref,title"`` is a shape error and
+is refused here, because a bare string is an iterable of characters and projection would narrow a
+payload down to ``r``, ``e``, ``f``.
 """
 
 import pytest
@@ -22,9 +26,15 @@ FORMATS = ["human", "json", "data"]
 
 
 @pytest.mark.parametrize("fmt", FORMATS)
-@pytest.mark.parametrize("fields", [None, ["ref"], ["ref", "title"], [], ["not_a_field_at_all"]])
-def test_fields_changes_nothing(notes: Payload, fmt: str, fields: list[str] | None) -> None:
-    assert render(notes, fields=fields, fmt=fmt) == render(notes, fmt=fmt)
+def test_omitting_fields_still_changes_nothing(notes: Payload, fmt: str) -> None:
+    """All that survives of ``test_fields_changes_nothing``, and the half that was never V2b's.
+
+    KAN-546 made ``fields=["ref"]`` mean something, so the parametrised cases moved to
+    `test_projection.py`. ``fields=None`` did not move: ADR 0005 §contract 2's guarantee is now
+    precisely that a caller who *did not ask* for projection gets the complete record back, and that
+    is the same claim `test_human_row_is_pinned.py` makes about the bytes.
+    """
+    assert render(notes, fields=None, fmt=fmt) == render(notes, fmt=fmt)
 
 
 @pytest.mark.parametrize("fmt", FORMATS)
@@ -54,19 +64,35 @@ def test_a_long_body_is_not_truncated_anywhere(note: Payload) -> None:
     assert long_body in rendered
 
 
-def test_the_steps_themselves_return_the_very_same_object(notes: Payload) -> None:
+def test_the_truncator_returns_the_very_same_object(notes: Payload) -> None:
     """Identity, not equality: an equal-but-rebuilt payload would hide a step that started working.
 
-    These two ``is`` checks are the assertions V2b deletes. Nothing else in the suite has to change
-    for projection and truncation to arrive.
+    This is the assertion **KAN-547** deletes. Its sibling — ``project(notes, ["ref"]) is notes`` —
+    is the one KAN-546 deleted, and `test_projection.py` states the replacement: projection returns
+    the same object for ``fields=None`` and a narrowed one otherwise.
     """
-    assert project(notes, ["ref"]) is notes
     assert truncate(notes, 1) is notes
 
 
+def test_projection_is_still_identity_when_nothing_was_asked_for(notes: Payload) -> None:
+    """The half of the old ``is`` check that KAN-546 kept, and strengthened by keeping.
+
+    ``fields=None`` returning the very same object is what makes "omitting ``--fields`` changed
+    nothing" a fact about identity rather than about two equal renders — and it is the mechanism
+    behind the byte-identity pin, not a restatement of it.
+    """
+    assert project(notes, None) is notes
+
+
 @pytest.mark.parametrize("fields", ["ref,title", b"ref", ["ref", 3]])
-def test_a_field_list_that_could_not_be_one_is_refused_now(notes: Payload, fields: object) -> None:
-    """Shape, not vocabulary. Refused now so V2b inherits no caller relying on the coercion."""
+def test_a_field_list_that_could_not_be_one_is_refused(notes: Payload, fields: object) -> None:
+    """Shape, not vocabulary — a ``TypeError`` for a caller bug, not exit `2` for a typo.
+
+    Still here, and still a ``TypeError``, now that projection is live: this is the case the
+    distinction was drawn for. A bare ``"ref,title"`` is an iterable of characters, so without this
+    the payload would narrow to ``r``, ``e``, ``f`` — or, worse, be refused as an unknown *field*
+    named ``r``, sending the adapter author looking at their vocabulary instead of their ``split``.
+    """
     with pytest.raises(TypeError):
         render(notes, fields=fields)  # type: ignore[arg-type]
 

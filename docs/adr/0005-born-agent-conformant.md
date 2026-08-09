@@ -39,7 +39,7 @@ is half a contract.
 | # | Guarantee | Note |
 |---|---|---|
 | 1 | `--format {human,json,toon}` over **one** serializer in `kaya-client` (ADR 0004), so formats cannot drift | `--json` is a documented alias for `--format json`; `--format` wins if both are given |
-| 2 | `--fields a,b,c` widens the human row on every list verb; vocabulary derived from the payload's own keys; an unknown name is a clean error naming it | Does not affect structured output, which is already complete. A usage error on single-entity verbs, never a silent no-op |
+| 2 | `--fields a,b,c` selects named columns on every list verb; vocabulary derived from the payload's own keys; an unknown name is a clean error naming it | **Omitting** it leaves structured output complete; supplying it narrows every format alike, which under `human` is the widening this row used to describe. Wording corrected by the 2026-08-09 (KAN-546) amendment below. A usage error on single-entity verbs, never a silent no-op |
 | 3 | Errors **structured on stdout**: `error<TAB><code><TAB><message><TAB><arg>`, or an `{"error": {...}}` object under a structured format, with all keys always present | Human `usage:` text still goes to stderr |
 | 4 | Exit codes: `0` ok · `1` runtime · `2` usage — the caller's input was rejected, by argparse or by the API (`400`) · `3` 401 · `4` 403 · `5` 404 | **Pandan's scheme, adopted verbatim.** Branch on the stable `code` string, never on message text. `2`'s wording widened by the 2026-08-09 amendment below; no number moved |
 | 5 | A pre-computed `summary` on every list verb, describing **the returned set** — under a filter or `--limit`, the returned set, not the whole corpus | A trailing line for humans, a `summary` object for structured consumers, both from the same dict |
@@ -140,3 +140,58 @@ keeps the two tools reading the same: `2` still means "you sent something wrong"
 model of a kaya `2` is correct without being told. Inventing a seventh number for "the API rejected
 your input" would have been the version of this change that broke the sameness the scheme was
 adopted for.
+
+## Amendment (2026-08-09, KAN-546): `--fields` narrows every format, and it is *omitting* it that keeps structured output complete
+
+§contract 2's table above said `--fields` "widens the human row" and "does not affect structured
+output, which is already complete". Those are two descriptions of two different operations, and
+`kaya-client/src/kaya_client/projection.py` flagged the contradiction in V2a rather than guessing at
+it, because V2a builds the seam and V2b fills it. This is V2b filling it.
+
+**The decision: `--fields` narrows the shaped dict uniformly, for every format.** `fields` names a
+subset of the record's own keys; `columns` becomes that subset in the order the caller gave, and
+`records` narrow to it. Under `human` that *widens* the visible row, because the default row
+(`ref`/`title`/`path`) is deliberately narrower than the record — so §contract 2's original word is
+satisfied by the same operation that satisfies [ADR 0004](0004-shaping-lives-in-the-shared-client.md)'s.
+Under `json`, `toon` and `data` the payload carries exactly the named keys.
+
+**What contract 2 was actually protecting, restated so it still holds.** A caller who did **not**
+ask for projection gets a complete record — one it can feed straight back to the API's own contract.
+That is now true by construction rather than by a rule about formats: `fields=None` returns the very
+same payload object, and `kaya-client/tests/test_human_row_is_pinned.py` is the byte-level witness.
+What the original wording got wrong is the case where the caller *did* ask. Structured output being
+"already complete" is an argument for leaving it alone by default, not for ignoring an explicit
+request; a `--format json` that silently declined to project would make `--fields` mean two
+different things depending on a flag the caller set for an unrelated reason.
+
+**Why not make it conditional on `fmt`.** It is reachable — `fmt` is in scope on the same call — and
+it is exactly the wrong shape. The CLI's `--fields` and the MCP server's `fields` are one parameter
+through one seam ([ADR 0004](0004-shaping-lives-in-the-shared-client.md)); a projection that
+depended on the format would put a behavioural difference between the two adapters *inside* the step
+they share, which is the drift that ADR exists to prevent. It would also strand the MCP surface:
+`data` is the format V6 returns as `structuredContent`, so "projection does not affect structured
+output" read literally means the adapter ADR 0004 was written for is the one that gets none of it.
+
+**Measured here rather than cited from pandan.** ADR 0004's case rests on a 44,902-token
+`list_cards` read falling to 7,204 — pandan's board, not kaya's notes. Re-measured on kaya's own
+corpus through the shipped `render` (40 notes, mean body 266 chars, `o200k_base`, via
+`kaya-client/scripts/measure_toon_delta.py`):
+
+| `note list`, 40 notes | compact JSON | vs complete | toon | vs complete |
+|---|---:|---:|---:|---:|
+| complete records (7 keys) | 5,226 | — | 4,637 | — |
+| `--fields ref,title,path` | 1,072 | −79.5% | 866 | −81.3% |
+| `--fields ref,title` | 548 | −89.5% | 429 | −90.7% |
+| `--fields ref` | 245 | −95.3% | 206 | −95.6% |
+
+ADR 0004 predicted "~84%" from field breadth alone. On kaya's shape the default row recovers 79.5%
+and a two-column read 89.5%, so the prediction carries. The saving stacks with `toon` rather than
+competing with it: the two together take a `note list` from 5,226 tokens to 429.
+
+**Nothing is withdrawn from a user by this.** `--fields` had never shipped — V2a published
+`--format`, `--json` and the exit table, and this ADR's own §Negative consequence about a frozen
+contract is about promises already made. There is no invocation whose output changes, which is why
+this is an amendment and not a breaking change, and why it could be settled by the slice that
+implements it rather than by a new ADR. The 2026-08-09 (KAN-718) amendment above is the precedent
+for the form: correct the wording where it named the wrong thing, keep the guarantee it was reaching
+for, and do not re-litigate an accepted decision.

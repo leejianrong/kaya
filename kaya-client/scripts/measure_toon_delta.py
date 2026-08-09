@@ -1,10 +1,18 @@
 #!/usr/bin/env python
-"""Measure what ``--format toon`` costs — or saves — against ``--format json``, per payload shape.
+"""What ``--format toon`` costs against ``--format json``, and what ``--fields`` saves against both.
 
-KAN-541's acceptance criterion, and CLAUDE.md §Conventions' rule that "it's fast" is not an
-acceptance criterion but a number is. ADR 0005 §Alternatives is explicit that TOON "doesn't always
-pay (`get` was +2% vs compact JSON)" in pandan's V47, and instructs kaya to "measure and record per
-payload, as V47 did". This script is that measurement; its output goes in the PR body.
+KAN-541's acceptance criterion and KAN-546's, and CLAUDE.md §Conventions' rule that "it's fast" is
+not an acceptance criterion but a number is. ADR 0005 §Alternatives is explicit that TOON "doesn't
+always pay (`get` was +2% vs compact JSON)" in pandan's V47, and instructs kaya to "measure and
+record per payload, as V47 did". This script is that measurement; its output goes in the PR body.
+
+**KAN-546 added the second table.** ADR 0004 rests its whole argument on one number — pandan's
+44,902-token `list_cards` read falling to 7,204 when narrowed to five useful fields — and that
+number was measured on pandan's board, not on kaya's notes. The projection table below is the same
+measurement taken here, against the shipped `render`, so the ADR's claim is carried rather than
+cited. It is also the reason the "V2b's row only" row of the first table is now produced by passing
+``fields`` to ``render`` instead of by narrowing the corpus by hand: projection exists now, so a
+harness that reimplemented it would be measuring itself, which is the mistake pandan's V49 made.
 
 Method
 ------
@@ -129,10 +137,16 @@ def entity_payload(note: dict[str, Any]) -> Payload:
     )
 
 
-def measure(payload: Payload, count_tokens) -> tuple[int, int, float]:
-    """``(json tokens, toon tokens, delta %)`` for one payload, both from ``render``."""
-    as_json = render(payload, fmt="json")
-    as_toon = render(payload, fmt="toon")
+def measure(
+    payload: Payload, count_tokens, fields: Sequence[str] | None = None
+) -> tuple[int, int, float]:
+    """``(json tokens, toon tokens, delta %)`` for one payload, both from ``render``.
+
+    ``fields`` goes to ``render`` untouched, so a projected row is the shipped projection and not a
+    corpus this script narrowed for itself.
+    """
+    as_json = render(payload, fields=fields, fmt="json")
+    as_toon = render(payload, fields=fields, fmt="toon")
     assert isinstance(as_json, str) and isinstance(as_toon, str)
 
     json_tokens = count_tokens(as_json)
@@ -164,31 +178,70 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     notes = build_notes(args.notes, args.body_words)
     body_chars = sum(len(note["body"]) for note in notes) // len(notes)
+    listed = list_payload(notes)
 
-    narrowed = [{key: note[key] for key in NOTE_LIST_COLUMNS} for note in notes]
+    projections: list[tuple[str, Sequence[str] | None]] = [
+        (f"complete records ({len(notes[0])} keys)", None),
+        (f"`--fields {','.join(NOTE_LIST_COLUMNS)}` (the default human row)", NOTE_LIST_COLUMNS),
+        ("`--fields ref,title`", ("ref", "title")),
+        ("`--fields ref`", ("ref",)),
+    ]
+
     rows = [
         (
-            f"`note list` ({args.notes} notes, full records)",
-            measure(list_payload(notes), count_tokens),
+            f"`note list` ({args.notes} notes, complete records)",
+            measure(listed, count_tokens),
         ),
         ("`note get` (one note)", measure(entity_payload(notes[0]), count_tokens)),
         (
-            f"`note list`, V2b's row only (`ref`/`title`/`path`, {args.notes} notes)",
-            measure(list_payload(narrowed), count_tokens),
+            f"`note list --fields {','.join(NOTE_LIST_COLUMNS)}` ({args.notes} notes)",
+            measure(listed, count_tokens, NOTE_LIST_COLUMNS),
         ),
     ]
+
+    projected = [
+        (name, measure(listed, count_tokens, fields)) for name, fields in projections
+    ]
+    complete_json, complete_toon, _ = projected[0][1]
 
     print(f"corpus: {args.notes} notes, mean body {body_chars} chars, {ENCODING} tokens")
     print()
     if args.markdown:
-        print("| payload | compact JSON | toon | delta |")
+        print("| payload | compact JSON | toon | toon delta |")
         print("|---|---:|---:|---:|")
         for name, (as_json, as_toon, delta) in rows:
             print(f"| {name} | {as_json:,} | {as_toon:,} | {delta:+.1f}% |")
+        print()
+        print(f"| `note list`, {args.notes} notes | compact JSON | vs complete | toon | "
+              "vs complete |")
+        print("|---|---:|---:|---:|---:|")
+        for name, (as_json, as_toon, _) in projected:
+            print(
+                f"| {name} | {as_json:,} | {_share(as_json, complete_json)} | "
+                f"{as_toon:,} | {_share(as_toon, complete_toon)} |"
+            )
     else:
         for name, (as_json, as_toon, delta) in rows:
             print(f"{name}: json {as_json:,}  toon {as_toon:,}  delta {delta:+.1f}%")
+        print()
+        for name, (as_json, as_toon, _) in projected:
+            print(
+                f"{name}: json {as_json:,} ({_share(as_json, complete_json)})  "
+                f"toon {as_toon:,} ({_share(as_toon, complete_toon)})"
+            )
     return 0
+
+
+def _share(tokens: int, complete: int) -> str:
+    """A projected cost as a percentage change against the complete record. ``—`` for the baseline.
+
+    Reported as a change rather than as a ratio because that is the shape of ADR 0004's own claim
+    (44,902 → 7,204, "a `fields` argument would recover ~84%"), and a reader comparing the two
+    should not have to do the arithmetic in a different direction.
+    """
+    if tokens == complete:
+        return "—"
+    return f"{(tokens - complete) / complete * 100:+.1f}%"
 
 
 if __name__ == "__main__":
