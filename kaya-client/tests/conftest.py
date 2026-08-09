@@ -23,6 +23,7 @@ from kaya_client.client import (
     NOTE_NOUN,
     NOTE_PROSE_FIELDS,
 )
+from kaya_client.hints import HELP_PREFIX
 from kaya_client.payloads import Payload
 
 GROCERIES: dict[str, Any] = {
@@ -66,6 +67,28 @@ def note_entity(record: dict[str, Any]) -> Payload:
         columns=NOTE_COLUMNS,
         prose_fields=NOTE_PROSE_FIELDS,
     )
+
+
+def without_help(rendered: object) -> str:
+    """A ``human`` render with KAN-550's trailing ``help:`` block taken back off.
+
+    Every human render gained one (ADR 0005 §contract 8), which would otherwise turn every
+    assertion about the *end* of an output — KAN-548's footer, KAN-547's truncation hint — into an
+    assertion about the hints. This keeps those tests about the thing they were written for, and
+    keeps them failing if their own subject moves.
+
+    It strips a trailing run of ``help:`` lines and the blank line above them, rather than slicing a
+    known length off, so a test using it does not have to know how many templates a payload happens
+    to carry. `test_hints.py` and `test_human_row_is_pinned.py` are where the block itself is
+    asserted, in full, against literals — this helper is never on that path.
+    """
+    assert isinstance(rendered, str)
+    lines = rendered.splitlines()
+    while lines and lines[-1].startswith(HELP_PREFIX):
+        lines.pop()
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines)
 
 
 @pytest.fixture

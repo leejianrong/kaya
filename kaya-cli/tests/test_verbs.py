@@ -14,18 +14,23 @@ import json
 
 import httpx
 import pytest
-from conftest import GROCERIES, NOTES, READING_LIST
+from conftest import ENTITY_HELP, GROCERIES, LIST_HELP, NOTES, READING_LIST
 
 from kaya_cli import verbs
 from kaya_cli.__main__ import build_parser, main
 
-LIST_ROWS = "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list\n\n2 notes"
+LIST_ROWS = (
+    "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list\n\n2 notes\n\n"
+    + LIST_HELP
+)
 """`kaya-client/tests/test_human_row_is_pinned.py`'s literal, character for character.
 
 The trailing ``2 notes`` is ADR 0005 §contract 5's summary line, which KAN-548 added **in the
-client**. It is here for the same reason every other byte is: if this package ever computed a
-footer of its own, the two literals would still agree and nothing would notice — so what the
-assertion below really checks is that the adapter is still printing what ``render`` returned."""
+client**, and the two ``help:`` lines under it are §contract 8's templates, which KAN-550 added in
+the client too. They are here for the same reason every other byte is: if this package ever computed
+a footer or a next-step line of its own, the two literals would still agree and nothing would
+notice — so what the assertion below really checks is that the adapter is still printing what
+``render`` returned and nothing more."""
 
 SINGLE_NOTE = (
     "ref         NOTE-12\n"
@@ -35,7 +40,8 @@ SINGLE_NOTE = (
     "updated_at  2026-08-09T11:02:33.123456+00:00\n"
     "\n"
     "milk\n"
-    "eggs"
+    "eggs\n"
+    "\n" + ENTITY_HELP
 )
 
 LISTED = {**NOTES, "summary": {"count": 2}}
@@ -116,7 +122,7 @@ def test_an_empty_list_is_a_definitive_zero_state(capsys, answering) -> None:
     answering(200, {"notes": []})
 
     assert main(["note", "list"]) == 0
-    assert capsys.readouterr().out == "no notes\n"
+    assert capsys.readouterr().out == "no notes\n\nhelp: kaya note create <title>\n"
 
 
 # ------------------------------------------------------ the ADR 0004 boundary, asserted
@@ -335,4 +341,5 @@ def test_reading_a_note_with_a_missing_column_does_not_crash(capsys, answering) 
     answering(200, {"notes": [thin]})
 
     assert main(["note", "list"]) == 0
-    assert capsys.readouterr().out == "NOTE-3  A reading list\n\n1 note\n"
+    expected = f"NOTE-3  A reading list\n\n1 note\n\n{LIST_HELP}\n"
+    assert capsys.readouterr().out == expected

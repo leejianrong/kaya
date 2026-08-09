@@ -62,6 +62,36 @@ packages are separately installable and a test suite that reached into its depen
 break the day one of them is released on its own. They are the corpus the human row is pinned
 against, so the CLI's assertions and the client's are about the same bytes."""
 
+LIST_HELP = "help: kaya note get <ref>\nhelp: kaya note create <title>"
+ENTITY_HELP = "help: kaya note edit <ref> --body-file <path>"
+"""ADR 0005 §contract 8's blocks (KAN-550), copied from
+`kaya-client/tests/test_human_row_is_pinned.py` for the same reason every other literal in this file
+is copied: the two packages are separately installable, and the point of a copy is that the two
+disagreeing is how this package finds out it grew an output rule of its own.
+
+**The hints are the sharpest case of that.** A `help:` line is the piece of output that looks most
+like an adapter's business — pandan put its next-step templates in its spec, shipped one that does
+not parse, and the wrong form propagated into a card. Kaya's live in `kaya_client.hints`, and
+`test_help_templates.py` is what proves this package contributes nothing to them but the parser
+they are checked against."""
+
+HELP_MARKER = "help: "
+
+
+def without_help(out: str) -> str:
+    """One command's stdout with KAN-550's trailing `help:` block and the trailing newline removed.
+
+    Every human render gained one, which would otherwise turn every assertion about the *end* of a
+    command's output — KAN-547's truncation hint, KAN-548's footer — into an assertion about the
+    hints. A test whose subject *is* the hints uses the literals above instead of this.
+    """
+    lines = out.rstrip("\n").splitlines()
+    while lines and lines[-1].startswith(HELP_MARKER):
+        lines.pop()
+    while lines and not lines[-1]:
+        lines.pop()
+    return "\n".join(lines)
+
 
 @pytest.fixture(autouse=True)
 def no_ambient_configuration(monkeypatch, tmp_path) -> None:

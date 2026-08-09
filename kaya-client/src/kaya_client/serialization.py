@@ -89,23 +89,30 @@ from typing import Any
 
 from kaya_client.aggregates import summary_line
 from kaya_client.errors import ARG_KEY, CODE_KEY, MESSAGE_KEY, UnknownFormat
+from kaya_client.hints import help_block
 from kaya_client.payloads import Kind, Shaped
 from kaya_client.toon import encode as encode_toon
 
 COLUMN_GAP = "  "
 """Two spaces between columns. Fixed, because the default human row is pinned byte-identically."""
 
-SUMMARY_GAP = "\n\n"
-"""A blank line between the table and ADR 0005 §contract 5's trailing summary line (KAN-548).
+BLOCK_GAP = "\n\n"
+"""A blank line between each block of a ``human`` render: the table or the note itself, then ADR
+0005 §contract 5's summary line (KAN-548), then §contract 8's ``help:`` templates (KAN-550).
 
-A blank line rather than a single newline, for one reason: a footer must not be readable as another
-row. ``2 notes`` on the line directly under a table of two notes is a third row to anything that
-split the output on newlines, and the consumer most likely to do that is the agent this whole layer
-exists for. Separated by a blank line it is a block, which is what `_entity` below already does with
-a note's prose and what `truncation.HINT_SEPARATOR` already does with the truncation hint — the same
-device, for the same reason, in the third place a footer needed one.
+A blank line rather than a single newline, for one reason: a trailing block must not be readable as
+another row. ``2 notes`` on the line directly under a table of two notes is a third row to anything
+that split the output on newlines, and the consumer most likely to do that is the agent this whole
+layer exists for. Separated by a blank line it is a block, which is what `_entity` below already
+does with a note's prose and what `truncation.HINT_SEPARATOR` already does with the truncation hint
+— the same device, for the same reason, now in every place a trailing block needed one.
 
-A structured consumer never meets this: it reads ``summary`` out of the object."""
+It was ``SUMMARY_GAP`` until KAN-550, when a second trailing block arrived and was joined by the
+same separator. One constant rather than two of equal value: two would eventually be given different
+values by someone who found only one of them.
+
+A structured consumer meets none of this. It reads ``summary`` out of the object, and gets no help
+templates at all — see `hints` for why those are `human`'s alone."""
 
 
 class Format(StrEnum):
@@ -175,19 +182,28 @@ def _as_toon(shaped: Shaped) -> str:
 
 
 def _as_human(shaped: Shaped) -> str:
-    """A collection as a table with contract 5's footer under it; one note as a block.
+    """The result, then contract 5's footer, then contract 8's hints — the blocks that apply.
 
-    The footer is `aggregates.summary_line` — the summary *dict* rendered, not the records recounted
-    — so the line a person reads and the object a structured consumer receives cannot disagree about
-    the number. ``None`` covers both the entity (no summary exists) and the empty collection (whose
-    zero state is `_rows`' own ``no notes``), so this function needs no case for either.
+    Three sources, one join, and **every one of them decides for itself whether it has anything to
+    say**. `aggregates.summary_line` returns ``None`` for an entity (no summary exists) and for an
+    empty collection (whose zero state is `_rows`' own ``no notes``); `hints.help_block` returns
+    ``None`` for a payload the registry has no row for. So this function has no case for either and
+    cannot acquire one by a later card adding a kind of result.
+
+    **This is the only function in the package that emits a help template**, which is what makes ADR
+    0005's "suppressed under structured formats" a fact about where the call is rather than a rule
+    someone follows: `_as_json`, `_as_toon` and `_as_data` render `Shaped.as_dict()`, and there is
+    no hint in it to leave out. See `hints` for why a help template is `human`'s and a truncation
+    hint is everyone's.
     """
-    if shaped.payload.kind is not Kind.COLLECTION:
-        return _entity(shaped)
+    payload = shaped.payload
+    body = _rows(shaped) if payload.kind is Kind.COLLECTION else _entity(shaped)
 
-    table = _rows(shaped)
-    line = summary_line(shaped)
-    return table if line is None else f"{table}{SUMMARY_GAP}{line}"
+    # The payload rather than the `Shaped`: the templates are a function of `kind` and `noun` and of
+    # nothing that shaping produced, which is the same statement `attach_summary`'s arity makes from
+    # the other direction.
+    trailing = (summary_line(shaped), help_block(payload))
+    return BLOCK_GAP.join([body, *(block for block in trailing if block is not None)])
 
 
 def _rows(shaped: Shaped) -> str:

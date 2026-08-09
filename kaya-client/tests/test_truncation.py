@@ -27,7 +27,7 @@ a pin restated by the slice it exists to constrain is not a pin.
 import json
 
 import pytest
-from conftest import GROCERIES, note_collection, note_entity
+from conftest import GROCERIES, note_collection, note_entity, without_help
 from toon_decode import decode as decode_toon
 
 from kaya_client import DEFAULT_TEXT_LIMIT, Payload, render, truncate
@@ -53,8 +53,9 @@ def test_a_long_body_is_cut_to_the_limit() -> None:
     amount of prose a caller gets depend on how long the note was, which is the opposite of what a
     limit is for.
     """
-    rendered = render(prose_payload(), text_limit=100)
-    assert isinstance(rendered, str)
+    # `without_help`: KAN-550 appends a `help:` block after the hint, which would otherwise land
+    # inside `body` here and be read as part of the prose this test is measuring.
+    rendered = without_help(render(prose_payload(), text_limit=100))
 
     body = rendered.split("\n\n", 1)[1]
     text, marker = body.split(HINT_SEPARATOR)
@@ -373,7 +374,7 @@ def test_a_truncated_entity_puts_the_hint_after_the_prose() -> None:
     disturbing a byte of the block above it" means, and it is the reason `serialization._entity`
     prints prose unlabelled and last.
     """
-    lines = str(render(prose_payload(), text_limit=20)).splitlines()
+    lines = without_help(render(prose_payload(), text_limit=20)).splitlines()
 
     assert lines[0] == "ref         NOTE-12"
     assert lines[-1] == hint(1200, "body")
@@ -388,14 +389,15 @@ def test_a_truncated_cell_is_one_line_and_the_grid_holds() -> None:
     `get` renders as one line here — no branch in either module, and the columns stay aligned. A
     hint that broke the grid would be a bug in a table nobody looks at closely.
 
-    The table is separated from KAN-548's summary footer before the rows are counted, because "the
-    hint stayed on one line" is a claim about the *rows* and would otherwise be broken by a line
-    that has nothing to do with truncation.
+    The table is separated from KAN-548's summary footer and KAN-550's `help:` block before the
+    rows are counted, because "the hint stayed on one line" is a claim about the *rows* and would
+    otherwise be broken by lines that have nothing to do with truncation.
     """
     payload = note_collection(
         {**GROCERIES, "body": "m" * 30}, {"ref": "NOTE-3", "title": "Short", "body": "hi"}
     )
-    table, footer = str(render(payload, fields=["ref", "body"], text_limit=10)).split("\n\n")
+    rendered = without_help(render(payload, fields=["ref", "body"], text_limit=10))
+    table, footer = rendered.split("\n\n")
     rows = table.splitlines()
 
     assert len(rows) == 2

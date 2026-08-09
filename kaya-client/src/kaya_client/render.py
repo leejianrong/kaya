@@ -11,12 +11,14 @@ and does not touch this one.
 
     render(payload, *, fields=None, text_limit=500, fmt="human") -> str | dict
 
-ADR 0005's sequencing rule says this signature has to absorb V2b without moving. **Three V2b items
-have now landed and this file's diff for all three is docstring** — projection went live entirely
+ADR 0005's sequencing rule says this signature has to absorb V2b without moving. **Four V2b items
+have now landed and this file's diff for all four is docstring** — projection went live entirely
 inside `projection`, including the single-entity refusal that the list below predicted would be the
-one to force a fifth parameter; truncation went live entirely inside `truncation`, hint and all; and
-the aggregate went live entirely inside `aggregates`, which needed no argument because it is handed
-the very records it describes. Taking V2b's build plan item by item:
+one to force a fifth parameter; truncation went live entirely inside `truncation`, hint and all; the
+aggregate went live entirely inside `aggregates`, which needed no argument because it is handed the
+very records it describes; and KAN-550's ``help[]`` templates went live entirely inside `hints`,
+which needed no argument because ``payload.kind`` and ``payload.noun`` are the only two facts a
+template is keyed on. Taking V2b's build plan item by item:
 
 - **``--fields a,b,c``, vocabulary from the payload's own keys.** ``fields`` is here; the vocabulary
   is ``Payload.field_names()``, which is already derived from the records rather than from a list
@@ -39,6 +41,14 @@ the very records it describes. Taking V2b's build plan item by item:
   "the returned set and not the corpus" is a property of what is *in scope* rather than a rule
   somebody follows. The ordering below is what makes "after truncation" true, and the
   ``Payload``/``Shaped`` type split is what makes it unfalsifiable.
+- **``help[]`` next-step templates, per verb.** Landed in KAN-550, and "per verb" is the phrase that
+  looked like it needed a fifth parameter: there is no verb name here, and adding one would have
+  been ADR 0005's stop signal rather than a step. It did not, because a verb's *result* is what a
+  next step follows from — ``(payload.kind, payload.noun)`` distinguishes a list of notes from one
+  note and both from `config show`, which is exactly the granularity the templates are written at.
+  The templates are also **not a fifth pipeline step**: they are suppressed under the structured
+  formats (SLICES §V2b), so they are printed by `serialization._as_human` and never attached to the
+  shaped dict — the same shape `aggregates.summary_line` already had for a footer.
 
 The one thing V2b will find missing is deliberate: there is no ``full=True`` flag, because ADR
 0005's ``--full`` already has a spelling here (``text_limit=0``) and two spellings of one state is
@@ -97,6 +107,11 @@ def render(
     (KAN-548) — a trailing ``2 notes`` under ``human``, a ``summary`` key under everything else.
     That is the one thing this card did change about a default render, and
     ``tests/test_human_row_is_pinned.py`` records which bytes moved and which did not.
+
+    Under ``human`` **and only under ``human``**, the result is followed by ADR 0005 §contract 8's
+    ``help:`` templates (KAN-550) — next steps with their placeholders unfilled, keyed on the
+    payload's ``kind`` and ``noun``. `json`, `toon` and `data` carry none: see `hints` for why this
+    dimension is the human's alone where KAN-547's truncation hint is everybody's.
     """
     if not isinstance(payload, Payload):
         raise TypeError(

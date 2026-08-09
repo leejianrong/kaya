@@ -21,7 +21,7 @@ import json
 from typing import Any
 
 import pytest
-from conftest import GROCERIES, READING_LIST, note_collection, note_entity
+from conftest import GROCERIES, READING_LIST, note_collection, note_entity, without_help
 from toon_decode import decode as decode_toon
 
 from kaya_client import (
@@ -95,8 +95,8 @@ def test_the_human_footer_and_the_structured_object_report_one_number(size: int)
     being the same computation, which they are — `aggregates.summary_line` reads the mapping.
     """
     payload = note_collection(*CORPUS[:size])
-    human = render(payload)
-    assert isinstance(human, str)
+    # KAN-550 put a `help:` block under the footer, so the last block is no longer the footer.
+    human = without_help(render(payload))
 
     footer = human.split("\n\n")[-1]
     assert int(footer.split()[0]) == _count(render(payload, fmt="data")) == size
@@ -107,8 +107,7 @@ def test_the_footer_is_a_block_under_the_table_and_not_another_row(notes: Payloa
 
     The same device `_entity` uses for a note's prose and `truncation` for its hint.
     """
-    rendered = render(notes)
-    assert isinstance(rendered, str)
+    rendered = without_help(render(notes))
     table, footer = rendered.split("\n\n")
 
     assert len(table.splitlines()) == 2
@@ -121,8 +120,8 @@ def test_one_note_is_singular_and_two_are_plural() -> None:
     `KayaClient` attached both at the call, so a future envelope whose plural is irregular is right
     without this function learning any English.
     """
-    assert str(render(note_collection(GROCERIES))).endswith("\n\n1 note")
-    assert str(render(note_collection(GROCERIES, READING_LIST))).endswith("\n\n2 notes")
+    assert without_help(render(note_collection(GROCERIES))).endswith("\n\n1 note")
+    assert without_help(render(note_collection(GROCERIES, READING_LIST))).endswith("\n\n2 notes")
 
 
 def test_the_summary_reaches_every_structured_format(notes: Payload) -> None:
@@ -182,7 +181,7 @@ def test_an_empty_result_still_prints_a_definitive_zero_state() -> None:
     string, which is indistinguishable from a crashed pipe — and a footer repeating it in digits
     would be the same fact twice in two spellings.
     """
-    assert render(note_collection()) == "no notes"
+    assert without_help(render(note_collection())) == "no notes"
     assert summary_line(attach_summary(note_collection())) is None
 
 
@@ -260,7 +259,7 @@ def test_projection_does_not_change_the_count(notes: Payload) -> None:
     """
     for fields in (["ref"], ["ref", "title"], ["id", "created_at"]):
         assert _count(render(notes, fields=fields, fmt="data")) == 2
-        assert str(render(notes, fields=fields)).endswith("\n\n2 notes")
+        assert without_help(render(notes, fields=fields)).endswith("\n\n2 notes")
 
 
 def test_a_narrowed_read_still_carries_the_summary_beside_the_envelope(notes: Payload) -> None:
@@ -273,7 +272,7 @@ def test_a_narrowed_read_still_carries_the_summary_beside_the_envelope(notes: Pa
 def test_an_empty_narrowed_read_is_still_the_zero_state() -> None:
     """The composition of two rules from two cards: an empty payload validates no vocabulary
     (KAN-546) and its zero state is a sentence rather than a footer (this one)."""
-    assert render(note_collection(), fields=["ref", "anything"]) == "no notes"
+    assert without_help(render(note_collection(), fields=["ref", "anything"])) == "no notes"
 
 
 # --------------------------------------------------------------------------- the type chain

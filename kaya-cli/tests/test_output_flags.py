@@ -10,13 +10,17 @@ one order right by accident.
 import json
 
 import pytest
-from conftest import GROCERIES, NOTES
+from conftest import GROCERIES, LIST_HELP, NOTES
 from kaya_client import CLI_FORMATS
 
 from kaya_cli.__main__ import build_parser, main
 
-LIST_ROWS = "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list\n\n2 notes"
-"""`kaya-client/tests/test_human_row_is_pinned.py`'s literal, footer included since KAN-548."""
+LIST_ROWS = (
+    "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list\n\n2 notes\n\n"
+    + LIST_HELP
+)
+"""`kaya-client/tests/test_human_row_is_pinned.py`'s literal — footer since KAN-548, ``help:``
+block since KAN-550."""
 
 LISTED = {**NOTES, "summary": {"count": 2}}
 """What a structured `note list` carries: the API's own envelope plus ADR 0005 §contract 5's
