@@ -67,7 +67,7 @@ def test_get_note_returns_an_entity_payload() -> None:
     assert payload.record == GROCERIES
 
 
-@pytest.mark.parametrize("ref", ["NOTE-12", "note-12", "12", "#NOTE-12"])
+@pytest.mark.parametrize("ref", ["NOTE-12", "note-12", "12"])
 def test_a_ref_is_forwarded_untouched(ref: str) -> None:
     """ADR 0008 resolves every spelling in **one** place, `backend/app/api/refs.py`.
 
@@ -78,7 +78,43 @@ def test_a_ref_is_forwarded_untouched(ref: str) -> None:
     handler = responder(200, GROCERIES)
     with client_over(handler) as client:
         client.get_note(ref)
-    assert str(handler.seen.url).endswith(f"/notes/{ref}")  # type: ignore[attr-defined]
+    assert handler.seen.url.path == f"/api/v1/notes/{ref}"  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    ("ref", "sent"),
+    [
+        ("#NOTE-12", "/api/v1/notes/%23NOTE-12"),
+        ("12?q=x", "/api/v1/notes/12%3Fq%3Dx"),
+        ("a/b", "/api/v1/notes/a%2Fb"),
+        ("NOTE 12", "/api/v1/notes/NOTE%2012"),
+        ("NOTE-12", "/api/v1/notes/NOTE-12"),
+    ],
+)
+def test_a_ref_that_is_url_syntax_still_reaches_the_ref_resolver(ref: str, sent: str) -> None:
+    """The bug KAN-541 found the moment a verb could actually send one. **Written failing first.**
+
+    Interpolating a ref into the path *looks* like passing it through and is not: httpx parses the
+    result, so ``#NOTE-12`` became an empty final segment plus a fragment that is never transmitted,
+    ``12?q=x`` became a query string, and ``a/b`` became two segments. Every one of them reached a
+    **different endpoint** than the caller named — ``GET /api/v1/notes/``, which is not even the
+    single-note route — so ADR 0008's promise that ``#NOTE-12`` is a `400` from one resolver was
+    quietly false for every caller of this method.
+
+    The previous version of this test asserted ``str(url).endswith(f"/notes/{ref}")`` and passed,
+    because httpx keeps the fragment in the URL's *string* while never putting it on the wire. That
+    is CLAUDE.md's warning about watching what a mutation actually reaches: the assertion was on a
+    value the request does not send. It is on ``url.path`` now, which is what a server sees.
+    """
+    handler = responder(200, GROCERIES)
+    with client_over(handler) as client:
+        client.get_note(ref)
+
+    # `raw_path` is what goes on the wire; `path` is httpx's decoding of it. Both are asserted
+    # because the claim has two halves: one path segment, and that segment decoding back to the
+    # exact ref the caller typed — which is what `app/api/refs.py` is then handed.
+    assert handler.seen.url.raw_path.decode() == sent  # type: ignore[attr-defined]
+    assert handler.seen.url.query == b""  # type: ignore[attr-defined]
 
 
 def test_the_bearer_is_forwarded_byte_for_byte() -> None:

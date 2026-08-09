@@ -22,8 +22,15 @@ function" risk that ADR flags against itself has somewhere to be tested apart:
     projection.py  truncation.py  aggregates.py       serialization.py
 
 Two format vocabularies, because two audiences: ``Format`` is what a person may type after
-``--format`` and is therefore a published contract; ``AdapterFormat`` (``data``) is what an in-tree
-adapter asks for in code. ``CLI_FORMATS`` is the first as a tuple, ready for argparse's ``choices``.
+``--format`` — ``human``, ``json`` and, since KAN-541, ``toon`` — and is therefore a published
+contract; ``AdapterFormat`` (``data``) is what an in-tree adapter asks for in code. ``CLI_FORMATS``
+is the first as a tuple, ready for argparse's ``choices``. The ``toon`` encoder is in `toon`,
+stdlib-only and **encode-only**: the round-trip contract is proven by a decoder that lives in
+``tests/``, because nothing in the product reads TOON back.
+
+``config`` resolves PLAN §Config's ``KAYA_API_URL`` and ``KAYA_TOKEN`` from the environment and
+hands back a ``KayaClient``, so both adapters agree about which deployment they are talking to. Its
+file tiers and the ``config`` verbs are V2b's.
 
 **Failures render through the same layer** (KAN-542). ``render_error(failure, fmt=…)`` produces ADR
 0005 §contract 3's ``error<TAB>code<TAB>message<TAB>arg`` row or the ``{"error": {…}}`` object, with
@@ -40,14 +47,15 @@ behaviour on purpose — if a later card needs this signature to change, that is
 sequencing broke, not a reason to push through. ``render``'s module docstring argues requirement by
 requirement why V2b lands on it unmoved.
 
-Still to come: ``toon`` and the ``--format`` flag (KAN-541), the shaping behaviour (V2b), the write
-verbs (V2b), search and links (KAN-558/559, KAN-566).
+Still to come: the shaping behaviour (V2b), the write verbs (V2b), search and links (KAN-558/559,
+KAN-566).
 """
 
 from importlib.metadata import PackageNotFoundError, version
 
 from kaya_client.aggregates import attach_summary
 from kaya_client.client import KayaClient
+from kaya_client.config import API_URL_ENV, TOKEN_ENV, api_url, open_client
 from kaya_client.errors import (
     ARG_KEY,
     CODE_KEY,
@@ -55,6 +63,7 @@ from kaya_client.errors import (
     MESSAGE_KEY,
     ApiError,
     KayaError,
+    MissingCredential,
     TransportError,
     UnknownFormat,
     UsageError,
@@ -81,6 +90,7 @@ except PackageNotFoundError:  # pragma: no cover - source checkout without an in
     __version__ = "0.0.0"
 
 __all__ = [
+    "API_URL_ENV",
     "ARG_KEY",
     "CLI_FORMATS",
     "CODE_KEY",
@@ -90,21 +100,25 @@ __all__ = [
     "MESSAGE_KEY",
     "ROW_SEPARATOR",
     "SOURCE_CHECKOUT",
+    "TOKEN_ENV",
     "AdapterFormat",
     "ApiError",
     "Format",
     "KayaClient",
     "KayaError",
     "Kind",
+    "MissingCredential",
     "Payload",
     "Shaped",
     "TransportError",
     "UnknownFormat",
     "UsageError",
     "__version__",
+    "api_url",
     "attach_summary",
     "build_sha",
     "error_payload",
+    "open_client",
     "project",
     "render",
     "render_error",

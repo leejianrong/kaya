@@ -54,19 +54,19 @@ def test_help_is_printed_to_stdout_and_exits_zero(capsys) -> None:
 
 
 def test_a_verb_that_has_not_landed_yet_is_a_usage_error(capsys) -> None:
-    """KAN-541 brings `note list` and `note get`. Until then argparse says the word is unknown.
+    """`note list` and `note get` landed in KAN-541. A word that has not is still unknown.
 
-    This is a deliberate change from the banner-for-everything placeholder that stood here before
-    argument parsing existed: exiting `0` on a command that did nothing is the kind of quiet
-    success a script cannot tell from a real one. `2` is SLICES §V2a's number for a usage error, and
-    KAN-542's code table did land on it unmoved — the number below now comes from
-    `failures.EXIT_FOR_CODE["usage"]` rather than from argparse, and `test_error_reporting.py` owns
-    the stdout half of the same event.
+    This assertion has survived three shapes: a placeholder that returned `0` for everything, then
+    KAN-543's "`note list` is not a verb yet", and now `note archive`. The invariant it has always
+    been about is the one that matters — exiting `0` on a command that did nothing is the kind of
+    quiet success a script cannot tell from a real one. `2` is SLICES §V2a's number for a usage
+    error, and it comes from `failures.EXIT_FOR_CODE["usage"]` rather than from argparse.
+    `test_verbs.py` owns which words *do* exist; `test_error_reporting.py` owns the stdout half.
     """
-    code = main(["note", "list"])
+    code = main(["note", "archive"])
 
     assert code == 2
-    assert "note" in capsys.readouterr().err
+    assert "archive" in capsys.readouterr().err
 
 
 def test_there_is_exactly_one_console_script_and_it_is_named_kaya() -> None:

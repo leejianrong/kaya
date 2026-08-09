@@ -1,7 +1,6 @@
 # kaya-cli
 
-The `kaya` console script. Distribution name `kaya-notes`, one entry point, no verbs yet — but argv
-is parsed now, and a failure already leaves through the contract every verb will use.
+The `kaya` console script. Distribution name `kaya-notes`, one entry point, two read verbs.
 
 ```bash
 uv sync --all-extras
@@ -11,6 +10,60 @@ uv run kaya --nope     # usage on stderr, `error<TAB>usage<TAB>…` on stdout, e
 uv run pytest -q
 uv run ruff check .
 ```
+
+## The verbs (KAN-541)
+
+```console
+$ export KAYA_TOKEN=…                      # a pandan PAT. KAYA_API_URL defaults to :8000
+$ kaya note list
+NOTE-12  Groceries       home/groceries.md
+NOTE-3   A reading list
+
+$ kaya note get NOTE-12 --format json
+{"ref":"NOTE-12","id":12,"title":"Groceries",…}
+
+$ kaya note list --format toon
+notes[2]{ref,id,title,body,path,created_at,updated_at}:
+  NOTE-12,12,Groceries,"milk\neggs",home/groceries.md,…
+  NOTE-3,3,A reading list,"","",…
+```
+
+`note get` takes `NOTE-12`, `note-12` or bare `12`, and passes whichever you typed to the API's one
+ref resolver ([ADR 0008](../docs/adr/0008-note-identity.md)) rather than normalising it here.
+
+Reads only. `note create`, `edit`, `move` and `delete` are V2b's, and until they land they are usage
+errors — a CLI that quietly accepted a verb it does not have would report success for work it never
+did.
+
+### `--format {human,json,toon}`, and `--json`
+
+[ADR 0005](../docs/adr/0005-born-agent-conformant.md) §contract 1: one serializer in `kaya-client`,
+so the formats cannot drift. `--json` is a documented alias for `--format json`, and **`--format`
+wins if both are given** — which is why `--format`'s argparse default is `None` rather than
+`"human"`: with a default of `"human"`, "the user typed `--format human`" and "the user typed
+nothing" become the same value and the alias would overrule the flag it is an alias *for*.
+
+`toon` pays for uniform rows and not for a single object. Measured against compact JSON over 40
+notes with `o200k_base` (`kaya-client/scripts/measure_toon_delta.py`): `note list` **−11.3%**,
+`note get` **+1.4%**. Use it for lists; `json` is not worse for a single read.
+
+Errors render in the requested format too, so a consumer that asked for JSON does not get a
+tab-separated row on the one line it most needed to parse.
+
+### Configuration
+
+Two environment variables, resolved in `kaya-client`'s `config.py` so that V6's MCP server reads
+exactly the same two (PLAN §Config):
+
+| | |
+|---|---|
+| `KAYA_TOKEN` | A pandan PAT. **Required** — ADR 0002 gives kaya no way to mint one. Missing → `error<TAB>no_credential<TAB>…<TAB>KAYA_TOKEN` on stdout, exit `1` |
+| `KAYA_API_URL` | The deployment. Defaults to `http://localhost:8000`, which is what `make up` serves |
+
+A missing token is exit `1`, not `3`: nothing was refused, because nothing was asked, and a script
+reacting to `3` would mint a PAT to fix a missing line of configuration. No verb ever prompts —
+there is no `input()` and no tty branch anywhere in this package (ADR 0005 §contract 9), so an
+unconfigured invocation behind a pipe answers instead of hanging.
 
 ## Is my build stale?
 
@@ -89,5 +142,13 @@ version of "all keys always present".
 `main`, never argparse's `action="version"`, so its exit `0` is a value `main` returns rather than a
 `SystemExit` raised from inside a parser.
 
-`--format {human,json,toon}` and the verbs arrive with KAN-541, which hangs subparsers off
-`build_parser()` and passes `--format`'s value into `failures.report(..., fmt=…)`.
+KAN-541 hung its subparsers off `build_parser()` and passes `--format`'s resolved value into
+`failures.report(..., fmt=…)`, so a `404` under `--format json` is the client's error object
+unedited. The format is resolved *after* the parse and *before* the verb: a failure from the verb is
+reported in the format the user asked for, and a failure from the parse is reported in `human`,
+because argv never got far enough to name one.
+
+`tests/test_failure_classes.py` proves all six of SLICES §V2a's classes end to end — unknown flag
+(2), invalid enum (2), missing token (1), 404 (5), 401 (3), 403 (4) — each asserting stream, shape
+and exit code together, against an `httpx.MockTransport`. KAN-542 could only assert them at the
+seam, because it had no verbs to produce one.

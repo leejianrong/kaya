@@ -27,7 +27,7 @@ from kaya_client import (
 )
 from kaya_client.serialization import _SERIALIZERS
 
-STRING_FORMATS = ["human", "json"]
+STRING_FORMATS = ["human", "json", "toon"]
 
 
 def test_data_returns_the_shaped_dict_itself(notes: Payload) -> None:
@@ -94,16 +94,17 @@ def test_json_does_not_escape_non_ascii() -> None:
     assert "咖椰吐司" in encoded
 
 
-@pytest.mark.parametrize("fmt", ["toon", "yaml", "HUMAN", "", "csv"])
+@pytest.mark.parametrize("fmt", ["yaml", "HUMAN", "TOON", "", "csv"])
 def test_an_unknown_format_names_what_it_knows(notes: Payload, fmt: str) -> None:
-    """Including ``toon``, which is KAN-541's and is deliberately not registered as a raising stub.
+    """The message lists the published vocabulary, which is now three names.
 
-    Two ways for a format to be unavailable would mean two branches in every adapter. There is one:
-    it is not in the registry until 541 puts it there.
+    ``HUMAN`` and ``TOON`` are in the list on purpose: ``Format`` is a ``StrEnum`` of lowercase
+    values and the lookup is exact, so a shouted format is a typo and must be refused like one
+    rather than quietly matched.
     """
     with pytest.raises(UnknownFormat) as raised:
         render(notes, fmt=fmt)
-    assert "human, json" in str(raised.value)
+    assert "human, json, toon" in str(raised.value)
 
 
 def test_the_unknown_format_message_does_not_advertise_an_adapter_format(notes: Payload) -> None:
@@ -123,7 +124,7 @@ def test_unknown_format_is_a_value_error(notes: Payload) -> None:
     """So an adapter maps it to ADR 0005's exit `2` (usage) without importing this package's base.
     """
     with pytest.raises(ValueError, match="unknown format"):
-        render(notes, fmt="toon")
+        render(notes, fmt="hunan")
 
 
 def test_data_is_registered_but_not_user_facing() -> None:
@@ -140,13 +141,13 @@ def test_data_is_registered_but_not_user_facing() -> None:
 def test_the_published_cli_vocabulary_is_pinned() -> None:
     """A literal, so publishing a format is a **conscious edit** rather than a side effect.
 
-    This is the tripwire for KAN-541. Adding ``toon`` to ``Format`` reddens this test and 541 has to
-    write ``("human", "json", "toon")`` — which is SLICES §V2a's published contract, checked against
-    the doc by a human at that moment. Making ``data`` user-facing by accident reddens it too.
+    It did its job for KAN-541: adding ``toon`` to ``Format`` reddened this line, and 541 had to
+    write the tuple below out by hand and check it against SLICES §V2a's published
+    ``{human, json, toon}``. Making ``data`` user-facing by accident reddens it too.
 
     ``human`` first: it is ``render``'s default and argparse prints ``choices`` in order.
     """
-    assert CLI_FORMATS == ("human", "json")
+    assert CLI_FORMATS == ("human", "json", "toon")
 
 
 def test_every_user_facing_format_actually_renders(notes: Payload) -> None:

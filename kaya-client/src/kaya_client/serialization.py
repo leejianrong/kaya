@@ -23,19 +23,21 @@ thing — and ADR 0005's whole lesson is that a contract published early cannot 
 Pandan spent a whole card (KAN-442) withdrawing a ``pdn`` alias; ten lines here is the same trade
 this slice exists to make.
 
-**KAN-541 adds ``toon`` to both ``_SERIALIZERS`` and ``Format``** — the registry so it renders, the
-enum so it is offered. ``tests/test_serialization.py`` fails if it lands in only one of them, and
-the literal pin on ``CLI_FORMATS`` there makes publishing it a conscious edit rather than a side
-effect.
+**KAN-541 added ``toon`` to both ``_SERIALIZERS`` and ``Format``** — the registry so it renders, the
+enum so it is offered — and to ``_ERROR_SERIALIZERS`` at the bottom of this module, so a refusal
+renders in it too. ``tests/test_serialization.py`` fails if it lands in only one of them, and the
+literal pin on ``CLI_FORMATS`` there made publishing it a conscious edit rather than a side effect.
 
-### Which formats exist today, and why ``toon`` does not
+### Which formats exist, and which audience each is for
 
-``human`` and ``json`` are user-facing; ``data`` is adapter-facing. ``toon`` is KAN-541's, along
-with the ``--format`` flag it is reached through and the decoder that proves its round trip. It
-is not registered here as a stub that raises, because then there would be two ways for a format to
-be unavailable and an adapter would have to handle both. It is simply not a known format yet, and
-``render(payload, fmt="toon")`` raises the same ``UnknownFormat`` as a typo would until 541
-registers it.
+``human``, ``json`` and ``toon`` are user-facing; ``data`` is adapter-facing. Adding a fourth
+user-facing format is four edits — ``Format``, ``_SERIALIZERS``, ``_ERROR_SERIALIZERS``, and the
+literal in ``tests/test_serialization.py`` — and every one of them is guarded by a test that fails
+loudly rather than by a note somebody has to read.
+
+``toon`` deliberately arrived as a *registration* rather than as a stub that raises: two ways for a
+format to be unavailable would mean two branches in every adapter. Before KAN-541 it was simply not
+a known format, and ``render(payload, fmt="toon")`` raised the same ``UnknownFormat`` a typo does.
 
 ### ``data``, and what makes ``render``'s ``-> str | dict`` precise
 
@@ -61,6 +63,11 @@ format a person reads; ``json`` is the format a script or an agent reads, and it
 to a parser either way. Sixteen percent for whitespace nobody looks at is the wrong trade in a
 package whose entire reason for existing is that number.
 
+It is also what makes ``toon``'s measurement honest. ``scripts/measure_toon_delta.py`` compares
+``toon`` against **this** — compact JSON, the thing the flag actually competes with — rather than
+against an indented baseline that would flatter it by sixteen percent before the encoder did
+anything at all.
+
 ### Errors serialize here too, over the same vocabulary
 
 ADR 0005 §contract 3 is an *output* contract, and V43's record in ADR 0005's context section is
@@ -82,6 +89,7 @@ from typing import Any
 
 from kaya_client.errors import ARG_KEY, CODE_KEY, MESSAGE_KEY, UnknownFormat
 from kaya_client.payloads import Kind, Shaped
+from kaya_client.toon import encode as encode_toon
 
 COLUMN_GAP = "  "
 """Two spaces between columns. Fixed, because the default human row is pinned byte-identically."""
@@ -95,11 +103,13 @@ class Format(StrEnum):
     ``AdapterFormat`` and are absent from here on purpose: iterating this enum for an argparse
     ``choices`` list is the obvious thing to write, and it has to be the right thing to write.
 
-    ``toon`` joins this enum in KAN-541, at the same time as it joins ``_SERIALIZERS``.
+    Declaration order is the order argparse prints ``choices`` in, so ``human`` — ``render``'s
+    default — leads.
     """
 
     HUMAN = "human"
     JSON = "json"
+    TOON = "toon"
 
 
 class AdapterFormat(StrEnum):
@@ -138,6 +148,17 @@ def _as_json(shaped: Shaped) -> str:
     # triples its byte cost and makes the output unreadable in the one format meant to be piped to
     # something that will print it.
     return json.dumps(shaped.as_dict(), ensure_ascii=False, separators=(",", ":"))
+
+
+def _as_toon(shaped: Shaped) -> str:
+    """The same shaped dict as ``_as_json``, in TOON. See `kaya_client.toon` for what that is.
+
+    One line of code, and that is the point of the module docstring's argument: a format is a
+    function in a registry. The encoder knows nothing about notes and the shaping steps know nothing
+    about TOON, so the win on a uniform `note list` is a property of the *payload* rather than of a
+    rule someone wrote for it.
+    """
+    return encode_toon(shaped.as_dict())
 
 
 def _as_human(shaped: Shaped) -> str:
@@ -220,11 +241,12 @@ def _cell(value: Any) -> str:
 _SERIALIZERS: dict[str, Callable[[Shaped], Any]] = {
     Format.HUMAN: _as_human,
     Format.JSON: _as_json,
+    Format.TOON: _as_toon,
     AdapterFormat.DATA: _as_data,
 }
 """The **full** registry, user-facing and adapter-facing alike. One entry per format, so "one
-serializer" is a fact about this dict rather than a claim in a doc. KAN-541 adds ``toon`` here *and*
-to ``Format``; a format in this dict is merely renderable, not advertised."""
+serializer" is a fact about this dict rather than a claim in a doc. A format in this dict is merely
+renderable, not advertised; what advertises it is membership of ``Format``."""
 
 CLI_FORMATS: tuple[str, ...] = tuple(fmt.value for fmt in Format)
 """What ``--format`` may be given, in declaration order — ``human`` first because it is the default.
@@ -281,6 +303,13 @@ def _error_as_json(payload: Mapping[str, Any]) -> str:
     return json.dumps(_error_as_data(payload), ensure_ascii=False, separators=(",", ":"))
 
 
+def _error_as_toon(payload: Mapping[str, Any]) -> str:
+    """A refusal in TOON. Not a saving — one error object has no uniform rows to dedupe — but a
+    consumer that asked for ``--format toon`` gets one document grammar for both outcomes, which is
+    worth more on the failure path than four tokens are."""
+    return encode_toon(_error_as_data(payload))
+
+
 def _error_as_human(payload: Mapping[str, Any]) -> str:
     """``error<TAB><code><TAB><message><TAB><arg>`` — one line, always four fields.
 
@@ -312,10 +341,12 @@ def _one_line(value: Any) -> str:
 _ERROR_SERIALIZERS: dict[str, Callable[[Mapping[str, Any]], Any]] = {
     Format.HUMAN: _error_as_human,
     Format.JSON: _error_as_json,
+    Format.TOON: _error_as_toon,
     AdapterFormat.DATA: _error_as_data,
 }
 """One entry per format, and **the same keys as ``_SERIALIZERS``** — pinned by a test.
 
 A format that could render a note list but not a refusal would fail exactly when the user most
 needs output, and it would fail as a ``UnknownFormat`` raised from inside an error handler, which
-reads as a client bug rather than as a missing encoder. KAN-541 adds ``toon`` to both dicts."""
+reads as a client bug rather than as a missing encoder. That test is what made KAN-541 register
+``toon`` in both dicts rather than in the one it was thinking about."""

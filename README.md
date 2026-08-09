@@ -5,10 +5,11 @@ half of the `kayatoast` suite, sibling to [pandan](https://github.com/leejianron
 board. Where pandan tracks *work*, kaya holds the *knowledge*: specs, notes, runbooks, meeting notes,
 cross-linked to the board.
 
-> **Status: the API works; the product doesn't exist yet.** A pandan PAT creates, reads, edits and
-> deletes notes over `/api/v1/notes`, and the whole stack ships as one container image serving the
-> SPA and the API from a single origin. The SPA itself is still a shell, and the shared client, the
-> `kaya` CLI and the MCP adapter are still empty.
+> **Status: the API works and the CLI reads; the product doesn't exist yet.** A pandan PAT creates,
+> reads, edits and deletes notes over `/api/v1/notes`, and the whole stack ships as one container
+> image serving the SPA and the API from a single origin. `kaya note list` and `kaya note get` read
+> those notes from a shell in `human`, `json` or `toon`. The SPA is still a shell, the write verbs
+> are V2b's, and the MCP adapter is still empty.
 > See [`docs/PLAN.md`](docs/PLAN.md) for what is being built,
 > [`docs/SLICES.md`](docs/SLICES.md) for the order, and [`CLAUDE.md`](CLAUDE.md) for what is
 > genuinely in each package today. Work is tracked on pandan board 18.

@@ -34,6 +34,13 @@ Four things live here, and the last two are small only in line count:
   the build stamp behind them. Small, but here for the same reason as `render`: both adapters print
   provenance and neither may own the wording.
 
+- **`config.py`** — PLAN §Config's environment tier (`KAYA_API_URL`, `KAYA_TOKEN`) and
+  `open_client()`, the one call an adapter makes to get a session. Here rather than in `kaya-cli`
+  because V6's MCP server started from the same shell must reach the same deployment; the file tiers
+  and the `config {set,show,path}` verbs are V2b's. It never logs, echoes or returns what it
+  resolved — `MissingCredential` names the *variable*, never a value, because a truncated token is
+  still a token (Q41/Q42).
+
 ```bash
 uv sync --all-extras
 uv run pytest -q
@@ -42,12 +49,12 @@ uv run ruff check .
 
 ## What is and is not implemented
 
-**KAN-540 (V2a) implements the `fmt` dimension only**, per ADR 0005's sequencing rule: the
-signature lands before the behaviour goes inside it.
+**V2a implements the `fmt` dimension only**, per ADR 0005's sequencing rule: the signature lands
+before the behaviour goes inside it.
 
 | | Today |
 |---|---|
-| `fmt` | User-facing: `human`, `json`. Adapter-facing: `data`. `toon` is KAN-541's and is simply not registered yet. `_ERROR_SERIALIZERS` has the same keys as `_SERIALIZERS`, pinned by a test, so a format cannot render a note list but not a `404` |
+| `fmt` | User-facing: `human`, `json`, `toon`. Adapter-facing: `data`. `_ERROR_SERIALIZERS` has the same keys as `_SERIALIZERS`, pinned by a test, so a format cannot render a note list but not a `404` |
 | `fields` | Accepted, shape-validated, **no-op**. Vocabulary checking is V2b |
 | `text_limit` | Accepted, shape-validated, **no-op**. `0` will mean `--full` |
 | `summary` | Never attached. `Shaped` already carries the slot |
@@ -73,9 +80,48 @@ and every other format returns a string. It exists so V6's MCP adapter can hand 
 `structuredContent` without `json.loads(render(..., fmt="json"))` — a shaping decision leaking out
 of this package one careless line at a time. It is an argument passed in code, never a flag value.
 
-**KAN-541 adds `toon` to both `_SERIALIZERS` and `Format`.** `test_the_published_cli_vocabulary_is_pinned`
-holds a literal, so publishing a format is a conscious edit rather than a side effect of registering
-one, and the tests either side of it catch a format landing in only one of the two.
+**KAN-541 added `toon` to `_SERIALIZERS`, `_ERROR_SERIALIZERS` and `Format`.**
+`test_the_published_cli_vocabulary_is_pinned` holds a literal, so publishing a format is a conscious
+edit rather than a side effect of registering one, and the tests either side of it catch a format
+landing in only some of the three.
+
+## `toon`, and what it is worth
+
+[TOON](https://toonformat.dev/) is JSON's data model in a YAML-shaped, key-deduplicating syntax: an
+array of uniform objects prints its field names once in a header and then one row per element. That
+is exactly `note list`.
+
+`toon.py` is **stdlib-only and encode-only**. Nothing in the product reads TOON back, so a decoder
+would be untested weight in a wheel and in a release binary; the round-trip contract SLICES §V2a
+asks for — "the `toon` output parses back to data **equal** to the `json` output" — is proven by a
+decoder that lives in `tests/toon_decode.py` and is written against the grammar rather than against
+the encoder's internals. Do not promote it out of `tests/`. The encoder is separately pinned
+byte-for-byte against a fixed corpus, because a round-trip test alone would pass for an encoder that
+invented its own format.
+
+It is a port of pandan's V47 encoder, itself a port of the reference implementation. Copying rather
+than sharing is forced by [ADR 0003](../docs/adr/0003-cross-linking-one-way-soft.md): kaya's
+dependency on pandan is one-way and soft, and a shared encoder package would be a hard build-time
+edge between two products joined by one HTTP call and nothing else.
+
+**It does not always pay.** Measured against compact JSON — what `--format json` actually emits —
+over 40 generated notes with `o200k_base`:
+
+| payload | compact JSON | toon | delta |
+|---|---:|---:|---:|
+| `note list`, full records | 5,226 | 4,637 | **−11.3%** |
+| `note get`, one note | 140 | 142 | **+1.4%** |
+| `note list`, V2b's `ref`/`title`/`path` row | 1,072 | 866 | **−19.2%** |
+
+One object has no repeated keys to dedupe, so `get` costs slightly more — pandan's V47 measured +2%
+for the same shape. Re-run it yourself; the corpus and the tokenizer are arguments:
+
+```bash
+uv run --with tiktoken python scripts/measure_toon_delta.py --markdown
+```
+
+`tiktoken` is supplied for the run only. It must not become a dependency: this package has exactly
+one, and the encoder is stdlib-only.
 
 If a V2b-or-later change needs to alter `render`'s signature, that is a sequencing failure, not a
 reason to push through — `src/kaya_client/render.py`'s docstring argues requirement by requirement

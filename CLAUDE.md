@@ -10,18 +10,16 @@ the API server liked the YAML (ADR 0010).
 | Package | What's in it |
 |---|---|
 | `backend/` | The whole of V1: migration `0001`, `app/auth/` (principal resolver, `authorize_note`), `app/api/` (`/api/v1/notes` CRUD, the central ref resolver, ADR 0009's `409`), `app/spa.py`, `app/observability/` |
-| `kaya-client/` | KAN-540: `KayaClient` over httpx (`list_notes`, `get_note`) and the `render()` seam as four composable steps. Only the `fmt` dimension is implemented — `human`/`json` user-facing, `data` adapter-only; `fields` and `text_limit` are **pinned no-ops**. No `toon`, no write verbs. KAN-543: `provenance.version_line()` and the `_build_stamp.COMMIT` a release rewrites. KAN-542: the failure half of the layer — `error_payload()` / `render_error()`, and a `code` on every exception class so a raise site names a meaning |
-| `kaya-cli/` | The `kaya` console script, one entry point, **no verbs**. KAN-543: an argparse parser with `--version` and `--help` on it. KAN-542: that parser subclassed so it raises instead of exiting, plus `failures.py` (ADR 0005's exit table, and the only place a meaning becomes a number) and `parsing.py` (`usage:` on stderr *and* the structured row on stdout, from one event) |
+| `kaya-client/` | KAN-540: `KayaClient` over httpx (`list_notes`, `get_note`) and the `render()` seam as four composable steps. Only the `fmt` dimension is implemented — `human`/`json`/`toon` user-facing, `data` adapter-only; `fields` and `text_limit` are **pinned no-ops**. KAN-541: `toon.py`, a stdlib-only **encode-only** TOON encoder registered in `Format`, `_SERIALIZERS` and `_ERROR_SERIALIZERS`, plus `config.py` (PLAN §Config's `KAYA_API_URL`/`KAYA_TOKEN` and `open_client()`) and `MissingCredential`. KAN-543: `provenance.version_line()` and the `_build_stamp.COMMIT` a release rewrites. KAN-542: the failure half of the layer — `error_payload()` / `render_error()`, and a `code` on every exception class so a raise site names a meaning |
+| `kaya-cli/` | The `kaya` console script, one entry point. KAN-541: `note list` and `note get <ref>` (`verbs.py`, a dispatch table), `--format {human,json,toon}` with `--json` as an alias and `--format` winning if both are given. **No write verbs**; those are V2b. KAN-543: an argparse parser with `--version` and `--help` on it. KAN-542: that parser subclassed so it raises instead of exiting, plus `failures.py` (ADR 0005's exit table, and the only place a meaning becomes a number) and `parsing.py` (`usage:` on stderr *and* the structured row on stdout, from one event) |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
 | `frontend/` | Svelte 5 + Vite + TS, a shell page, the dev proxy for `/api` |
 | *root* | `Dockerfile` (bases pinned by digest), `docker-compose.yml`, `deploy/k8s/`. KAN-544: `scripts/check-version-bump.sh` (+ `lib/pyproject_diff.py`), `scripts/build-cli-artifact.sh`, `scripts/check-release-artifact.sh`, `.github/workflows/release.yml` |
 
-Next: KAN-541 puts the CLI verbs (`kaya note list`, `kaya note get`), `--format` and the `toon`
-encoder on top of that seam — it adds `toon` to `_SERIALIZERS`, `_ERROR_SERIALIZERS` and `Format`,
-and hangs its subparsers off `build_parser()`, which already fails correctly. KAN-545 cuts the first
-release: KAN-544's `.github/workflows/release.yml` builds and gates the artifact but deliberately
-publishes nothing. Still unbuilt anywhere are `?q=` search (KAN-558/559), `/links` and `/backlinks`
-(KAN-566), and the SPA's real UI (V3).
+Next: KAN-545 cuts the first release — KAN-544's `.github/workflows/release.yml` builds and gates
+the artifact but deliberately publishes nothing. Then V2b fills `render()`'s `fields` and
+`text_limit` and adds the write verbs. Still unbuilt anywhere are `?q=` search (KAN-558/559),
+`/links` and `/backlinks` (KAN-566), the MCP server (V6) and the SPA's real UI (V3).
 
 **Trust the code over the docs.** When this file and the repository disagree, the repository is
 right and this file is stale. Fix it in the same PR.
@@ -57,8 +55,10 @@ Each one is a place where the obvious implementation is wrong.
 1. **Payload shaping lives in `kaya-client`, never in an adapter** ([ADR 0004](docs/adr/0004-shaping-lives-in-the-shared-client.md)).
    Projection, truncation, aggregates and serialization go through one `render()` seam. The CLI and
    the MCP server both call it. A projection rule appearing in `kaya-cli/` or `mcp/` is a bug, not a
-   local optimisation. Pandan put shaping in its CLI, so its MCP adapter inherited none of it and one
-   `list_cards` call costs 44,902 tokens against 2,689 for the equivalent CLI read.
+   local optimisation. `kaya_cli.verbs` is what a verb is allowed to be — open a session, call one
+   client method, return the `Payload` — and `__main__.main` calls `render()` on exactly one line.
+   Pandan put shaping in its CLI, so its MCP adapter inherited none of it and one `list_cards` call
+   costs 44,902 tokens against 2,689 for the equivalent CLI read.
 2. **Kaya has no token format and no prefix logic** ([ADR 0002](docs/adr/0002-identity-pandan-as-provider.md)).
    Authentication forwards the bearer to pandan's `GET /api/v1/me` and caches the answer keyed on
    `sha256(token)`. Do not add a `startswith` guard: pandan still accepts pre-rebrand `kanban_pat_…`
@@ -165,8 +165,13 @@ holds `data`, which exists for MCP's `structuredContent` and is reachable in cod
 because a suggestion in an error message is a contract too and that message reaches a shell. Adding
 a format to the registry must not advertise it — ADR 0005 adopts pandan's exit codes verbatim rather
 than improving them for exactly this reason, and pandan spent a whole card (KAN-442) withdrawing a
-`pdn` alias. **KAN-541 adds `toon` to both**, and the literal pin in
-`test_the_published_cli_vocabulary_is_pinned` makes that a conscious edit.
+`pdn` alias. **KAN-541 added `toon` to both**, plus `_ERROR_SERIALIZERS`, and the literal pin in
+`test_the_published_cli_vocabulary_is_pinned` is what made that a conscious edit rather than a side
+effect. The encoder (`toon.py`) is **encode-only**: nothing in the product reads TOON back, so the
+round-trip contract is proven by a decoder that lives in `kaya-client/tests/toon_decode.py`. Do not
+promote it out of `tests/`. Measured against compact JSON on 40 notes (`o200k_base`,
+`kaya-client/scripts/measure_toon_delta.py`): `note list` **−11.3%**, `note get` **+1.4%** — it pays
+for uniform rows and costs a little on a single object, which is the shape pandan's V47 found.
 
 **A cold pandan used to `503` a valid PAT. KAN-666 split the deadline and coalesced the misses.**
 KAN-539 measured (`make measure-auth`) a cache hit at 1.6 µs, a warm miss at 387 ms and a cold miss
@@ -217,6 +222,15 @@ make check             # docs-links + secret-scan + image-pins + lint + test
 make audit             # npm audit + pip-audit over every lockfile (network; NOT in `check`)
 make measure-auth      # re-measure introspection latency (Docker + a real PAT)
 ```
+
+The `toon` delta is re-measurable the same way, and needs no credential:
+
+```bash
+cd kaya-client && uv run --with tiktoken python scripts/measure_toon_delta.py --markdown
+```
+
+`tiktoken` is supplied for the run only and must not become a dependency: `kaya-client` has exactly
+one runtime dependency and the encoder is stdlib-only (SLICES §V2a).
 
 `make measure-auth` is a measurement rather than a gate, and the only target that reads a
 credential: it takes the PAT from `KAYA_MEASURE_PAT` or `~/.config/pandan/config.toml`, never prints
