@@ -16,11 +16,17 @@ chmod +x ~/.local/bin/kaya
 kaya --version
 ```
 
-**`kaya-linux-x86_64`, Linux x86_64 only.** The release asset is a PyInstaller `--onefile`
-executable, which is per-platform by construction; the pipeline builds on one runner and claims
-only what that runner can prove, so there is no macOS or Windows build. The asset is *named* for
-the downloads folder it lands in and the *command* is `kaya` — a bare `kaya` in a release listing
-would collide with everything else in there.
+**`kaya-linux-x86_64`, Linux x86_64, glibc 2.28 or newer.** The release asset is a PyInstaller
+`--onefile` executable, which is per-platform by construction; the pipeline does one build and
+claims only what that build can prove, so there is no macOS or Windows build. It is built inside a
+`manylinux_2_28` container and runs on Ubuntu 20.04+, Debian 11+, RHEL/Rocky/Alma 8+ and Amazon
+Linux 2023 with nothing installed. The asset is *named* for the downloads folder it lands in and the
+*command* is `kaya` — a bare `kaya` in a release listing would collide with everything else in
+there.
+
+`v0.4.0` predates that container and requires `GLIBC_2.38`, so it fails to start on anything older
+than Ubuntu 24.04 with `Failed to load Python shared library … version 'GLIBC_2.38' not found`
+(KAN-719). If you see that line, take a later release.
 
 Two things follow from `--onefile` that surprise people, both covered below: the executable bit does
 not survive the download, hence `chmod +x`, and there are no `[project.scripts]` entry points inside
