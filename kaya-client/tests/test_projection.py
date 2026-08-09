@@ -15,6 +15,10 @@ exists to prevent. See ADR 0005's amendment of 2026-08-09 (KAN-546).
 What is *not* here is the byte-identity of the default row with ``--fields`` omitted. That is
 `test_human_row_is_pinned.py`, untouched by this card on purpose: a pin restated by the slice it is
 supposed to constrain is not a pin.
+
+**KAN-547 added the last section**, when it retired `test_passthrough_is_a_no_op.py` for having no
+pass-through left to pin. What ``fields=None`` guarantees was always this file's subject; it simply
+had nowhere better to live while that file still existed.
 """
 
 import json
@@ -291,6 +295,35 @@ def test_an_empty_name_is_an_unknown_field_rather_than_a_shrug(notes: Payload) -
     """
     with pytest.raises(UsageError, match="unknown field ''"):
         render(notes, fields=[""])
+
+
+# ------------------------------------------------- what omitting it guarantees (from KAN-547)
+
+
+@pytest.mark.parametrize("fmt", ["human", "json", "toon", "data"])
+def test_omitting_fields_changes_nothing(notes: Payload, fmt: str) -> None:
+    """ADR 0005 §contract 2, restated after the KAN-546 amendment: what the contract protects is the
+    caller who did **not** ask for projection, and it gets a complete record back."""
+    assert render(notes, fields=None, fmt=fmt) == render(notes, fmt=fmt)
+
+
+def test_projection_is_identity_when_nothing_was_asked_for(notes: Payload) -> None:
+    """``fields=None`` returns the very same object, which is what makes "omitting ``--fields``
+    changed nothing" a fact about identity rather than about two renders that happen to agree — and
+    it is the mechanism behind the byte-identity pin, not a restatement of it."""
+    assert project(notes, None) is notes
+
+
+@pytest.mark.parametrize("fields", ["ref,title", b"ref", ["ref", 3]])
+def test_a_field_list_that_could_not_be_one_is_refused(notes: Payload, fields: object) -> None:
+    """Shape, not vocabulary — a ``TypeError`` for a caller bug, not exit `2` for a typo.
+
+    A bare ``"ref,title"`` is an iterable of characters, so without this the payload would narrow to
+    ``r``, ``e``, ``f`` — or, worse, be refused as an unknown *field* named ``r``, sending the
+    adapter author looking at their vocabulary instead of their ``split``.
+    """
+    with pytest.raises(TypeError):
+        render(notes, fields=fields)  # type: ignore[arg-type]
 
 
 def _lines(rendered: str | dict[str, object]) -> list[str]:

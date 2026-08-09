@@ -1,5 +1,13 @@
 [project]
 name = "kaya-client"
+# 0.8.0 — KAN-547 fills `render`'s last no-op parameter: `text_limit` truncates the fields
+# `Payload.prose_fields` names, appending a hint that carries the **true** total **in-band**, so the
+# total reaches `json`/`toon`/`data` and a truncated value is still a string with no key added,
+# removed or retyped (ADR 0005 §contract 6). `0` disables it and is what `--full` resolves to; the
+# default comes from `config.max_text_chars`, new public API over `KAYA_MAX_TEXT_CHARS`. Behavioural
+# for every caller of `render` that did not pass `text_limit`, which is why it is a minor bump: a
+# `note get` on a long note now prints 500 characters and a hint. 0.7.0 was KAN-546's `--fields`
+# projection. `render`'s signature did not move for either (ADR 0005's sequencing rule).
 # 0.6.0 — KAN-716 reconciles this package's request deadline with the backend's authentication
 # budget after KAN-666 split it. `DEFAULT_TIMEOUT` is an `httpx.Timeout` built from
 # `DEFAULT_CONNECT_TIMEOUT` (5 s) and `DEFAULT_READ_TIMEOUT` (40 s), where it was a single 30 s
@@ -19,7 +27,7 @@ name = "kaya-client"
 # 0.3.0 — KAN-543 adds `provenance`, the build stamp both adapters read. 0.2.0 was KAN-540's
 # `KayaClient` and `render()` seam. A behavioural change to a shipped package bumps it in the same
 # PR (ADR 0007 §3, CLAUDE.md §Conventions §Versioning).
-version = "0.7.0"
+version = "0.8.0"
 description = "The shared core for kaya: the API client and the one payload-shaping seam"
 readme = "README.md"
 license = "Apache-2.0"

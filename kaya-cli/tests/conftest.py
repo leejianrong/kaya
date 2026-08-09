@@ -65,9 +65,15 @@ against, so the CLI's assertions and the client's are about the same bytes."""
 
 @pytest.fixture(autouse=True)
 def no_ambient_configuration(monkeypatch) -> None:
-    """Every test starts with no deployment and no credential configured."""
+    """Every test starts with no deployment, no credential and no text limit configured.
+
+    ``KAYA_MAX_TEXT_CHARS`` joined the list with KAN-547 for a weaker reason than the other two but
+    the same failure mode: a developer with it exported would see every default-row assertion in
+    this package pass or fail depending on their shell, and the subprocess tests would inherit it.
+    """
     monkeypatch.delenv(config.API_URL_ENV, raising=False)
     monkeypatch.delenv(config.TOKEN_ENV, raising=False)
+    monkeypatch.delenv(config.MAX_TEXT_CHARS_ENV, raising=False)
 
 
 @pytest.fixture

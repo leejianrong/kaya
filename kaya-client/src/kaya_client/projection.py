@@ -1,10 +1,10 @@
 """Step 1 of ADR 0004's ordering: ``fields`` selection. **Live since KAN-546.**
 
 V2a held this module's place and pinned that it did nothing, so that V2b would arrive as a visible
-diff rather than as a subtle change of behaviour nobody can date. This is that diff. What was pinned
-is now half-pinned: `tests/test_passthrough_is_a_no_op.py` still proves ``text_limit`` passes
-through untouched (KAN-547 fills it), and the ``fields`` half of that file has been replaced by
-`tests/test_projection.py`.
+diff rather than as a subtle change of behaviour nobody can date. This is that diff. The pin was
+``tests/test_passthrough_is_a_no_op.py``, which KAN-546 halved and KAN-547 retired: its ``fields``
+assertions are in `tests/test_projection.py` and its ``text_limit`` ones in
+`tests/test_truncation.py`, because after both cards neither parameter passes anything through.
 
 ### What `--fields` does, and why it does the same thing in every format
 

@@ -13,7 +13,7 @@ slice's deliverable rather than a convenience.
 import json
 
 import pytest
-from conftest import GROCERIES, READING_LIST
+from conftest import GROCERIES, READING_LIST, note_collection
 
 from kaya_client import (
     CLI_FORMATS,
@@ -182,6 +182,17 @@ def test_the_registry_is_exactly_the_two_vocabularies() -> None:
     """
     declared = {member.value for member in Format} | {member.value for member in AdapterFormat}
     assert set(_SERIALIZERS) == declared
+
+
+def test_the_empty_payload_still_renders_in_every_format() -> None:
+    """A zero-row list is the payload most likely to trip a width or aggregate computation.
+
+    From the retired `test_passthrough_is_a_no_op.py`. It is a claim about ``fmt`` rather than about
+    either shaping parameter, which is why it landed here and not in `test_truncation.py`.
+    """
+    empty = note_collection()
+    for fmt in [*STRING_FORMATS, AdapterFormat.DATA.value]:
+        assert render(empty, fmt=fmt) is not None
 
 
 def test_serialize_refuses_an_unshaped_payload(notes: Payload) -> None:

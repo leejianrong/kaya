@@ -3,6 +3,12 @@
 # (pandan ADR 0018 §Package-name reality). That constrains the distribution name only. The console
 # script is `kaya`, and there is exactly one of them (Q39).
 name = "kaya-notes"
+# 0.7.0 — KAN-547 adds `--full` to every verb and reads `KAYA_MAX_TEXT_CHARS`, so prose is cut to
+# 500 characters by default with a hint carrying the true total. Behavioural for every existing
+# invocation that prints a long body, and a new exit `2` path: a `KAYA_MAX_TEXT_CHARS` that is not
+# a whole number is a structured refusal on stdout rather than a traceback. The cut, the allow-list
+# and the number all live in `kaya-client`; this package's share is a `store_true` and one
+# precedence (`resolve_text_limit`). 0.6.0 was KAN-546's `--fields`.
 # 0.5.0 — KAN-718 adds `400` → exit `2` to `EXIT_FOR_STATUS`. Behavioural, and the reason exit
 # codes are versioned at all: a malformed ref (ADR 0008's `#NOTE-12`) used to exit `1` and now
 # exits `2`. An *addition* to the status table, not a renumber — every shipped number is where
@@ -16,7 +22,7 @@ name = "kaya-notes"
 # 0.2.0 — KAN-543 gives the CLI argument parsing and ADR 0007's build-stamped `--version`. A
 # behavioural change to a shipped package bumps it in the same PR (ADR 0007 §3, CLAUDE.md
 # §Conventions §Versioning).
-version = "0.6.0"
+version = "0.7.0"
 description = "kaya — the notes CLI"
 readme = "README.md"
 license = "Apache-2.0"

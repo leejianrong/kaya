@@ -2,26 +2,30 @@
 
 ## Build status
 
-**V1 and V2a are complete; V2b has started (KAN-546).** A pandan PAT creates, reads, edits and
-deletes notes over `/api/v1/notes`, and `kaya note list` / `kaya note get` read them from a shell in
-`human`, `json` or `toon`, with `--fields a,b,c` selecting columns on a list. `make up` runs the whole stack on `:8000` from the image, and `make k3d` applies
-`deploy/k8s/` to a throwaway cluster and then makes requests against it, because an `apply` that
-succeeds only proves the API server liked the YAML (ADR 0010). Pushing a `v*` tag cuts a public
-GitHub Release carrying one asset, `kaya-linux-x86_64` (KAN-545).
+**V1 and V2a are complete; V2b is two cards in (KAN-546, KAN-547).** A pandan PAT creates, reads,
+edits and deletes notes over `/api/v1/notes`, and `kaya note list` / `kaya note get` read them from
+a shell in `human`, `json` or `toon`, with `--fields a,b,c` selecting columns on a list and prose
+cut to `KAYA_MAX_TEXT_CHARS` (default 500) unless `--full`. `make up` runs the whole stack on
+`:8000` from the image, and `make k3d` applies `deploy/k8s/` to a throwaway cluster and then makes
+requests against it, because an `apply` that succeeds only proves the API server liked the YAML
+(ADR 0010). Pushing a `v*` tag cuts a public GitHub Release carrying one asset,
+`kaya-linux-x86_64` (KAN-545).
 
 | Package | What's in it |
 |---|---|
 | `backend/` | The whole of V1: migration `0001`, `app/auth/` (principal resolver, `authorize_note`), `app/api/` (`/api/v1/notes` CRUD, the central ref resolver, ADR 0009's `409`), `app/spa.py`, `app/observability/` |
-| `kaya-client/` | KAN-540: `KayaClient` over httpx (`list_notes`, `get_note`) and the `render()` seam as four composable steps. `human`/`json`/`toon` user-facing, `data` adapter-only; `text_limit` is still a **pinned no-op**. KAN-546: `projection.py` is live — `fields` narrows `records` *and* `columns` uniformly for every format, via `Payload.narrowed_to()`, with the vocabulary read from `field_names()` before anything narrows. KAN-541: `toon.py`, a stdlib-only **encode-only** TOON encoder registered in `Format`, `_SERIALIZERS` and `_ERROR_SERIALIZERS`, plus `config.py` (PLAN §Config's `KAYA_API_URL`/`KAYA_TOKEN` and `open_client()`) and `MissingCredential`. KAN-543: `provenance.version_line()` and the `_build_stamp.COMMIT` a release rewrites. KAN-542: the failure half of the layer — `error_payload()` / `render_error()`, and a `code` on every exception class so a raise site names a meaning. KAN-716: `DEFAULT_TIMEOUT` split by phase (`DEFAULT_CONNECT_TIMEOUT` 5 s, `DEFAULT_READ_TIMEOUT` 40 s) so the client outlasts the backend's authentication budget |
-| `kaya-cli/` | The `kaya` console script, one entry point. KAN-541: `note list` and `note get <ref>` (`verbs.py`, a dispatch table), `--format {human,json,toon}` with `--json` as an alias and `--format` winning if both are given. **No write verbs** yet. KAN-546: `--fields` on `output_flags()`, and `resolve_fields()` — one `split(",")`, which is the entire projection logic this package is allowed to contain. KAN-543: an argparse parser with `--version` and `--help` on it. KAN-542: that parser subclassed so it raises instead of exiting, plus `failures.py` (ADR 0005's exit table, and the only place a meaning becomes a number) and `parsing.py` (`usage:` on stderr *and* the structured row on stdout, from one event) |
+| `kaya-client/` | KAN-540: `KayaClient` over httpx (`list_notes`, `get_note`) and the `render()` seam as four composable steps. `human`/`json`/`toon` user-facing, `data` adapter-only. KAN-547: `truncation.py` is live — `text_limit` cuts the fields `Payload.prose_fields` names and appends a hint carrying the **true** total **in-band**, so the total reaches `json`/`toon`/`data`; `0` disables, and `config.max_text_chars()` resolves `KAYA_MAX_TEXT_CHARS` (default 500, a non-number is a `UsageError`). KAN-546: `projection.py` is live — `fields` narrows `records` *and* `columns` uniformly for every format, via `Payload.narrowed_to()`, with the vocabulary read from `field_names()` before anything narrows. KAN-541: `toon.py`, a stdlib-only **encode-only** TOON encoder registered in `Format`, `_SERIALIZERS` and `_ERROR_SERIALIZERS`, plus `config.py` (PLAN §Config's `KAYA_API_URL`/`KAYA_TOKEN` and `open_client()`) and `MissingCredential`. KAN-543: `provenance.version_line()` and the `_build_stamp.COMMIT` a release rewrites. KAN-542: the failure half of the layer — `error_payload()` / `render_error()`, and a `code` on every exception class so a raise site names a meaning. KAN-716: `DEFAULT_TIMEOUT` split by phase (`DEFAULT_CONNECT_TIMEOUT` 5 s, `DEFAULT_READ_TIMEOUT` 40 s) so the client outlasts the backend's authentication budget |
+| `kaya-cli/` | The `kaya` console script, one entry point. KAN-541: `note list` and `note get <ref>` (`verbs.py`, a dispatch table), `--format {human,json,toon}` with `--json` as an alias and `--format` winning if both are given. **No write verbs** yet. KAN-547: `--full` on `output_flags()`, and `resolve_text_limit()` — a flag-beats-environment precedence and nothing else, since the number and the cut are both the client's. KAN-546: `--fields` on `output_flags()`, and `resolve_fields()` — one `split(",")`, which is the entire projection logic this package is allowed to contain. KAN-543: an argparse parser with `--version` and `--help` on it. KAN-542: that parser subclassed so it raises instead of exiting, plus `failures.py` (ADR 0005's exit table, and the only place a meaning becomes a number) and `parsing.py` (`usage:` on stderr *and* the structured row on stdout, from one event) |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
 | `frontend/` | Svelte 5 + Vite + TS, a shell page, the dev proxy for `/api` |
 | *root* | `Dockerfile` (bases pinned by digest), `docker-compose.yml`, `deploy/k8s/`. KAN-544: `scripts/check-version-bump.sh` (+ `lib/pyproject_diff.py`), `scripts/build-cli-artifact.sh`, `scripts/check-release-artifact.sh`, `.github/workflows/release.yml`'s `build` job. KAN-545: that workflow's `publish` job — the only `contents: write` in the repository, and it runs for a pushed `v*` tag and nothing else |
 
-Next: **the rest of V2b** — `render()`'s `text_limit` is still a pinned no-op (KAN-547), the
-aggregates and `help[]` are unbuilt, and `kaya` has `note list` and `note get` and no way to change
-anything. Still unbuilt anywhere are `?q=` search (KAN-558/559), `/links` and `/backlinks`
-(KAN-566), the MCP server (V6) and the SPA's real UI (V3).
+Next: **the rest of V2b** — `render()`'s four steps are live except `aggregates.py`, which still
+attaches `None` (KAN-548), content-first bare invocation and `help[]` are unbuilt, and `kaya` has
+`note list` and `note get` and no way to change anything. The `config {set,show,path}` verbs and the
+config *file* tiers are KAN-551's; `config.py` today is the environment tier only. Still unbuilt
+anywhere are `?q=` search (KAN-558/559), `/links` and `/backlinks` (KAN-566), the MCP server (V6)
+and the SPA's real UI (V3).
 
 **Trust the code over the docs.** When this file and the repository disagree, the repository is
 right and this file is stale. Fix it in the same PR.
@@ -161,10 +165,12 @@ place to put that derivation is the adapter — which is pandan's 11.4×. The fo
 each in ADR 0004's fixed order, and the order is **type-enforced**: `truncate` takes and returns a
 `Payload`, `attach_summary` returns a `Shaped`, and `serialize` accepts only a `Shaped`, so ADR
 0005's "the summary is structurally out of the truncator's reach" is a fact rather than a convention.
-`text_limit` is still a **no-op until KAN-547** and `tests/test_passthrough_is_a_no_op.py` pins that
-half, so it arrives as a visible diff; `fields` was the other half and KAN-546 spent it. The default
-human row is pinned byte-for-byte in `tests/test_human_row_is_pinned.py`; if a later slice reddens
-it while `--fields` was omitted, that is the guard working, not a stale test to update.
+`tests/test_passthrough_is_a_no_op.py` used to pin that both shaping parameters did nothing; KAN-546
+spent its `fields` half and KAN-547 its `text_limit` half, so the file is **gone** and its
+assertions live in `tests/test_projection.py` and `tests/test_truncation.py`. The default human row
+is pinned byte-for-byte in `tests/test_human_row_is_pinned.py`; if a later slice reddens it while
+`--fields` was omitted and the prose is under the limit, that is the guard working, not a stale test
+to update.
 
 **`--fields` narrows the shaped dict *uniformly*, and that settled a contradiction rather than
 inheriting one** (KAN-546, ADR 0005's amendment of the same date). ADR 0004 §Decision describes
@@ -184,6 +190,28 @@ The vocabulary comes from `Payload.field_names()` read *before* narrowing, an un
 silent no-op. Duplicates collapse first-seen (a record is a dict); `fields=[]` is refused, because
 "select nothing" and "do not project" are different requests; `prose_fields` survives narrowing
 whole, because it describes the API's schema and not the caller's selection.
+
+**Truncation is an allow-list, and the hint is in-band** (KAN-547, ADR 0005's amendment of the same
+date). The list is `payload.prose_fields` — `NOTE_PROSE_FIELDS = {"body"}`, the one unbounded `TEXT`
+column in migration `0001` — and never a length heuristic, because "any string over N" eventually
+cuts a `next_cursor` and silently breaks pagination, or mangles a URL; `title` and `path` are
+`String(255)`/`String(1024)` and pass through at any length. A cut value is the original's first
+`text_limit` characters **verbatim**, then a blank line, then
+`(truncated, 2847 chars total — use --full to see complete body)` carrying the length *before* the
+cut. **The hint is part of the string**, so no key is added, removed or retyped and the total
+reaches `json`/`toon`/`data`, where a consumer would otherwise have no way to know it was cut — that
+placement is a decision with an argument, in `truncation.py`'s docstring and in the ADR, not an
+implementation detail. `--full` is `text_limit=0` and there is deliberately **no `full=True`**: two
+spellings of one state is how a config layer ends up disagreeing with a flag. Under the limit the
+payload comes back as *the same object*, which is what makes the byte-identity pin structural. The
+guarantee on multi-byte text is **code points, not grapheme clusters** — a ZWJ emoji or a combining
+accent can be split and the tests say so, because closing that needs a UAX #29 table and
+`kaya-client` has exactly one runtime dependency. Measured on kaya's own corpus (40 notes,
+`o200k_base`): at a mean body of 1,351 chars the default 500 takes a `note list` **−41.7%** in JSON
+and **−44.1%** in `toon`, and a `note get` **−49.7%**; at 3,495 chars it is **−72.8%** /
+**−74.6%** / **−80.0%**. Honest counter-result: at a mean body of 266 chars *nothing* is over the
+limit, and forcing it to 200 makes a `note list` **+1.0%** larger, because the hint costs about
+twenty tokens. Truncation pays on documents, not on one-line notes.
 
 **A `--format` value is a published contract; a registered serializer is not.** `Format` holds only
 what a person may type (`CLI_FORMATS` is that as a tuple, for argparse `choices`); `AdapterFormat`

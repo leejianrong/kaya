@@ -4,15 +4,18 @@ that tier.
 PLAN fixes the scheme: a per-app prefix, each key resolved independently from the first source that
 supplies it — **environment → user config file → nearest ``.mcp.json``** — over ``KAYA_API_URL``,
 ``KAYA_TOKEN``, ``KAYA_PANDAN_URL`` and ``KAYA_MAX_TEXT_CHARS``. This module implements the first
-source and names the two keys V2a's verbs need. The file tiers and the ``config {set,show,path}``
-verbs are V2b's (SLICES §V2b step 6), and they extend the functions below rather than replacing
-them: a caller asks for ``token()``, not for an environment variable.
+source and names the three keys the verbs need so far. The file tiers and the
+``config {set,show,path}`` verbs are KAN-551's (SLICES §V2b step 6), and they extend the functions
+below rather than replacing them: a caller asks for ``token()``, not for an environment variable.
+``config show``'s "effective value" is whatever `max_text_chars` returns, which is the reason that
+function exists here rather than as a line inside an adapter.
 
 ### Why this is in the shared client and not in `kaya-cli`
 
 ADR 0004's review question is "would V6's MCP adapter have to reimplement this to be correct?", and
-here the answer is plainly yes — an MCP server started from the same shell reads the same two keys,
-and a second resolver is a second answer to "which deployment am I talking to?". Contrast
+here the answer is plainly yes — an MCP server started from the same shell reads the same keys, and
+a second resolver is a second answer to "which deployment am I talking to?" (and, since KAN-547, to
+"how much prose is a read allowed to return?"). Contrast
 `kaya_cli.parsing`, which owns argv: an adapter owns *how it gets its arguments*, and an environment
 variable is not an argument, it is the deployment.
 
@@ -42,13 +45,17 @@ from collections.abc import Mapping
 import httpx
 
 from kaya_client.client import DEFAULT_TIMEOUT, KayaClient
-from kaya_client.errors import MissingCredential
+from kaya_client.errors import MissingCredential, UsageError
+from kaya_client.truncation import DEFAULT_TEXT_LIMIT
 
 API_URL_ENV = "KAYA_API_URL"
 """The kaya deployment to talk to. PLAN §Config."""
 
 TOKEN_ENV = "KAYA_TOKEN"
 """The caller's pandan PAT, forwarded byte-for-byte and never parsed (ADR 0002)."""
+
+MAX_TEXT_CHARS_ENV = "KAYA_MAX_TEXT_CHARS"
+"""How much prose a read returns before the truncation hint (KAN-547). PLAN §Config."""
 
 DEFAULT_API_URL = "http://localhost:8000"
 """What ``make up`` and ``make dev`` serve. A default, not a fallback — see the module docstring."""
@@ -78,6 +85,49 @@ def token(env: Mapping[str, str] | None = None) -> str:
         raise MissingCredential(
             f"no kaya token configured — set {TOKEN_ENV} to a pandan personal access token",
             arg=TOKEN_ENV,
+        )
+    return value
+
+
+def max_text_chars(env: Mapping[str, str] | None = None) -> int:
+    """The effective ``text_limit`` for this process: ``KAYA_MAX_TEXT_CHARS``, or 500.
+
+    This is the number ADR 0005 §contract 6 is about, resolved in one place so that both adapters
+    truncate identically and KAN-551's ``config show`` has something to report rather than a rule to
+    restate. The default is `truncation.DEFAULT_TEXT_LIMIT` rather than a literal ``500`` written
+    again here — two copies of one number is how a config layer starts disagreeing with the thing it
+    configures.
+
+    **``0`` is a value, not an absence.** It disables truncation, which is ADR 0005's ``--full`` as
+    a deployment setting, so it must survive a falsy check that ``""`` and an unset variable do
+    not. Whitespace-only is treated as unset, for the reason `token` gives: an exported-but-empty
+    variable is the common shape of a misconfigured shell profile.
+
+    A value that is not a whole number, or is negative, is a ``UsageError`` — ADR 0005 §contract 4's
+    exit `2`, "the caller's input was rejected". It names the variable in ``arg`` the way
+    ``MissingCredential`` does, so the row a consumer reads names the thing to fix. It is
+    deliberately *not* the ``ValueError``/``TypeError`` `truncation.check_text_limit` raises at the
+    seam: those are caller bugs in code and reach a person as a traceback, whereas this one is a
+    shell someone can correct, and ``main``'s funnel only catches ``KayaError``.
+    """
+    environment = os.environ if env is None else env
+    raw = (environment.get(MAX_TEXT_CHARS_ENV) or "").strip()
+    if not raw:
+        return DEFAULT_TEXT_LIMIT
+
+    try:
+        value = int(raw)
+    except ValueError:
+        raise UsageError(
+            f"{MAX_TEXT_CHARS_ENV} must be a whole number of characters — {raw!r} is not one, "
+            f"and 0 disables truncation",
+            arg=MAX_TEXT_CHARS_ENV,
+        ) from None
+
+    if value < 0:
+        raise UsageError(
+            f"{MAX_TEXT_CHARS_ENV} must be 0 or more — 0 already disables truncation",
+            arg=MAX_TEXT_CHARS_ENV,
         )
     return value
 
