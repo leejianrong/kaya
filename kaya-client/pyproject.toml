@@ -6,7 +6,9 @@ name = "kaya-client"
 # float that a cold authentication — connect 5 s plus read 30 s — could outlast. Behavioural on
 # both axes: a request waits longer for an answer, and gives up sooner on a host that never
 # accepts the connection. `timeout=` still takes a float, and still means one deadline for every
-# phase when it does.
+# phase when it does. Same card, same hole one path over: `open_client(transport=…)` built its
+# injected client with httpx's own 5 s default, so the shipped deadline applied to every session
+# except the one an adapter injects a transport into.
 # 0.5.0 — KAN-541 registers the `toon` format (encoder in `toon.py`, stdlib-only and encode-only),
 # adds `config` — PLAN §Config's environment tier and `open_client()` — and `MissingCredential`.
 # It also fixes a defect the verbs made reachable: `get_note` percent-encodes the ref, so
