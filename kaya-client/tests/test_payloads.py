@@ -58,12 +58,67 @@ def test_the_prose_allow_list_travels_with_the_payload(notes: Payload) -> None:
     assert notes.prose_fields == frozenset({"body"})
 
 
-def test_with_columns_is_where_fields_will_land(notes: Payload) -> None:
-    """V2b's widening, expressible today without touching ``render``'s signature."""
+def test_with_columns_changes_the_row_and_not_the_records(notes: Payload) -> None:
+    """Half of ``--fields``: a different row over the same complete records."""
     widened = notes.with_columns(("ref", "title", "path", "updated_at"))
     assert widened.columns == ("ref", "title", "path", "updated_at")
     assert widened.records == notes.records
     assert notes.columns == ("ref", "title", "path")
+
+
+def test_narrowed_to_cuts_the_records_as_well_as_the_row(notes: Payload) -> None:
+    """The other half, and the one ADR 0004's token measurement is about (KAN-546).
+
+    ``with_columns`` alone would leave every structured format paying the full field breadth that
+    made pandan's `list_cards` cost 44,902 tokens — the human table would narrow and the JSON would
+    not. `projection` calls this one.
+    """
+    narrowed = notes.narrowed_to(["ref", "title"])
+
+    assert narrowed.columns == ("ref", "title")
+    assert narrowed.records == (
+        {"ref": "NOTE-12", "title": "Groceries"},
+        {"ref": "NOTE-3", "title": "A reading list"},
+    )
+
+
+def test_narrowed_to_keeps_the_callers_order(notes: Payload) -> None:
+    """In the columns and in the records' own keys, so the formats cannot disagree about order."""
+    narrowed = notes.narrowed_to(["title", "ref"])
+
+    assert narrowed.columns == ("title", "ref")
+    assert list(narrowed.records[0]) == ["title", "ref"]
+
+
+def test_narrowed_to_collapses_a_duplicate(notes: Payload) -> None:
+    """A record is a dict, so ``["ref", "ref"]`` has no representation with two of them.
+
+    Collapsed here rather than in `projection` because that is a fact about the *record*, not about
+    how an adapter spelled its argument.
+    """
+    assert notes.narrowed_to(["ref", "ref"]).columns == ("ref",)
+
+
+def test_narrowed_to_skips_a_key_a_record_does_not_have() -> None:
+    """A hole, not a ``KeyError``: sparse rows are the API's business (see ``field_names``)."""
+    sparse = note_collection({"ref": "NOTE-1"}, {"ref": "NOTE-2", "title": "t"})
+    assert sparse.narrowed_to(["ref", "title"]).records == (
+        {"ref": "NOTE-1"},
+        {"ref": "NOTE-2", "title": "t"},
+    )
+
+
+def test_narrowed_to_leaves_the_original_payload_alone(notes: Payload) -> None:
+    """Frozen, and rebuilt rather than edited: ``--full`` and ADR 0004 need the complete one."""
+    notes.narrowed_to(["ref"])
+
+    assert notes.columns == ("ref", "title", "path")
+    assert notes.records[0] == GROCERIES
+
+
+def test_narrowed_to_carries_the_prose_allow_list_through(notes: Payload) -> None:
+    """It describes the API's schema, not the caller's selection — see the field's own docstring."""
+    assert notes.narrowed_to(["ref"]).prose_fields == frozenset({"body"})
 
 
 def test_record_is_refused_on_a_collection(notes: Payload) -> None:

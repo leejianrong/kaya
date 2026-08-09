@@ -28,6 +28,9 @@ Three lines of that are load-bearing and each is load-bearing for a different re
 - **``render`` is called here and nowhere else in this package.** `verbs.run` returns a ``Payload``
   and this line turns it into bytes. That is the entire ADR 0004 boundary, visible in one statement:
   if a second place in `kaya-cli` ever formats a payload, it will be a line added next to this one.
+  ``--fields`` (KAN-546) arrives on that same line and **not** through `verbs.run`, which is the
+  boundary doing its job: a verb that took a projection argument would be a verb with an opinion
+  about the payload's shape, and the client's projection step already has the only one there is.
 
 `--version` is a plain flag handled here rather than argparse's ``action="version"``: the built-in
 prints and raises ``SystemExit`` from inside the parser, which would put an exit path outside the
@@ -49,15 +52,21 @@ from kaya_client import Format, KayaError, render, version_line
 
 from kaya_cli import __version__, verbs
 from kaya_cli.failures import EXIT_OK, report
-from kaya_cli.parsing import ParserExit, StructuredParser, output_flags, resolve_format
+from kaya_cli.parsing import (
+    ParserExit,
+    StructuredParser,
+    output_flags,
+    resolve_fields,
+    resolve_format,
+)
 
 PROG = "kaya"
 
 DESCRIPTION = "kaya — markdown notes, API-first."
 
 EPILOGUE = (
-    "Reads only: `note list` and `note get`. The write verbs, `--fields` and truncation arrive in\n"
-    "V2b. See docs/SLICES.md."
+    "Reads only: `note list` and `note get`. `--fields a,b,c` selects columns on a list; the\n"
+    "write verbs and truncation are still to come. See docs/SLICES.md."
 )
 
 NOTE_HELP = "read the notes you own"
@@ -140,7 +149,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"{version_string()}\n{EPILOGUE}")
             return EXIT_OK
 
-        print(render(verbs.run(args), fmt=fmt))
+        print(render(verbs.run(args), fields=resolve_fields(args), fmt=fmt))
         return EXIT_OK
     except ParserExit as ended:
         # `--help`, and nothing else today. Argparse has already printed; there is no failure to

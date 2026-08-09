@@ -20,9 +20,12 @@ So ``KayaClient`` returns one of these rather than a ``dict``. That is the ADR 0
 its own package: if the client returned a raw dict, every one of the three facts above would have to
 be re-derived by whoever formatted it, which is precisely how a shaping rule ends up in an adapter.
 
-``records`` stay **whole**. Nothing here narrows, truncates or reorders; the payload is the complete
-API response plus the metadata needed to shape it, and ADR 0004 §Consequences requires that ("the
-API returns complete records, since it is what both adapters project from").
+``records`` arrive **whole**. Nothing *constructs* a narrowed payload here; the payload a
+``KayaClient`` method returns is the complete API response plus the metadata needed to shape it, and
+ADR 0004 §Consequences requires that ("the API returns complete records, since it is what both
+adapters project from"). Narrowing is a later, explicit act — `narrowed_to`, called by `projection`
+when and only when a caller asked for ``fields`` — and it returns a *new* payload, so the complete
+one is still there for anything that needs it.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -58,14 +61,19 @@ class Payload:
     envelope_key: str
     records: tuple[Record, ...]
     columns: tuple[str, ...]
-    """The default human row, in order. V2b's ``--fields`` replaces this set; V2a pins what it
+    """The default human row, in order. ``--fields`` replaces this set (KAN-546); V2a pinned what it
     produces, so "``--fields`` omitted leaves the default row byte-identical" is a checkable claim
     rather than a hope."""
 
     prose_fields: frozenset[str] = frozenset()
-    """V2b's truncation allow-list (ADR 0005: named prose fields, never a length heuristic).
-    Unused in V2a — ``truncation.truncate`` is a no-op — but supplied from the first call, so V2b
-    adds a step rather than a parameter."""
+    """The truncation allow-list (ADR 0005: named prose fields, never a length heuristic). Still
+    unused — ``truncation.truncate`` is a no-op until KAN-547 — but supplied from the first call, so
+    that card adds a step rather than a parameter.
+
+    **It survives `narrowed_to` whole**, deliberately: it is a fact about the *API's schema* (which
+    columns are unbounded ``TEXT``), not about which columns a caller asked to see. Narrowing it to
+    the projected set would be correct today by accident and wrong the moment KAN-550 reads it for
+    something other than truncating a column that is currently on screen."""
 
     @classmethod
     def collection(
@@ -127,8 +135,44 @@ class Payload:
         return tuple(seen)
 
     def with_columns(self, columns: Sequence[str]) -> "Payload":
-        """The same records under a different default row. V2b's ``--fields`` lands here."""
+        """The same records under a different row. Half of what ``--fields`` needs; see
+        `narrowed_to` for the other half and for why KAN-546 did not settle for this one alone."""
         return replace(self, columns=tuple(columns))
+
+    def narrowed_to(self, fields: Sequence[str]) -> "Payload":
+        """The same payload with ``records`` **and** ``columns`` cut to ``fields``, in that order.
+
+        This is ``--fields`` (KAN-546), and it is one operation rather than two on purpose. ADR 0004
+        §Decision describes projection as narrowing the shaped dict — the thing that takes pandan's
+        44,902-token read to 7,204 — while ADR 0005 §contract 2 describes it as widening the human
+        row. Doing only the second would leave the structured formats paying the full field breadth
+        that ADR 0004 exists to recover; doing only the first would leave `human` showing the same
+        three columns whatever was asked for. So both, from one call, for every format: the CLI's
+        ``--fields`` and MCP's ``fields`` are the same parameter through the same seam, and a
+        projection that depended on ``fmt`` would put a behavioural difference between the two
+        adapters *inside* the shared step. See ADR 0005's 2026-08-09 (KAN-546) amendment.
+
+        Three details, each of which is a decision:
+
+        - **The caller's order is the order.** ``fields=["path", "ref"]`` renders ``path`` first,
+          and the narrowed record's keys are in that order too, so `json` and `toon` agree with the
+          table rather than quietly re-imposing the API's ordering.
+        - **Duplicates collapse, first occurrence winning.** A record is a dict and cannot hold one
+          key twice, so ``["ref", "ref"]`` is unrepresentable in the structured formats. Printing
+          the column twice under `human` while `json` showed it once would be the formats
+          disagreeing about one argument, which is the drift this seam exists to prevent.
+        - **A name the vocabulary has but a given record lacks is a hole, not an error.** The
+          comprehension below skips it, `serialization._cell` renders it blank, and sparse rows stay
+          the API's business — the same rule `test_a_missing_column_renders_blank_rather_than_
+          raising` already pins for the default columns.
+
+        ``prose_fields`` is untouched; see its docstring above.
+        """
+        selected = tuple(dict.fromkeys(fields))
+        records = tuple(
+            {name: record[name] for name in selected if name in record} for record in self.records
+        )
+        return replace(self, records=records, columns=selected)
 
 
 @dataclass(frozen=True)
