@@ -2,10 +2,12 @@
 
 ## Build status
 
-**V1 is complete.** A pandan PAT creates, reads, edits and deletes notes over `/api/v1/notes`.
-`make up` runs the whole stack on `:8000` from the image, and `make k3d` applies `deploy/k8s/` to a
-throwaway cluster and then makes requests against it, because an `apply` that succeeds only proves
-the API server liked the YAML (ADR 0010).
+**V1 and V2a are complete.** A pandan PAT creates, reads, edits and deletes notes over
+`/api/v1/notes`, and `kaya note list` / `kaya note get` read them from a shell in `human`, `json` or
+`toon`. `make up` runs the whole stack on `:8000` from the image, and `make k3d` applies
+`deploy/k8s/` to a throwaway cluster and then makes requests against it, because an `apply` that
+succeeds only proves the API server liked the YAML (ADR 0010). Pushing a `v*` tag cuts a public
+GitHub Release carrying one asset, `kaya-linux-x86_64` (KAN-545).
 
 | Package | What's in it |
 |---|---|
@@ -14,12 +16,12 @@ the API server liked the YAML (ADR 0010).
 | `kaya-cli/` | The `kaya` console script, one entry point. KAN-541: `note list` and `note get <ref>` (`verbs.py`, a dispatch table), `--format {human,json,toon}` with `--json` as an alias and `--format` winning if both are given. **No write verbs**; those are V2b. KAN-543: an argparse parser with `--version` and `--help` on it. KAN-542: that parser subclassed so it raises instead of exiting, plus `failures.py` (ADR 0005's exit table, and the only place a meaning becomes a number) and `parsing.py` (`usage:` on stderr *and* the structured row on stdout, from one event) |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
 | `frontend/` | Svelte 5 + Vite + TS, a shell page, the dev proxy for `/api` |
-| *root* | `Dockerfile` (bases pinned by digest), `docker-compose.yml`, `deploy/k8s/`. KAN-544: `scripts/check-version-bump.sh` (+ `lib/pyproject_diff.py`), `scripts/build-cli-artifact.sh`, `scripts/check-release-artifact.sh`, `.github/workflows/release.yml` |
+| *root* | `Dockerfile` (bases pinned by digest), `docker-compose.yml`, `deploy/k8s/`. KAN-544: `scripts/check-version-bump.sh` (+ `lib/pyproject_diff.py`), `scripts/build-cli-artifact.sh`, `scripts/check-release-artifact.sh`, `.github/workflows/release.yml`'s `build` job. KAN-545: that workflow's `publish` job — the only `contents: write` in the repository, and it runs for a pushed `v*` tag and nothing else |
 
-Next: KAN-545 cuts the first release — KAN-544's `.github/workflows/release.yml` builds and gates
-the artifact but deliberately publishes nothing. Then V2b fills `render()`'s `fields` and
-`text_limit` and adds the write verbs. Still unbuilt anywhere are `?q=` search (KAN-558/559),
-`/links` and `/backlinks` (KAN-566), the MCP server (V6) and the SPA's real UI (V3).
+Next: **V2b** fills `render()`'s `fields` and `text_limit`, which are pinned no-ops today, and adds
+the write verbs — `kaya` has `note list` and `note get` and no way to change anything. Still unbuilt
+anywhere are `?q=` search (KAN-558/559), `/links` and `/backlinks` (KAN-566), the MCP server (V6)
+and the SPA's real UI (V3).
 
 **Trust the code over the docs.** When this file and the repository disagree, the repository is
 right and this file is stale. Fix it in the same PR.
@@ -310,6 +312,20 @@ behavioural; a `[project.dependencies]` change becomes `Requires-Dist` in the wh
 extra is the test toolchain and is not. `[build-system].requires` is not either — commit `84278e2`
 is a merged Dependabot PR whose entire diff is that one line. The rule the table list encodes is
 "could a consumer of the built wheel tell?", and an unrecognised key inside `[project]` fails closed.
+
+**Cutting a release.** Land the version bump, then push the tag: `git tag v0.4.0 <merged-sha> &&
+git push origin v0.4.0`, where the tag is exactly `v` + `kaya-cli`'s `[project].version`
+(`.github/workflows/release.yml` fails the run if it isn't). That is the *whole* manual step. The
+workflow builds, gates and publishes a public GitHub Release with `kaya-linux-x86_64` attached.
+
+Two things about that file are decisions rather than layout. **`contents: write` lives on the
+`publish` job, never on the workflow**, so the write token is out of scope while pytest and
+PyInstaller run. And **`publish` is gated on `github.event_name == 'push'` as well as on the tag
+prefix**, because `workflow_dispatch` accepts a ref and `gh workflow run release.yml --ref v0.4.0`
+would otherwise let a rehearsal cut a public release. A dispatch must stay a rehearsal — building
+and gating without publishing is how the pipeline gets exercised, and is how KAN-544's gate was
+proven in the first place. Never push a tag from a branch; a tag is how an unreviewed commit becomes
+a public download.
 
 **Dependencies.** Lockfiles committed, installs frozen, updates by **Dependabot** (not renovate;
 `.github/dependabot.yml` says why), vulnerabilities by `make audit`. **Do not move the audit into the

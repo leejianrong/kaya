@@ -2,6 +2,32 @@
 
 The `kaya` console script. Distribution name `kaya-notes`, one entry point, two read verbs.
 
+## Install
+
+Download the asset from the
+[latest release](https://github.com/leejianrong/kaya/releases/latest) and put it on your `PATH` as
+`kaya`:
+
+```bash
+mkdir -p ~/.local/bin
+curl -fsSL -o ~/.local/bin/kaya \
+  https://github.com/leejianrong/kaya/releases/latest/download/kaya-linux-x86_64
+chmod +x ~/.local/bin/kaya
+kaya --version
+```
+
+**`kaya-linux-x86_64`, Linux x86_64 only.** The release asset is a PyInstaller `--onefile`
+executable, which is per-platform by construction; the pipeline builds on one runner and claims
+only what that runner can prove, so there is no macOS or Windows build. The asset is *named* for
+the downloads folder it lands in and the *command* is `kaya` — a bare `kaya` in a release listing
+would collide with everything else in there.
+
+Two things follow from `--onefile` that surprise people, both covered below: the executable bit does
+not survive the download, hence `chmod +x`, and there are no `[project.scripts]` entry points inside
+the binary, which is why the short name is a symlink.
+
+## Working on it
+
 ```bash
 uv sync --all-extras
 uv run kaya            # prints what it is and what hasn't landed, exits 0
@@ -72,10 +98,10 @@ the release pipeline says so rather than staying quiet:
 
 ```console
 $ kaya --version
-kaya 0.3.0 (a1b2c3d)                                 # a release asset, built from a1b2c3d
+kaya 0.4.0 (a1b2c3d)                                 # a release asset, built from a1b2c3d
 
 $ kaya --version
-kaya 0.3.0 (source checkout, not a released build)   # whatever is in your working tree
+kaya 0.4.0 (source checkout, not a released build)   # whatever is in your working tree
 ```
 
 The second line is the point. Pandan's CLI printed a bare `0.3.0`, two user-visible fixes shipped

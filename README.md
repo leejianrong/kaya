@@ -8,11 +8,51 @@ cross-linked to the board.
 > **Status: the API works and the CLI reads; the product doesn't exist yet.** A pandan PAT creates,
 > reads, edits and deletes notes over `/api/v1/notes`, and the whole stack ships as one container
 > image serving the SPA and the API from a single origin. `kaya note list` and `kaya note get` read
-> those notes from a shell in `human`, `json` or `toon`. The SPA is still a shell, the write verbs
-> are V2b's, and the MCP adapter is still empty.
+> those notes from a shell in `human`, `json` or `toon`, and ship as a downloadable binary. The SPA
+> is still a shell, the write verbs are V2b's, and the MCP adapter is still empty.
 > See [`docs/PLAN.md`](docs/PLAN.md) for what is being built,
 > [`docs/SLICES.md`](docs/SLICES.md) for the order, and [`CLAUDE.md`](CLAUDE.md) for what is
 > genuinely in each package today. Work is tracked on pandan board 18.
+
+## Install the CLI
+
+The [latest release](https://github.com/leejianrong/kaya/releases/latest) carries one asset,
+`kaya-linux-x86_64`: a single self-contained executable, **Linux x86_64 only**. There is no macOS or
+Windows build — a onefile artifact is per-platform, and the pipeline ships only what one runner can
+prove.
+
+```bash
+mkdir -p ~/.local/bin
+curl -fsSL -o ~/.local/bin/kaya \
+  https://github.com/leejianrong/kaya/releases/latest/download/kaya-linux-x86_64
+chmod +x ~/.local/bin/kaya
+```
+
+The asset is named for the downloads folder it lands in; the command is `kaya`. Check what you
+actually got:
+
+```console
+$ kaya --version
+kaya 0.4.0 (a1b2c3d)
+```
+
+The sha is the commit it was built from, and a build that did *not* come from the release pipeline
+says `source checkout, not a released build` instead of staying quiet — that is the whole of
+[ADR 0007](docs/adr/0007-release-provenance-from-the-first-release.md), and the line is worth
+pasting into any bug report. Want a shorter name? `ln -sf ~/.local/bin/kaya ~/.local/bin/ky`; there
+is deliberately no second console script.
+
+Then point it at a deployment and give it a credential:
+
+```bash
+export KAYA_API_URL=http://localhost:8000   # the default, and what `make up` serves
+export KAYA_TOKEN=…                         # a pandan PAT — kaya mints none of its own (ADR 0002)
+kaya note list
+kaya note get NOTE-12 --format json
+```
+
+`note list` and `note get` are the only verbs today; the writes are the next slice's.
+[`kaya-cli/README.md`](kaya-cli/README.md) has the formats, the error contract and the exit codes.
 
 ## What it will do
 

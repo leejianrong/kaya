@@ -1,12 +1,16 @@
 name: Release
 
 # Build the `kaya` executable for a tag, and refuse to hand it over if it cannot say which commit
-# it came from (ADR 0007 §2). KAN-544.
+# it came from (ADR 0007 §2). KAN-544, then KAN-545 added the `publish` job.
 #
-# WHAT THIS WORKFLOW DOES NOT DO: it does not push a tag and it does not create a GitHub Release.
-# That is KAN-545. This job's whole job is to produce the artifact and prove it is identifiable;
-# publishing it is a separate decision with a separate permission (`contents: write`), and keeping
-# them apart is why the token below is read-only.
+# WHAT THIS WORKFLOW STILL DOES NOT DO: it does not push a tag. A tag is a human decision, made
+# against a reviewed commit; everything below reacts to one.
+#
+# TWO JOBS, AND THE SPLIT IS THE PERMISSION. `build` produces the artifact and proves it is
+# identifiable, under the read-only token at the bottom of this block. `publish` creates the
+# GitHub Release, and is the only thing in this repository holding `contents: write`. Keeping them
+# apart means the write token is never in scope while pytest, PyInstaller and every transitive
+# dependency of two packages are executing.
 #
 # STEP ORDER IS LOAD-BEARING IN EXACTLY ONE PLACE: tests run BEFORE the stamp. `kaya-client`'s
 # `test_the_committed_stamp_is_empty` asserts the repository's `_build_stamp.py` is unstamped —
@@ -21,10 +25,12 @@ name: Release
 on:
   push:
     tags: ["v*"]
-  # So the gate can be exercised against a real build without cutting a tag first. The
-  # tag/version agreement step below is the only one that needs a tag, and it skips.
+  # So the gate can be exercised against a real build without cutting a tag first, which is how
+  # KAN-544's gate was proven in the first place (run 31274406288). The tag/version agreement step
+  # and the whole `publish` job are the only things that need a tag, and both skip.
   workflow_dispatch:
 
+# The default for every job. `publish` overrides it and nothing else does.
 permissions:
   contents: read
 
@@ -85,11 +91,127 @@ jobs:
       - name: Gate — the artifact reports a real commit sha
         run: scripts/check-release-artifact.sh dist/kaya "$GITHUB_SHA"
 
-      # A build artifact, not a release asset. KAN-545 decides what gets published, and whether a
-      # macOS/Windows matrix is worth its runtime — a onefile executable is per-platform, and this
-      # job deliberately claims only what one Linux runner can prove.
+      # The workflow artifact, which every run produces including a dispatch. It is also how the
+      # binary reaches `publish` without that job holding a write token during the build.
+      #
+      # ONE PLATFORM, DELIBERATELY. A onefile executable is per-platform and this job claims only
+      # what one Linux runner can prove. A macOS/Windows matrix is NOT in scope for KAN-545; it is
+      # a separate decision about runtime cost, code signing and notarisation, and adding runners
+      # to this file is the easy half of it.
       - uses: actions/upload-artifact@v7
         with:
           name: kaya-linux-x86_64
           path: dist/kaya
           if-no-files-found: error
+
+  # KAN-545. Everything from here on happens ONLY for a pushed `v*` tag.
+  publish:
+    name: Publish the GitHub Release
+    needs: build
+    # BOTH HALVES OF THIS CONDITION ARE LOAD-BEARING, and the second is the one that is easy to
+    # leave out. `workflow_dispatch` accepts a ref, and `gh workflow run release.yml --ref v0.4.0`
+    # dispatches against a tag — so `startsWith(github.ref, 'refs/tags/v')` on its own would let a
+    # rehearsal cut a public release. The `push` test is what keeps the dispatch path a rehearsal.
+    #
+    # Failing in the other direction is cheap: a tag push that somehow skips this job publishes
+    # nothing and is re-runnable. A dispatch that publishes is a public release nobody asked for.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # Scoped to this job rather than the workflow, so the build never sees it. This is the only
+    # `contents: write` in the repository.
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      # `needs: build` already means the gate passed. This checkout is here so the same gate can
+      # be re-run below against the bytes that came back OUT of the artifact store, which are the
+      # bytes a downloader actually gets.
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: kaya-linux-x86_64
+          path: dist
+
+      # A release asset lands in someone's downloads folder next to everything else theirs, so it
+      # gets a name that survives that. Matches pandan's `pandan-linux-x86_64`. The executable bit
+      # does not survive the artifact zip (and no GitHub release asset carries one either), which
+      # is why the install instructions say `chmod +x` and why it is restored here before the gate
+      # can run the file.
+      - name: Name the asset for a human downloading it
+        run: |
+          mv dist/kaya dist/kaya-linux-x86_64
+          chmod +x dist/kaya-linux-x86_64
+
+      # ADR 0007 §2 again, on the artifact as published rather than as built. One line, and it
+      # closes the round trip: "the thing that ships identifies itself" is now a statement about
+      # the file being uploaded on the next step.
+      - name: Gate — the asset about to ship still reports a real commit sha
+        run: scripts/check-release-artifact.sh dist/kaya-linux-x86_64 "$GITHUB_SHA"
+
+      # `${GITHUB_REF_NAME#v}` is the version, and it is safe to say so: this job only runs for a
+      # tag push, and a tag push runs `build`'s tag/version agreement step, which fails the run
+      # unless the tag is exactly `v` + kaya-cli's `[project].version`.
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          short=${GITHUB_SHA:0:7}
+          asset_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/kaya-linux-x86_64"
+          notes="${RUNNER_TEMP}/release-notes.md"
+
+          {
+            cat <<'EOF'
+          **Linux x86_64 only.** The asset is a PyInstaller `--onefile` executable built on
+          `ubuntu-latest`. There is no macOS or Windows build: a onefile artifact is per-platform,
+          and this pipeline ships only what one runner can prove.
+
+          ## Install
+
+          EOF
+            printf '```bash\nmkdir -p ~/.local/bin\ncurl -fsSL -o ~/.local/bin/kaya %s\nchmod +x ~/.local/bin/kaya\n```\n\n' "$asset_url"
+            cat <<'EOF'
+          Or download `kaya-linux-x86_64` from the assets below, `chmod +x` it, and put it on your
+          `PATH` as `kaya`.
+
+          ## Check you got what this page says
+
+          EOF
+            printf '```console\n$ kaya --version\nkaya %s (%s)\n```\n\n' "$version" "$short"
+            cat <<'EOF'
+          That line existing at all is why this release exists
+          ([ADR 0007](https://github.com/leejianrong/kaya/blob/main/docs/adr/0007-release-provenance-from-the-first-release.md)):
+          a binary on `$PATH` that cannot say which commit it came from is indistinguishable from
+          current source, which cost the sibling project two false bug reports. Paste this line
+          into any bug report you file.
+
+          EOF
+            printf 'Anything else means you are running something else. `kaya %s (source checkout, not a\nreleased build)` is a working tree on your `PATH`, and a different sha is a different\nrelease. This one was built from commit `%s`, and the release job refuses to publish an\nasset whose `--version` says anything other than the line above.\n\n' "$version" "$GITHUB_SHA"
+            cat <<'EOF'
+          ## Want a shorter name?
+
+          ```bash
+          ln -sf ~/.local/bin/kaya ~/.local/bin/ky
+          ```
+
+          There is deliberately no second console script (ADR 0007 §4). A `[project.scripts]` alias
+          is generated by a packaging installer, and a onefile executable has no entry points in it
+          at all — so the alias would exist for `uv tool install` users and for nobody who
+          downloaded this asset. A symlink works identically on both.
+
+          ## What it does
+
+          `kaya note list` and `kaya note get <ref>`, against a kaya deployment named by
+          `KAYA_API_URL`, authenticated with a pandan PAT in `KAYA_TOKEN`. `--format human`,
+          `json` or `toon`. **Reads only** — the write verbs are the next slice's.
+          EOF
+          } > "$notes"
+
+          # `--verify-tag` refuses to invent a tag, and a re-run against an already-published tag
+          # fails on "release already exists" rather than quietly replacing what people have
+          # already downloaded. Both failures are the ones worth having.
+          gh release create "$GITHUB_REF_NAME" \
+            dist/kaya-linux-x86_64 \
+            --title "kaya ${version}" \
+            --notes-file "$notes" \
+            --verify-tag
