@@ -1,5 +1,12 @@
 [project]
 name = "kaya-client"
+# 0.6.0 — KAN-716 reconciles this package's request deadline with the backend's authentication
+# budget after KAN-666 split it. `DEFAULT_TIMEOUT` is an `httpx.Timeout` built from
+# `DEFAULT_CONNECT_TIMEOUT` (5 s) and `DEFAULT_READ_TIMEOUT` (40 s), where it was a single 30 s
+# float that a cold authentication — connect 5 s plus read 30 s — could outlast. Behavioural on
+# both axes: a request waits longer for an answer, and gives up sooner on a host that never
+# accepts the connection. `timeout=` still takes a float, and still means one deadline for every
+# phase when it does.
 # 0.5.0 — KAN-541 registers the `toon` format (encoder in `toon.py`, stdlib-only and encode-only),
 # adds `config` — PLAN §Config's environment tier and `open_client()` — and `MissingCredential`.
 # It also fixes a defect the verbs made reachable: `get_note` percent-encodes the ref, so
@@ -10,7 +17,7 @@ name = "kaya-client"
 # 0.3.0 — KAN-543 adds `provenance`, the build stamp both adapters read. 0.2.0 was KAN-540's
 # `KayaClient` and `render()` seam. A behavioural change to a shipped package bumps it in the same
 # PR (ADR 0007 §3, CLAUDE.md §Conventions §Versioning).
-version = "0.5.0"
+version = "0.6.0"
 description = "The shared core for kaya: the API client and the one payload-shaping seam"
 readme = "README.md"
 license = "Apache-2.0"

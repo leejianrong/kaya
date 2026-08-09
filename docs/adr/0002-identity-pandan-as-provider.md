@@ -138,3 +138,24 @@ threadpool workers, and 40 of them held for 30 s stalls note *saving* — work t
 pandan. Waiters receive the leader's exception rather than its `None`, so an outage during a stampede
 stays a `503` for every caller instead of becoming a `401` for all but one, which would have been
 this ADR's Q9 rule broken at the one moment it matters most.
+
+## Amendment (2026-08-09): the budget is a floor for everything downstream of it
+
+KAN-716. The amendment above changes what a *caller* of kaya has to tolerate, and it changed it
+silently. Connect + read is a floor under how long kaya may legitimately take to answer a first
+request on an uncached token — 35 s where the single deadline made it 10 — so any client with a
+deadline below that floor abandons a request kaya was about to answer and reports a transport
+failure on a working credential. That is this ADR's Q9 rule inverted and moved one layer out: an
+outage reported where there was none.
+
+`kaya-client` had exactly that defect for the length of V2a. Its 30 s deadline was chosen against
+KAN-539's measured 21.8 s and was correct when written; splitting the budget above raised the
+paper worst case past it. Nothing was measured to have failed — 21.8 s is comfortably inside 30 s,
+and the 30 s read budget is headroom rather than the expected case — but nothing stopped the two
+numbers drifting further apart either, which is the part that had to be fixed.
+
+**So the relationship is now stated and checked.** The client's read deadline exceeds connect + read
+plus a margin for the work kaya was asked to do (`kaya-client/src/kaya_client/client.py`, 40 s
+against 5 + 30 + 5), and `backend/tests/unit/test_client_deadline_outlasts_auth.py` fails if raising
+either budget here outgrows it. Nothing in §Decision or §Failure behaviour changes: this is a
+consequence of the deadline being split, written down where the next change to it will find it.

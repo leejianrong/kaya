@@ -15,6 +15,7 @@ import pytest
 from conftest import GROCERIES, NOTE_LIST_BODY
 
 from kaya_client import ApiError, KayaClient, Kind, TransportError, render
+from kaya_client.client import DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT, DEFAULT_TIMEOUT
 
 BASE_URL = "https://kaya.example"
 TOKEN = "kanban_pat_notarealtokenatall"
@@ -235,16 +236,79 @@ def test_a_client_it_built_itself_is_closed() -> None:
     assert client._client.is_closed
 
 
-def test_the_default_timeout_outlasts_a_cold_pandan() -> None:
-    """A cold introspection measured 21.8 s (PLAN §Open risks, KAN-539).
+BACKEND_CONNECT_BUDGET = 5.0
+BACKEND_READ_BUDGET = 30.0
+"""`KAYA_PANDAN_CONNECT_TIMEOUT_SECONDS` and `KAYA_PANDAN_READ_TIMEOUT_SECONDS`, the two budgets
+KAN-666 split kaya's introspection deadline into (`backend/app/config.py`).
 
-    A client deadline under that turns a slow-but-working upstream into a client-side failure the
-    server never hears about, which is strictly worse than waiting. Pinned as a literal so KAN-666's
-    fix, or its retry fallback landing in this package, has to look at this number on the way past.
+Literals, and stale by construction — this package cannot import the backend and must not learn how
+to (ADR 0004's arrow points here, not out). The *live* comparison is
+`backend/tests/unit/test_client_deadline_outlasts_auth.py`, which reads the constant below out of
+this package's AST and checks it against the backend's actual field defaults. These two are here so
+that the assertion below says what it is protecting rather than asserting a bare number, and so that
+a reader of this file can see where 40 came from."""
+
+
+def test_the_default_read_deadline_outlasts_the_backends_authentication() -> None:
+    """KAN-716's invariant, from this side.
+
+    A request that misses kaya's principal cache pays the connect budget *and* the read budget
+    before kaya looks at a note — 35 s today, of which a cold pandan really has taken 21.8 s
+    (KAN-539). Giving up first turns a request the server was about to answer into a client-side
+    failure it never hears about, which is strictly worse than waiting.
+
+    Lowering the constant is a change to this package and this is where it goes red; raising the
+    *backend's* budget past it is a change to the other package, and the guard named above is where
+    that goes red. Neither direction is unwatched, and neither test can watch both.
     """
-    from kaya_client.client import DEFAULT_TIMEOUT
+    assert DEFAULT_READ_TIMEOUT >= BACKEND_CONNECT_BUDGET + BACKEND_READ_BUDGET
 
-    assert DEFAULT_TIMEOUT >= 25.0
+
+def test_a_deadline_this_long_is_not_spent_finding_out_nothing_is_listening() -> None:
+    """The other half of the trade, and the reason the long deadline is affordable.
+
+    ADR 0003's spirit is that a degraded dependency fails fast, and a single 40 s number would spend
+    all of it on a host that is not answering at all. The phases are separate so that "wait out a
+    cold authentication" and "give up on an unreachable server" get different answers — the same
+    argument `app/auth/upstream.py`'s `split_timeout` makes about pandan, applied to kaya.
+    """
+    assert DEFAULT_CONNECT_TIMEOUT < DEFAULT_READ_TIMEOUT / 4
+
+
+def test_no_phase_of_the_default_deadline_is_left_unbounded() -> None:
+    """`httpx.Timeout` returns `None` for any phase omitted once one is given, and `None` means wait
+    forever. For a CLI that is a process that never returns, and it is reachable by naming three of
+    the four — the trap `test_split_timeout_leaves_no_phase_unbounded` covers in the backend."""
+    assert None not in (
+        DEFAULT_TIMEOUT.connect,
+        DEFAULT_TIMEOUT.read,
+        DEFAULT_TIMEOUT.write,
+        DEFAULT_TIMEOUT.pool,
+    )
+
+
+def test_a_caller_may_still_hand_over_one_number() -> None:
+    """Widening the parameter to `httpx.Timeout | float` must not break the one-number case.
+
+    Asserted on the built client rather than on the constructor not raising: "it did not blow up"
+    would also pass if the value were dropped on the floor and the default silently kept.
+    """
+    client = KayaClient(BASE_URL, TOKEN, timeout=1.5)
+    try:
+        assert client._client.timeout == httpx.Timeout(1.5)
+    finally:
+        client.close()
+
+
+def test_the_client_it_builds_carries_the_split_and_not_one_number() -> None:
+    """The constants existing proves nothing if `__init__` does not hand them to httpx."""
+    client = KayaClient(BASE_URL, TOKEN)
+    try:
+        assert client._client.timeout.connect == DEFAULT_CONNECT_TIMEOUT
+        assert client._client.timeout.read == DEFAULT_READ_TIMEOUT
+        assert client._client.timeout.connect != client._client.timeout.read
+    finally:
+        client.close()
 
 
 def test_the_client_feeds_render_directly() -> None:
