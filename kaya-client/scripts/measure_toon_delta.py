@@ -31,6 +31,15 @@ from a string. The cost is flat per render, so as with the summary the *percenta
 about what it is being added to, and the interesting row is the cheap read rather than the expensive
 one.
 
+**KAN-549 added the sixth**, and it is the only one about a whole *invocation* rather than about a
+payload. Bare `kaya` is the first call an agent makes, so its cost matters more than any other
+read's, and it is the one read in the tool whose payload is deliberately smaller than the answer.
+The table reports the shipped composition — `overview`'s three banner lines, joined by ``BLOCK_GAP``
+to the `human` render of `client.KayaClient.recent_notes`' slice — against the same corpus rendered
+unsliced, which is what a bare invocation would have cost had it printed everything. `human` for the
+reason the hints table gives: a bare invocation has no structured format (`kaya --format json` is a
+usage error), so a JSON column would measure a command nobody can type.
+
 **KAN-548 added the fourth.** The aggregate is the one thing this package adds to a payload rather
 than taking away from it, so its cost has to be reported the way the savings are. The baseline is
 the same render with no summary attached — literally what a read cost before KAN-548 — produced by
@@ -87,8 +96,10 @@ from kaya_client.client import (  # noqa: E402 - after the path insert, so a che
     NOTE_LIST_COLUMNS,
     NOTE_NOUN,
     NOTE_PROSE_FIELDS,
+    RECENT_NOTES,
 )
 from kaya_client.hints import help_block  # noqa: E402
+from kaya_client.overview import overview  # noqa: E402
 from kaya_client.payloads import Payload, Shaped  # noqa: E402
 from kaya_client.projection import project  # noqa: E402
 from kaya_client.render import render  # noqa: E402
@@ -244,6 +255,39 @@ def measure_hints(
     return count_tokens(without), count_tokens(rendered)
 
 
+BARE_PROGRAM = "kaya"
+BARE_VERSION = "0.9.0"
+BARE_EXECUTABLE = "/home/agent/.local/bin/kaya"
+"""A plausible banner's three inputs. Written out rather than read from the running process, so the
+number does not move with whoever ran the script or how deep their checkout is nested — the path is
+two tokens either way, and a measurement that drifted with a developer's home directory would be
+reporting the filesystem."""
+
+
+def measure_bare(
+    payload: Payload,
+    count_tokens,
+    limit: int | None = RECENT_NOTES,
+) -> int:
+    """What one bare `kaya` costs an agent, in `human` tokens (KAN-549).
+
+    The whole invocation and not just the payload: `overview`'s three lines, ``BLOCK_GAP``, and the
+    shipped `human` render of the slice — which is exactly what `kaya_cli.__main__.main` prints, in
+    the same order, from the same two functions. ``limit=None`` is the unsliced baseline: what a
+    bare invocation would cost if it printed the corpus.
+
+    ``text_limit`` is left at ``render``'s default because that is what the CLI resolves for an
+    invocation with no ``--full``; the default row carries no prose anyway, so the number is the
+    rows rather than the truncator.
+    """
+    limited = payload if limit is None else payload.limited_to(limit)
+    rendered = render(limited, fmt="human")
+    assert isinstance(rendered, str)
+
+    banner = overview(BARE_PROGRAM, BARE_VERSION, BARE_EXECUTABLE)
+    return count_tokens(BLOCK_GAP.join((banner, rendered)))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--notes", type=int, default=DEFAULT_NOTES)
@@ -327,6 +371,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         ("`note list` (empty)", measure_hints(list_payload([]), count_tokens)),
     ]
 
+    invocations: list[tuple[str, int]] = [
+        (f"bare `kaya` (banner + {RECENT_NOTES} rows)", measure_bare(listed, count_tokens)),
+        ("bare `kaya` at a limit of 10", measure_bare(listed, count_tokens, 10)),
+        (
+            f"bare `kaya` with no slice ({args.notes} rows)",
+            measure_bare(listed, count_tokens, None),
+        ),
+        (
+            f"`note list` ({args.notes} rows, no banner)",
+            measure_hints(listed, count_tokens)[1],
+        ),
+    ]
+    bare_shipped = invocations[0][1]
+
     over_limit = sum(1 for note in notes if len(note["body"]) > DEFAULT_TEXT_LIMIT)
     listed_full_json = truncated[0][1][0]
     listed_full_toon = truncated[0][1][1]
@@ -384,6 +442,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"| {name} | {bare_human:,} | {with_help:,} | "
                 f"{_share(with_help, bare_human)} |"
             )
+        print()
+        print("| whole invocation, `human` | tokens | vs shipped bare `kaya` |")
+        print("|---|---:|---:|")
+        for name, tokens in invocations:
+            print(f"| {name} | {tokens:,} | {_share(tokens, bare_shipped)} |")
     else:
         for name, (as_json, as_toon, delta) in rows:
             print(f"{name}: json {as_json:,}  toon {as_toon:,}  delta {delta:+.1f}%")
@@ -413,6 +476,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{name}: human {bare_human:,} -> {with_help:,} "
                 f"({_share(with_help, bare_human)})"
             )
+        print()
+        for name, tokens in invocations:
+            print(f"{name}: human {tokens:,} ({_share(tokens, bare_shipped)})")
     return 0
 
 

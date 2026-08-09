@@ -11,11 +11,16 @@ Two things live here, and the second is the reason the first must not return a `
   reimplements any of it, and a projection or truncation rule appearing in `kaya-cli/` or `mcp/` is
   a bug rather than a local optimisation.
 
-A third, smaller thing sits alongside them for the same reason: ``version_line()`` in `provenance`,
-which turns the build stamp into ADR 0007's two ``--version`` forms. It is here rather than in
-`kaya-cli` because the sha is a fact about the repository both adapters are built from, and because
-V6's MCP server reports its own provenance by calling it. It deliberately does *not* go through
-``render``, whose signature ADR 0005 freezes until V2b — see `provenance`'s module docstring.
+Two smaller things sit alongside them for the same reason, and **neither goes through ``render``**:
+``version_line()`` in `provenance`, which turns the build stamp into ADR 0007's two ``--version``
+forms, and ``overview()`` in `overview`, which is ADR 0005 §contract 7's banner — the executable
+path and the one-line description a bare `kaya` prints above its notes. Both are here because the
+facts are the *suite's* rather than an adapter's: the sha is a fact about the repository both
+adapters are built from, and "what is kaya?" has one answer that V6's MCP server advertises too.
+Both take the adapter-specific parts as plain ``str`` parameters and neither takes a ``Payload``, so
+neither can format a result — which is what keeps "``render`` is called in exactly one place in
+`kaya-cli`" checkable. Routing either through ``render`` would mean a fifth parameter, which is the
+precise signal ADR 0005 says to stop on.
 
 ``render`` is four composable steps in ADR 0004's fixed order, one module each, so the "god
 function" risk that ADR flags against itself has somewhere to be tested apart:
@@ -64,18 +69,23 @@ is a static per-kind string an agent learns once, so paying for it on every stru
 the cost ADR 0004 exists to recover, spent by the layer written to recover it. They are keyed on the
 payload's own ``kind`` and ``noun``, never on a verb name, and every one of them parses as a real
 command — pinned in `kaya-cli`, which is where the parser lives.
+**KAN-549 completed V2b** with content-first bare invocation: `overview` above, ``RECENT_NOTES`` and
+``KayaClient.recent_notes``, and ``Payload.limited_to`` — the rows-wise twin of ``narrowed_to``, and
+the reason "the aggregate describes the returned set" needed no new rule to stay true of a sliced
+read.
 ADR 0005 puts the signature before the behaviour on purpose — **``render``'s signature did not move
-for any of the four cards and must not move for what follows**; if a later card needs it to change,
+for any of the six cards and must not move for what follows**; if a later card needs it to change,
 that is the signal the sequencing broke, not a reason to push through. ``render``'s module docstring
 argues requirement by requirement why.
 
-Still to come: content-first bare invocation (KAN-549), search and links (KAN-558/559, KAN-566).
+Still to come: search and links (KAN-558/559, KAN-566), and the MCP adapter that calls all of this
+(V6).
 """
 
 from importlib.metadata import PackageNotFoundError, version
 
 from kaya_client.aggregates import COUNT_KEY, attach_summary, summary_line
-from kaya_client.client import KayaClient
+from kaya_client.client import RECENT_NOTES, KayaClient
 from kaya_client.config import (
     API_URL_ENV,
     MAX_TEXT_CHARS_ENV,
@@ -104,11 +114,13 @@ from kaya_client.errors import (
     error_payload,
 )
 from kaya_client.hints import HELP_PREFIX, HINTS, help_block, help_lines
+from kaya_client.overview import DESCRIPTION, overview
 from kaya_client.payloads import Kind, Payload, Shaped
 from kaya_client.projection import project
 from kaya_client.provenance import SOURCE_CHECKOUT, build_sha, version_line
 from kaya_client.render import render, render_error
 from kaya_client.serialization import (
+    BLOCK_GAP,
     CLI_FORMATS,
     ERROR_MARKER,
     ROW_SEPARATOR,
@@ -127,16 +139,19 @@ except PackageNotFoundError:  # pragma: no cover - source checkout without an in
 __all__ = [
     "API_URL_ENV",
     "ARG_KEY",
+    "BLOCK_GAP",
     "CLI_FORMATS",
     "CODE_KEY",
     "CONTRACT_KEYS",
     "COUNT_KEY",
     "DEFAULT_TEXT_LIMIT",
+    "DESCRIPTION",
     "ERROR_MARKER",
     "HELP_PREFIX",
     "HINTS",
     "MAX_TEXT_CHARS_ENV",
     "MESSAGE_KEY",
+    "RECENT_NOTES",
     "ROW_SEPARATOR",
     "SETTINGS",
     "SOURCE_CHECKOUT",
@@ -164,6 +179,7 @@ __all__ = [
     "hint",
     "max_text_chars",
     "open_client",
+    "overview",
     "path_payload",
     "project",
     "read_settings_file",

@@ -3,6 +3,18 @@
 # (pandan ADR 0018 §Package-name reality). That constrains the distribution name only. The console
 # script is `kaya`, and there is exactly one of them (Q39).
 name = "kaya-notes"
+# 0.9.0 — KAN-549 lands SLICES §V2b step 4, ADR 0005 §contract 7's content-first bare invocation,
+# and completes V2b. Bare `kaya` was a banner and an epilogue that exited `0` on any machine; it now
+# opens a session, prints three banner lines and the caller's five most recently updated notes with
+# the aggregate over *those five*, and exits `0`. **Behavioural on the exit code**: with no token
+# configured it is exit `1` and `error<TAB>no_credential<TAB>…` on stdout where it used to be `0`
+# and a banner — which is contract 7's own note ("no token → a structured auth error") and the
+# reason this is a bump rather than a docs change. `--help` and `--version` are untouched, and both
+# still answer before anything opens a session. It is dispatched as `verbs.BARE`, a row in the same
+# table as every other verb, so `render` is still called in exactly one place in this package — the
+# banner is `kaya_client.overview`, takes no `Payload`, and is joined to the render by `BLOCK_GAP`
+# on the one `print`. `executable_path()` is this package's share and the only new logic: `argv[0]`
+# resolved through `PATH`, or `sys.executable` in a frozen build.
 # 0.8.0 — KAN-551 lands SLICES §V2b step 6: the full verb set. `note create`, `note edit`,
 # `note move` and `note delete` join the two reads, and `config {set,show,path}` arrives as a
 # second dispatch table for the verbs that need no session — `config show` has to answer when
@@ -34,7 +46,7 @@ name = "kaya-notes"
 # 0.2.0 — KAN-543 gives the CLI argument parsing and ADR 0007's build-stamped `--version`. A
 # behavioural change to a shipped package bumps it in the same PR (ADR 0007 §3, CLAUDE.md
 # §Conventions §Versioning).
-version = "0.8.0"
+version = "0.9.0"
 description = "kaya — the notes CLI"
 readme = "README.md"
 license = "Apache-2.0"

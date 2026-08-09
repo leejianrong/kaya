@@ -11,8 +11,8 @@ and does not touch this one.
 
     render(payload, *, fields=None, text_limit=500, fmt="human") -> str | dict
 
-ADR 0005's sequencing rule says this signature has to absorb V2b without moving. **Four V2b items
-have now landed and this file's diff for all four is docstring** — projection went live entirely
+ADR 0005's sequencing rule says this signature has to absorb V2b without moving. **All of V2b has
+now landed and this file's diff for every card of it is docstring** — projection went live entirely
 inside `projection`, including the single-entity refusal that the list below predicted would be the
 one to force a fifth parameter; truncation went live entirely inside `truncation`, hint and all; the
 aggregate went live entirely inside `aggregates`, which needed no argument because it is handed the
@@ -50,7 +50,16 @@ template is keyed on. Taking V2b's build plan item by item:
   formats (SLICES §V2b), so they are printed by `serialization._as_human` and never attached to the
   shaped dict — the same shape `aggregates.summary_line` already had for a footer.
 
-The one thing V2b will find missing is deliberate: there is no ``full=True`` flag, because ADR
+- **Content-first bare invocation.** Landed in KAN-549, and it is the item that looked like it
+  needed *two* new things here: a limit, and somewhere for a banner to go. Neither arrived. The
+  limit is `payloads.Payload.limited_to`, applied at the *call* by `client.KayaClient.recent_notes`,
+  so what reaches this function is an ordinary payload of five records and ADR 0005 §contract 5's
+  "the returned set, not the whole corpus" is true of it without anything here knowing a slice
+  happened. The banner is `overview.overview`, which takes three strings and no ``Payload`` — it
+  cannot format a result, so it is not a second renderer, and it is joined to this function's output
+  by the caller with the same ``BLOCK_GAP`` every trailing block already uses.
+
+The one thing V2b found missing is deliberate: there is no ``full=True`` flag, because ADR
 0005's ``--full`` already has a spelling here (``text_limit=0``) and two spellings of one state is
 how a config layer ends up disagreeing with a flag.
 

@@ -1,5 +1,16 @@
 [project]
 name = "kaya-client"
+# 0.12.0 — KAN-549 completes V2b with ADR 0005 §contract 7's content-first bare invocation. New:
+# `overview.overview()`, the three banner lines a bare `kaya` prints — the version line, the
+# executable path and the sentence naming the slice — which takes three `str`s and **no `Payload`**,
+# so it cannot format a result and `render` stays the one seam; `client.RECENT_NOTES` and
+# `KayaClient.recent_notes()`; and `Payload.limited_to()`, `narrowed_to`'s rows-wise twin. The slice
+# lives here rather than in an adapter because it changes what a read costs (ADR 0004), and applying
+# it at the *call* is what makes "the summary describes the returned set" (ADR 0005 §contract 5)
+# true of a bare invocation with no rule added to `aggregates`. `BLOCK_GAP` and `DESCRIPTION` are
+# now exported, so an adapter joining a banner to a render does not spell `"\n\n"` or the product
+# description for itself. New public API, so a minor bump; no existing call changes behaviour.
+# `render`'s signature did not move, for the sixth and last V2b card.
 # 0.11.0 — KAN-550 adds ADR 0005 §contract 8's `help[]` next-step templates: `hints.help_lines` and
 # `hints.help_block`, keyed on the payload's own `kind` and `noun` and never on a verb name, with
 # every placeholder left unfilled. They are **human-only** — suppressed under `json`, `toon` and
@@ -50,7 +61,7 @@ name = "kaya-client"
 # 0.3.0 — KAN-543 adds `provenance`, the build stamp both adapters read. 0.2.0 was KAN-540's
 # `KayaClient` and `render()` seam. A behavioural change to a shipped package bumps it in the same
 # PR (ADR 0007 §3, CLAUDE.md §Conventions §Versioning).
-version = "0.11.0"
+version = "0.12.0"
 description = "The shared core for kaya: the API client and the one payload-shaping seam"
 readme = "README.md"
 license = "Apache-2.0"

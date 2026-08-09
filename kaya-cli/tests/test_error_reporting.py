@@ -101,8 +101,14 @@ def test_the_exit_code_reaches_the_shell() -> None:
 # ------------------------------------------------------------------ the quiet paths
 
 
-def test_a_bare_invocation_still_succeeds_on_stdout_alone(capsys) -> None:
-    """ADR 0005 §contract 7. The parser is empty, so this is the path most at risk from it."""
+def test_a_bare_invocation_still_succeeds_on_stdout_alone(capsys, answering) -> None:
+    """ADR 0005 §contract 7. The parser is empty, so this is the path most at risk from it.
+
+    KAN-549 gave a bare invocation a **session**, so it now needs an API to succeed against. What
+    this file still owns is the stream discipline: everything on stdout, stderr untouched, and no
+    error row on a successful read. `tests/test_bare_invocation.py` owns what the output says.
+    """
+    answering(200, {"notes": []})
     code = main([])
     captured = capsys.readouterr()
 
@@ -110,6 +116,18 @@ def test_a_bare_invocation_still_succeeds_on_stdout_alone(capsys) -> None:
     assert captured.out.startswith("kaya ")
     assert captured.err == ""
     assert "error\t" not in captured.out
+
+
+def test_a_bare_invocation_with_no_credential_reports_on_stdout(capsys) -> None:
+    """The other half, and the reason contract 7 carries a note about it: with nothing configured a
+    bare `kaya` is a *failure*, and it has to be the same four-field row every other failure is — on
+    stdout, stderr clean, and with no banner in front of it for a reader to have to skip."""
+    code = main([])
+    captured = capsys.readouterr()
+
+    assert code == 1
+    assert captured.out.startswith("error\tno_credential\t")
+    assert captured.err == ""
 
 
 def test_help_exits_zero_and_is_not_an_error(capsys) -> None:

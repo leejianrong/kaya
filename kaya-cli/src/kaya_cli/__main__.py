@@ -44,16 +44,38 @@ an exit code.
 
 ### Bare `kaya`
 
-Still the banner, with the version line as its first row, so provenance is one keystroke away even
-from a mistyped command. ADR 0005 §contract 7 replaces it with live state in V2b; the exit code is
-`0` either way.
+**Live state since KAN-549**, which is ADR 0005 §contract 7 arriving: three banner lines, the
+caller's five most recently updated notes, the aggregate over *those five*, and the `help:`
+templates. Exit `0`. With no token it is the structured `no_credential` row on stdout and exit `1` —
+the same funnel every other failure takes, which is why there is no traceback to prevent.
+
+Three things about it are decisions rather than layout:
+
+- **It is a verb** (`verbs.BARE`), dispatched by the same table lookup as `note list`. So it opens
+  its session, closes it, reports its failures and renders its payload through the code every other
+  verb already uses, and this file gained no second path for it.
+- **The banner is not a payload and does not go through ``render``.** `kaya_client.overview` takes
+  three strings — program, version, executable path — and no ``Payload``, so it *cannot* format a
+  result. That is what keeps "``render`` is called here and nowhere else" true with a banner on
+  screen: the two are joined by ``BLOCK_GAP`` on the print below, not by a second rendering. The
+  same door ``version_string`` already takes, for the reason `kaya_client.provenance` gives.
+- **A bare invocation has no output flags**, because the top-level parser has none — ``--format``,
+  ``--fields`` and ``--full`` live on the verbs. `kaya --format json` is a usage error, unchanged
+  from V2a, and the alternative is worse than it looks: a banner is prose and would have to be
+  either invalid JSON in front of a document or a key inside one, and `kaya note list --format json`
+  already answers the question that reaches for. So the banner is `human`'s alone by construction
+  rather than by a suppression rule, which is the same shape `hints` has for `help:` lines.
 """
 
 import argparse
+import os
+import shutil
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
-from kaya_client import Format, KayaError, render, version_line
+from kaya_client import BLOCK_GAP, Format, KayaError, overview, render, version_line
+from kaya_client import DESCRIPTION as PRODUCT
 
 from kaya_cli import __version__, verbs
 from kaya_cli.failures import EXIT_OK, report
@@ -76,10 +98,16 @@ from kaya_cli.parsing import (
 
 PROG = "kaya"
 
-DESCRIPTION = "kaya — markdown notes, API-first."
+DESCRIPTION = f"{PROG} — {PRODUCT}."
+"""argparse's header, built from `kaya_client.overview.DESCRIPTION` rather than written again.
+
+The banner's second line and this one are then the same sentence by construction. Two copies would
+drift the first time one of them was improved, and which one a user meets depends on whether they
+typed a command — the worst way for a product description to be inconsistent."""
 
 EPILOGUE = (
-    "Notes: `note list`, `note get <ref>`, `note create <title>`, `note edit <ref>`,\n"
+    "Bare `kaya` prints this build, where it is installed, and your five most recently updated\n"
+    "notes. Notes: `note list`, `note get <ref>`, `note create <title>`, `note edit <ref>`,\n"
     "`note move <ref> <path>`, `note delete <ref>`. Configuration: `config show`, `config set`,\n"
     "`config path`. `--fields a,b,c` selects columns on a list, and prose is cut to\n"
     "KAYA_MAX_TEXT_CHARS (default 500) unless `--full`. A note is addressed as NOTE-12, note-12\n"
@@ -98,6 +126,57 @@ def version_string() -> str:
     return version_line(PROG, __version__)
 
 
+def executable_path() -> str:
+    """**Which** `kaya` is running — the second line of KAN-549's banner.
+
+    ADR 0007's whole point is that a build must be able to say what it is, and a sha answers half of
+    that question. The other half is *where the thing that printed it lives*, because the failure
+    ADR 0007 exists for — "a stale binary became indistinguishable from current source" — is a
+    failure about which copy is on the ``PATH``. Printed next to the version line the two are one
+    diagnostic; printed alone, either is half of one.
+
+    So this is **the path of the program**, not of the interpreter, and the three environments it
+    has to answer in disagree about what that means:
+
+    - **A frozen release asset** (PyInstaller, KAN-544). ``sys.executable`` *is* `kaya`, because the
+      bootloader is the interpreter, and ``sys.argv[0]`` may be a relative name the user typed. So
+      ``sys.frozen`` is checked first and ``sys.executable`` wins.
+    - **An installed console script** (`uv tool install`, a venv). ``sys.executable`` is
+      ``…/bin/python``, which is the wrong answer — it names the interpreter every Python program on
+      the machine shares. ``sys.argv[0]`` is the script, and it is a bare ``kaya`` when the shell
+      found it on the ``PATH``, so `shutil.which` recovers the directory that ``PATH`` actually
+      resolved to. That is the useful fact: "you have two kayas installed" is precisely the
+      confusion this line settles.
+    - **A source checkout** (``python -m kaya_cli``, ``uv run``). ``sys.argv[0]`` is the
+      ``__main__.py`` inside the checkout, which is again the right answer — it names the tree, and
+      the version line above it already says "source checkout, not a released build".
+
+    Symlinks are resolved, because the question is which file runs and not which name was typed. The
+    README documents a symlink as the supported way to have a short alias (ADR 0007 §4 allows
+    exactly one console script), so an unresolved answer would name the alias and hide the target.
+
+    It is here rather than in `kaya_client` because only an adapter has an ``argv`` — the same split
+    `kaya_client.provenance` makes, where the client owns the *line* and the caller supplies the
+    facts. A resolution that fails at any step degrades to the program name rather than raising: a
+    banner is a diagnostic, and one that crashes while identifying itself is worse than a vague one.
+    """
+    if getattr(sys, "frozen", False):  # pragma: no cover - only true inside a PyInstaller build
+        return _resolved(sys.executable)
+
+    invoked = sys.argv[0] if sys.argv else ""
+    if invoked and os.sep not in invoked:
+        invoked = shutil.which(invoked) or invoked
+    return _resolved(invoked) if invoked else PROG
+
+
+def _resolved(path: str) -> str:
+    """``path`` absolute and symlink-free, or exactly what was passed if it cannot be resolved."""
+    try:
+        return str(Path(path).resolve())
+    except OSError:  # pragma: no cover - a path the filesystem refuses to answer about
+        return path
+
+
 def build_parser() -> StructuredParser:
     """The argument parser, verbs and all.
 
@@ -109,7 +188,13 @@ def build_parser() -> StructuredParser:
 
     ``note``'s subparsers are ``required=True`` so that bare `kaya note` is a usage error naming the
     words it accepts. The *top-level* set is not required, because bare `kaya` is a successful
-    invocation that prints the banner (ADR 0005 §contract 7).
+    invocation that prints live state (ADR 0005 §contract 7).
+
+    ``set_defaults`` is what lets that be a table row rather than a branch. Argparse leaves
+    ``subcommand`` off the namespace entirely when no command word was given, so `verbs.run` would
+    raise ``AttributeError`` — a traceback where a structured result belongs — on the one invocation
+    most likely to be somebody's first. Two explicit ``None``s make the bare case dispatch to
+    ``verbs.BARE`` through the same lookup as everything else.
     """
     parser = StructuredParser(
         prog=PROG,
@@ -117,6 +202,7 @@ def build_parser() -> StructuredParser:
         epilog=EPILOGUE,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.set_defaults(command=None, subcommand=None)
     parser.add_argument(
         "--version",
         action="store_true",
@@ -302,9 +388,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(version_string())
             return EXIT_OK
 
-        if args.command is None:
-            print(f"{version_string()}\n{EPILOGUE}")
-            return EXIT_OK
+        # KAN-549's banner, built **before** the request and printed **after** it — the only two
+        # things about these two lines that matter.
+        #
+        # Before, because `overview` needs nothing from the payload and a banner assembled beside
+        # the render would read as though it might. After, because the print below is the only
+        # statement that writes to stdout on the success path: a banner emitted eagerly would still
+        # be on stdout when `verbs.run` raised, so `kaya` with no token would put three lines of
+        # prose above `failures.report`'s structured row, and an agent reading stdout would have to
+        # skip them to find the answer. ADR 0005 §contract 7's "a structured auth error, not a stack
+        # trace" is about what the caller can *parse*, and prose in front of the row is the same
+        # defect in a politer form.
+        #
+        # A tuple rather than a string, so the empty case contributes nothing at all to the `print`
+        # below instead of an empty block the separator would still be applied to.
+        bare = args.command is None
+        banner = (overview(PROG, __version__, executable_path()),) if bare else ()
 
         # Resolved from the payload, **after** the verb, and only when there is prose to cut. It
         # was eager here until KAN-551's review, and the bug that caused is worth writing down
@@ -329,7 +428,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         # bought nothing at all for the verbs that never truncate.
         payload = verbs.run(args)
         text_limit = resolve_text_limit(args) if payload.prose_fields else NO_TEXT_LIMIT
-        print(render(payload, fields=resolve_fields(args), text_limit=text_limit, fmt=fmt))
+        rendered = render(payload, fields=resolve_fields(args), text_limit=text_limit, fmt=fmt)
+        # `render` is still called exactly once in this package, with `banner` empty for every verb
+        # — `tests/test_bare_invocation.py` asserts the count over this file's AST. `BLOCK_GAP` is
+        # `kaya_client`'s own separator, imported rather than spelled `"\n\n"` here, because how far
+        # apart two blocks of a human render sit is a formatting decision and this package does not
+        # make those.
+        print(*banner, rendered, sep=BLOCK_GAP)
         return EXIT_OK
     except ParserExit as ended:
         # `--help`, and nothing else today. Argparse has already printed; there is no failure to
