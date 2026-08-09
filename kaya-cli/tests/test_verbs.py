@@ -180,13 +180,41 @@ def test_every_format_prints_exactly_one_trailing_newline(capsys, answering) -> 
 
 
 def test_every_parser_word_has_a_verb_and_every_verb_has_a_parser_word() -> None:
-    """`build_parser` and `verbs.VERBS` cannot drift about which words exist.
+    """`build_parser` and the dispatch tables cannot drift about which words exist.
 
     A subparser without a row is a ``KeyError`` at dispatch — a traceback where a structured refusal
-    belongs. A row without a subparser is dead code that reads as a shipped feature. V2b adds both
-    halves for each write verb, and this is what fails if it adds only one.
+    belongs. A row without a subparser is dead code that reads as a shipped feature. KAN-551 added
+    seven words and this is what would have failed if it had added only one half of any of them.
     """
-    assert _parser_words(build_parser()) == set(verbs.VERBS)
+    assert _parser_words(build_parser()) == set(verbs.VERBS) | set(verbs.LOCAL_VERBS)
+
+
+def test_the_two_dispatch_tables_are_disjoint() -> None:
+    """A word in both tables would dispatch to whichever `run` happened to check first, and the
+    other row would be dead code that reads as the implementation. The split is about the session
+    (`config show` must answer with no token at all), so overlap is not a merge — it is two
+    different answers to "does this verb talk to the API?"."""
+    assert not set(verbs.VERBS) & set(verbs.LOCAL_VERBS)
+
+
+def test_the_published_verb_set_is_pinned() -> None:
+    """SLICES §V2b step 6's list, written out so that adding a verb is a visible edit here.
+
+    The same discipline as `kaya-client`'s pin on ``CLI_FORMATS``: a verb reaching a shell is a
+    published contract, and the way one arrives unnoticed is as a side effect of a refactor that
+    was about something else.
+    """
+    assert _parser_words(build_parser()) == {
+        ("note", "list"),
+        ("note", "get"),
+        ("note", "create"),
+        ("note", "edit"),
+        ("note", "move"),
+        ("note", "delete"),
+        ("config", "set"),
+        ("config", "show"),
+        ("config", "path"),
+    }
 
 
 def _parser_words(parser) -> set[tuple[str, str]]:
@@ -237,10 +265,16 @@ def test_note_get_without_a_ref_is_a_usage_error(capsys) -> None:
     assert "ref" in captured.err
 
 
-def test_the_write_verbs_have_not_landed(capsys) -> None:
-    """V2b's, and until then they must be *refused*. A CLI that silently accepted a verb it does
-    not have would report success for work it never did — the failure an agent cannot detect."""
-    for word in ("create", "edit", "move", "delete", "search"):
+def test_a_verb_that_has_not_landed_is_still_refused(capsys) -> None:
+    """The shape of this test outlived the list it was written for.
+
+    It began as "the write verbs have not landed" and passed for `create`/`edit`/`move`/`delete`
+    until KAN-551 shipped them — at which point it would have gone on passing, because every one of
+    those words now fails for a *different* reason (a missing positional). That is the failure mode
+    it was written to catch, so the list is now the words that genuinely do not exist. `search` is
+    KAN-558/559's and `archive` is nobody's.
+    """
+    for word in ("search", "archive", "link"):
         assert main(["note", word]) == 2
         assert capsys.readouterr().out.startswith("error\tusage\t")
 

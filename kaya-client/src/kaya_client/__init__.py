@@ -3,7 +3,9 @@
 Two things live here, and the second is the reason the first must not return a ``dict``:
 
 - ``KayaClient`` over httpx, the only thing in the suite that speaks to ``/api/v1``. Its methods
-  return a ``Payload`` — the complete API response plus the schema facts shaping needs.
+  return a ``Payload`` — the complete API response plus the schema facts shaping needs. Since
+  KAN-551 that is the full CRUD set: ``list_notes``, ``get_note``, ``create_note``, ``update_note``,
+  ``move_note`` (which *is* ``update_note``, per ADR 0008) and ``delete_note``.
 - ``render(payload, *, fields, text_limit, fmt)`` — the one seam every projection, truncation,
   aggregate and serialization decision goes through (ADR 0004). Both adapters call it. Neither
   reimplements any of it, and a projection or truncation rule appearing in `kaya-cli/` or `mcp/` is
@@ -29,9 +31,14 @@ stdlib-only and **encode-only**: the round-trip contract is proven by a decoder 
 ``tests/``, because nothing in the product reads TOON back.
 
 ``config`` resolves PLAN §Config's ``KAYA_API_URL``, ``KAYA_TOKEN`` and — since KAN-547 —
-``KAYA_MAX_TEXT_CHARS`` from the environment, and hands back a ``KayaClient``, so both adapters
-agree about which deployment they are talking to and how much prose a read returns. Its file tiers
-and the ``config`` verbs are KAN-551's.
+``KAYA_MAX_TEXT_CHARS``, and hands back a ``KayaClient``, so both adapters agree about which
+deployment they are talking to and how much prose a read returns. **KAN-551 added the user config
+file** — JSON under ``$XDG_CONFIG_HOME/kaya/config.json``, consulted per key after the environment —
+and the three ``config`` verbs as ``Payload``-returning functions (`settings_payload`,
+`path_payload`, `write_settings`), so an adapter's ``config show`` is a subparser and a table row
+rather than a printer. A write merges onto what is already there; ``config show`` prints ``set`` for
+a bearer and never a fragment of one. PLAN's third tier, the nearest ``.mcp.json``, is V6's — see
+that module's docstring for why it arrives with the server it configures.
 
 **Failures render through the same layer** (KAN-542). ``render_error(failure, fmt=…)`` produces ADR
 0005 §contract 3's ``error<TAB>code<TAB>message<TAB>arg`` row or the ``{"error": {…}}`` object, with
@@ -56,8 +63,8 @@ for any of the three cards and must not move for what follows**; if a later card
 that is the signal the sequencing broke, not a reason to push through. ``render``'s module docstring
 argues requirement by requirement why.
 
-Still to come: content-first bare invocation and ``help[]``, the write verbs, search and links
-(KAN-558/559, KAN-566).
+Still to come: content-first bare invocation and ``help[]``, search and links (KAN-558/559,
+KAN-566).
 """
 
 from importlib.metadata import PackageNotFoundError, version
@@ -67,10 +74,16 @@ from kaya_client.client import KayaClient
 from kaya_client.config import (
     API_URL_ENV,
     MAX_TEXT_CHARS_ENV,
+    SETTINGS,
     TOKEN_ENV,
     api_url,
+    config_path,
     max_text_chars,
     open_client,
+    path_payload,
+    read_settings_file,
+    settings_payload,
+    write_settings,
 )
 from kaya_client.errors import (
     ARG_KEY,
@@ -117,6 +130,7 @@ __all__ = [
     "MAX_TEXT_CHARS_ENV",
     "MESSAGE_KEY",
     "ROW_SEPARATOR",
+    "SETTINGS",
     "SOURCE_CHECKOUT",
     "TOKEN_ENV",
     "AdapterFormat",
@@ -135,16 +149,21 @@ __all__ = [
     "api_url",
     "attach_summary",
     "build_sha",
+    "config_path",
     "error_payload",
     "hint",
     "max_text_chars",
     "open_client",
+    "path_payload",
     "project",
+    "read_settings_file",
     "render",
     "render_error",
     "serialize",
     "serialize_error",
+    "settings_payload",
     "summary_line",
     "truncate",
     "version_line",
+    "write_settings",
 ]

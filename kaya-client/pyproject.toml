@@ -1,5 +1,20 @@
 [project]
 name = "kaya-client"
+# 0.10.0 — KAN-551 completes the client's CRUD surface and PLAN §Config's second tier. New:
+# `create_note`, `update_note`, `move_note` (which *is* `update_note` — ADR 0008 makes a move a
+# `PATCH` to one column) and `delete_note`, every one of them through the one `_note_path` that
+# percent-encodes a ref as a single segment. ADR 0009's precondition is forwarded as an opaque
+# string so nothing in this package can lose a microsecond. Also the user config file — JSON under
+# `$XDG_CONFIG_HOME/kaya/config.json`, consulted per key after the environment — and the three
+# `config` verbs as `Payload` builders (`settings_payload`, `path_payload`, `write_settings`). A
+# write merges onto what is already there, so a hand-set `max_text_chars` survives a
+# `config set --api-url`. Behavioural for every existing caller: `api_url`, `token` and
+# `max_text_chars` now consult a file they previously could not see. `render`'s signature did not
+# move (ADR 0005's sequencing rule), for the fourth consecutive V2b card.
+# 0.9.0 — KAN-548 fills `render`'s last empty step: `aggregates.attach_summary` puts
+# `{"count": n}` on a collection and nothing on an entity, rendered as a trailing `2 notes`
+# under `human` and as a `summary` key elsewhere. Behavioural for every caller of `render`
+# on a list. (Recorded here by KAN-551, which found the version bumped without an entry.)
 # 0.8.0 — KAN-547 fills `render`'s last no-op parameter: `text_limit` truncates the fields
 # `Payload.prose_fields` names, appending a hint that carries the **true** total **in-band**, so the
 # total reaches `json`/`toon`/`data` and a truncated value is still a string with no key added,
@@ -27,7 +42,7 @@ name = "kaya-client"
 # 0.3.0 — KAN-543 adds `provenance`, the build stamp both adapters read. 0.2.0 was KAN-540's
 # `KayaClient` and `render()` seam. A behavioural change to a shipped package bumps it in the same
 # PR (ADR 0007 §3, CLAUDE.md §Conventions §Versioning).
-version = "0.9.0"
+version = "0.10.0"
 description = "The shared core for kaya: the API client and the one payload-shaping seam"
 readme = "README.md"
 license = "Apache-2.0"
