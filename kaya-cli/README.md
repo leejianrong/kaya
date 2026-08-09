@@ -1,6 +1,6 @@
 # kaya-cli
 
-The `kaya` console script. Distribution name `kaya-notes`, one entry point, two read verbs.
+The `kaya` console script. Distribution name `kaya-notes`, one entry point, nine verbs.
 
 ## Install
 
@@ -36,14 +36,14 @@ the binary, which is why the short name is a symlink.
 
 ```bash
 uv sync --all-extras
-uv run kaya            # prints what it is and what hasn't landed, exits 0
+uv run kaya            # the banner, your five most recent notes and the aggregate, exits 0
 uv run kaya --version  # which build is this?
 uv run kaya --nope     # usage on stderr, `error<TAB>usage<TAB>…` on stdout, exits 2
 uv run pytest -q
 uv run ruff check .
 ```
 
-## The verbs (KAN-541)
+## The verbs (KAN-541, completed by KAN-551)
 
 ```console
 $ export KAYA_TOKEN=…                      # a pandan PAT. KAYA_API_URL defaults to :8000
@@ -63,9 +63,13 @@ notes[2]{ref,id,title,body,path,created_at,updated_at}:
 `note get` takes `NOTE-12`, `note-12` or bare `12`, and passes whichever you typed to the API's one
 ref resolver ([ADR 0008](../docs/adr/0008-note-identity.md)) rather than normalising it here.
 
-Reads only. `note create`, `edit`, `move` and `delete` are V2b's, and until they land they are usage
-errors — a CLI that quietly accepted a verb it does not have would report success for work it never
-did.
+`note create`, `edit`, `move` and `delete` landed with KAN-551, so the set is complete. `move` is
+sugar over `edit`'s `PATCH` rather than a second endpoint, because [ADR
+0008](../docs/adr/0008-note-identity.md) makes moving a note a write to one column with no link
+rewriting. `edit` takes an optional `--if-updated-at`, which is [ADR
+0009](../docs/adr/0009-optimistic-concurrency-on-note-bodies.md)'s precondition: send the
+`updated_at` you last read and a stale one is refused with both timestamps named; omit it and the
+write is a plain overwrite, by specification.
 
 ### `--format {human,json,toon}`, and `--json`
 
@@ -84,13 +88,24 @@ tab-separated row on the one line it most needed to parse.
 
 ### Configuration
 
-Two environment variables, resolved in `kaya-client`'s `config.py` so that V6's MCP server reads
-exactly the same two (PLAN §Config):
+Resolved in `kaya-client`'s `config.py` so that V6's MCP server reads exactly the same keys
+(PLAN §Config). Each key is taken from the first tier that supplies it: **environment, then the
+config file**. The third tier PLAN names, the nearest `.mcp.json`, arrives with V6.
 
 | | |
 |---|---|
 | `KAYA_TOKEN` | A pandan PAT. **Required** — ADR 0002 gives kaya no way to mint one. Missing → `error<TAB>no_credential<TAB>…<TAB>KAYA_TOKEN` on stdout, exit `1` |
 | `KAYA_API_URL` | The deployment. Defaults to `http://localhost:8000`, which is what `make up` serves |
+| `KAYA_MAX_TEXT_CHARS` | Where prose is cut. Default `500`; `0` disables, which is what `--full` resolves to. A value that is not a whole number is a usage error naming the tier it came from |
+
+`kaya config set --api-url …` writes the same keys to `$XDG_CONFIG_HOME/kaya/config.json` (mode
+`0600`), `kaya config show` reports what resolved and from which tier, and `kaya config path` says
+where the file would live — and answers even when the file's *contents* cannot be resolved, because
+the verb that tells you which file to fix must not be the verb that refuses.
+
+**`config show` never prints the token**, only `set` or `not set`. A truncated token is still a
+token (Q41/Q42), so there is no prefix, no suffix and no length — the tests sweep every
+four-character fragment of a fake credential out of all three formats.
 
 A missing token is exit `1`, not `3`: nothing was refused, because nothing was asked, and a script
 reacting to `3` would mint a PAT to fix a missing line of configuration. No verb ever prompts —
@@ -104,10 +119,10 @@ the release pipeline says so rather than staying quiet:
 
 ```console
 $ kaya --version
-kaya 0.4.0 (a1b2c3d)                                 # a release asset, built from a1b2c3d
+kaya 0.9.0 (a1b2c3d)                                 # a release asset, built from a1b2c3d
 
 $ kaya --version
-kaya 0.4.0 (source checkout, not a released build)   # whatever is in your working tree
+kaya 0.9.0 (source checkout, not a released build)   # whatever is in your working tree
 ```
 
 The second line is the point. Pandan's CLI printed a bare `0.3.0`, two user-visible fixes shipped

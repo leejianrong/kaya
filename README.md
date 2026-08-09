@@ -5,11 +5,13 @@ half of the `kayatoast` suite, sibling to [pandan](https://github.com/leejianron
 board. Where pandan tracks *work*, kaya holds the *knowledge*: specs, notes, runbooks, meeting notes,
 cross-linked to the board.
 
-> **Status: the API works and the CLI reads; the product doesn't exist yet.** A pandan PAT creates,
-> reads, edits and deletes notes over `/api/v1/notes`, and the whole stack ships as one container
-> image serving the SPA and the API from a single origin. `kaya note list` and `kaya note get` read
-> those notes from a shell in `human`, `json` or `toon`, and ship as a downloadable binary. The SPA
-> is still a shell, the write verbs are V2b's, and the MCP adapter is still empty.
+> **Status: the CLI is finished; the product has no interface and nowhere to live.** A pandan PAT
+> creates, reads, edits and deletes notes over `/api/v1/notes`, and the whole stack ships as one
+> container image serving the SPA and the API from a single origin. **`kaya` drives all of it from a
+> shell** — `note {list,get,create,edit,move,delete}` and `config {set,show,path}`, in `human`,
+> `json` or `toon` — and ships as a downloadable binary. What is missing is the two ends: the SPA is
+> still a shell page, the MCP adapter is still empty, and **there is no hosted deployment to point
+> anything at** (see *Where to point it*, below).
 > See [`docs/PLAN.md`](docs/PLAN.md) for what is being built,
 > [`docs/SLICES.md`](docs/SLICES.md) for the order, and [`CLAUDE.md`](CLAUDE.md) for what is
 > genuinely in each package today. Work is tracked on pandan board 18.
@@ -33,7 +35,7 @@ actually got:
 
 ```console
 $ kaya --version
-kaya 0.4.0 (a1b2c3d)
+kaya 0.9.0 (a1b2c3d)
 ```
 
 The sha is the commit it was built from, and a build that did *not* come from the release pipeline
@@ -42,17 +44,36 @@ says `source checkout, not a released build` instead of staying quiet — that i
 pasting into any bug report. Want a shorter name? `ln -sf ~/.local/bin/kaya ~/.local/bin/ky`; there
 is deliberately no second console script.
 
-Then point it at a deployment and give it a credential:
+### Where to point it
+
+**There is no hosted kaya, so you have to run one.** This is [ADR
+0010](docs/adr/0010-no-hosted-deploy-until-the-homelab.md) on purpose, not an omission: the image
+and the Kubernetes manifests are built and exercised locally, and the k8s homelab is kaya's first
+real deploy. Until then the only origin that exists is one you start yourself, from a checkout with
+Docker:
+
+```bash
+make up                                     # db + migrate + the app image, one origin on :8000
+```
+
+If ports `5432` or `8000` are already taken on your machine, pass your own:
+`KAYA_DB_PORT=5434 KAYA_APP_PORT=8010 make up`.
+
+Then give the CLI an origin and a credential:
 
 ```bash
 export KAYA_API_URL=http://localhost:8000   # the default, and what `make up` serves
 export KAYA_TOKEN=…                         # a pandan PAT — kaya mints none of its own (ADR 0002)
-kaya note list
+kaya                                        # your five most recent notes, and what to do next
+kaya note list --fields ref,title,path
+kaya note create "A title" --body-file notes/draft.md
 kaya note get NOTE-12 --format json
 ```
 
-`note list` and `note get` are the only verbs today; the writes are the next slice's.
-[`kaya-cli/README.md`](kaya-cli/README.md) has the formats, the error contract and the exit codes.
+`kaya config set --api-url …` writes those to a config file instead, and `kaya config show`
+reports what resolved and from which tier — it never prints the token, only whether there is one.
+All nine verbs are live; [`kaya-cli/README.md`](kaya-cli/README.md) has the formats, the error
+contract and the exit codes.
 
 ## What it will do
 

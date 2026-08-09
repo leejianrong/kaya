@@ -16,6 +16,15 @@ requests against it, because an `apply` that succeeds only proves the API server
 (ADR 0010). Pushing a `v*` tag cuts a public GitHub Release carrying one asset,
 `kaya-linux-x86_64` (KAN-545).
 
+**There is no hosted kaya, so `make up` is the only origin that exists** (ADR 0010, and KAN-722 is
+where the choice gets made). That matters less than it sounds for correctness work: `make up`
+already points `KAYA_PANDAN_URL` at the **live** pandan, so a local stack plus a real PAT exercises
+the genuine authentication path. All nine V2b verbs were driven that way on 2026-08-09 and every one
+works — including ADR 0009's precondition surviving a real Postgres `timestamptz` round trip to the
+microsecond, which no fixture could have proven. What is still unproven is only what needs a remote
+origin: TLS on the CLI hop, kaya's own cold start, and the manifests on non-k3d infra. If `5432` or
+`8000` are busy on your machine, `KAYA_DB_PORT=5434 KAYA_APP_PORT=8010 make up`.
+
 | Package | What's in it |
 |---|---|
 | `backend/` | The whole of V1: migration `0001`, `app/auth/` (principal resolver, `authorize_note`), `app/api/` (`/api/v1/notes` CRUD, the central ref resolver, ADR 0009's `409`), `app/spa.py`, `app/observability/` |
