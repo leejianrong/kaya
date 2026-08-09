@@ -152,6 +152,39 @@ class Payload:
         """
         return replace(self, records=tuple(dict(record) for record in records))
 
+    def limited_to(self, count: int) -> "Payload":
+        """The first ``count`` records, in the order they arrived. ``--fields``' rows-wise twin.
+
+        This is where KAN-549's "recent" slice happens, and the *placement* is the decision. A slice
+        is a shaping act — it changes what a consumer is shown and therefore what a read costs — so
+        ADR 0004 puts it in this package and not in an adapter, where the obvious spelling
+        (``payload.records[:5]`` in `kaya_cli`) would be a projection rule in the one place ADR 0004
+        forbids one. It is **not** a parameter of ``render``: ADR 0005 freezes that signature, and a
+        fifth parameter is the stop signal rather than a step. It is a method on the payload, called
+        by `client.KayaClient.recent_notes`, so a caller states the slice at the *call* and what
+        comes back is a payload like any other.
+
+        Two consequences fall out of that placement rather than being arranged:
+
+        - **The aggregate describes the rows actually shown.** `aggregates.attach_summary` counts
+          ``len(payload.records)`` of whatever it is handed, and it is handed this. ADR 0005
+          §contract 5's "under a filter or ``--limit``, the returned set, not the whole corpus" is
+          satisfied because there is no corpus left in scope by the time a summary exists.
+        - **Truncation and projection compose with it untouched.** A limited payload is a
+          ``Payload`` and goes through the same four steps in the same order.
+
+        ``columns``, ``kind``, ``noun``, ``envelope_key`` and ``prose_fields`` come through
+        unchanged: keeping fewer rows says nothing about which keys exist or which of them are
+        prose. A **new** payload, like `narrowed_to` and `with_records`, so the complete response is
+        still there for anything that needs it.
+
+        A negative ``count`` is a ``ValueError`` rather than Python's silent "all but the last n",
+        which is the wrong answer to a caller bug and would be wrong quietly.
+        """
+        if count < 0:
+            raise ValueError(f"a limit is 0 or more, not {count}")
+        return replace(self, records=self.records[:count])
+
     def narrowed_to(self, fields: Sequence[str]) -> "Payload":
         """The same payload with ``records`` **and** ``columns`` cut to ``fields``, in that order.
 

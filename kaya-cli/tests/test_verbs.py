@@ -191,8 +191,13 @@ def test_every_parser_word_has_a_verb_and_every_verb_has_a_parser_word() -> None
     A subparser without a row is a ``KeyError`` at dispatch — a traceback where a structured refusal
     belongs. A row without a subparser is dead code that reads as a shipped feature. KAN-551 added
     seven words and this is what would have failed if it had added only one half of any of them.
+
+    ``verbs.BARE`` is the one row with **no** parser word — ADR 0005 §contract 7's bare `kaya`,
+    KAN-549 — so it is added to the left-hand side by name. Named rather than filtered out of the
+    right, because "there is exactly one wordless verb" is the claim being made, and a filter would
+    let a second one arrive unremarked.
     """
-    assert _parser_words(build_parser()) == set(verbs.VERBS) | set(verbs.LOCAL_VERBS)
+    assert _parser_words(build_parser()) | {verbs.BARE} == set(verbs.VERBS) | set(verbs.LOCAL_VERBS)
 
 
 def test_the_two_dispatch_tables_are_disjoint() -> None:

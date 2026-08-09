@@ -140,6 +140,23 @@ NOTE_LIST_COLUMNS = ("ref", "title", "path")
 """The default human row. Narrow deliberately: ADR 0005 says ``--fields`` *widens* it, and a row
 that already showed everything would leave V2b's byte-identity pin with nothing to protect."""
 
+RECENT_NOTES = 5
+"""How many notes a bare `kaya` shows (KAN-549). See ``recent_notes`` for why there is a number here
+at all; this is the argument for *five*.
+
+It is an orientation, not a listing, and it is read in two places with opposite constraints. On a
+terminal the whole invocation has to be one screen: three banner lines, a blank, the rows, a blank,
+the footer, a blank and two ``help:`` lines is 13 lines at five rows, which fits the 24-line default
+with the command that produced it still visible. For an agent it is the *first* call of a session,
+and the one most likely to be made speculatively, so it is the read whose cost matters most —
+measured at **174** `human` tokens, against 893 for the same invocation unsliced
+(`scripts/measure_toon_delta.py`, 40 notes, ``o200k_base``).
+
+Five rather than ten because the marginal row answers a question the caller has not asked yet: "what
+was I doing?" is answered by the top of the list, and "what have I got?" is `note list`, which the
+banner names. Ten is measured at 284 — **+63%** for five rows nobody asked for, on the cheapest and
+most frequent read in the tool, to defer that command by one turn."""
+
 NOTE_COLUMNS = ("ref", "title", "path", "created_at", "updated_at", "body")
 """A single note shows everything, ``body`` last — it is what the reader opened the note for.
 ``id`` is omitted: ADR 0008 says a note's identity is its ``ref``, and printing a second identifier
@@ -208,6 +225,28 @@ class KayaClient:
             columns=NOTE_LIST_COLUMNS,
             prose_fields=NOTE_PROSE_FIELDS,
         )
+
+    def recent_notes(self, limit: int = RECENT_NOTES) -> Payload:
+        """The caller's most recently updated notes, at most ``limit`` of them — bare `kaya`.
+
+        A **named method rather than a ``limit`` parameter on ``list_notes``**, because the two are
+        different questions. `note list` answers "what have I got?" and its answer has to be
+        complete; a bare invocation answers "what was I doing?" and five rows are the answer. Making
+        it a parameter would mean every caller of ``list_notes`` deciding a number, and the obvious
+        default for that number is "all", which is the wall SLICES §V2b's "recent" exists to avoid.
+
+        **Honest about what it costs: this fetches everything and keeps the first few.** There is no
+        ``?limit=`` on `GET /api/v1/notes` and no cursor — paging is deferred (SLICES), and no card
+        has asked for one — so the saving is entirely in what is *rendered*, which is the expensive
+        end for the consumer this layer exists for but not for the database. When paging lands, this
+        method is the one call site that has to change and the CLI does not, which is the other
+        reason it is a method here rather than a slice in an adapter.
+
+        The order is the API's — ``updated_at DESC, id DESC`` — so "recent" is the server's opinion
+        and not a second sort. ``limit`` is a parameter with a default rather than a constant read
+        inside, so a test can drive the boundary without monkeypatching a module attribute.
+        """
+        return self.list_notes().limited_to(limit)
 
     def get_note(self, ref: str) -> Payload:
         """One note, addressed as ``NOTE-12``, ``note-12`` or bare ``12``.

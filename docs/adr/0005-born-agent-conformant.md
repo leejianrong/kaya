@@ -44,7 +44,7 @@ is half a contract.
 | 4 | Exit codes: `0` ok · `1` runtime · `2` usage — the caller's input was rejected, by argparse or by the API (`400`) · `3` 401 · `4` 403 · `5` 404 | **Pandan's scheme, adopted verbatim.** Branch on the stable `code` string, never on message text. `2`'s wording widened by the 2026-08-09 amendment below; no number moved |
 | 5 | A pre-computed `summary` on every list verb, describing **the returned set** — under a filter or `--limit`, the returned set, not the whole corpus | A trailing line for humans, a `summary` object for structured consumers, both from the same dict. **What is in it** was left open here and settled by the 2026-08-09 (KAN-548) amendment below: one key, `count`. A single entity gets none |
 | 6 | Text truncated by default with a **true** total and `--full` to opt out; an allow-list of prose fields, never "any long string" | A truncated value stays a string: no key added, removed or retyped. **Where** the total is written was left open here, and settled by the 2026-08-09 (KAN-547) amendment below: in-band, inside the string, so it reaches the structured formats too. The multi-byte guarantee is code points |
-| 7 | Bare `kaya` prints live state and exits `0`; `--help` still prints usage | No token → a structured auth error, not a stack trace |
+| 7 | Bare `kaya` prints live state and exits `0`; `--help` still prints usage | No token → a structured auth error, not a stack trace. **How much** state was left open here, and settled by the 2026-08-09 (KAN-549) amendment below: the five most recent notes, sliced in `kaya-client` |
 | 8 | Results carry `help[]` next-step **templates** with placeholders left unfilled | Every hint must parse as a real command, pinned by a test |
 | 9 | No verb prompts when stdin isn't a tty | A structured failure instead of a hang |
 
@@ -348,3 +348,76 @@ JSON costs a brace, which is the same shape as its measured `note get` loss.
 promises already made. The precedent for the form is the three amendments above: complete the
 wording where it under-specified something, keep the guarantee it was reaching for, and do not
 re-litigate an accepted decision.
+
+## Amendment (2026-08-09, KAN-549): "live state" is the **five** most recent notes, and the banner is not a rendering
+
+§contract 7 says "bare `kaya` prints live state and exits `0`" and SLICES §V2b spells that as "the
+executable path, a one-line description, recent notes and the aggregate". Two words in that were
+under-specified, and `kaya-cli/src/kaya_cli/__main__.py` recorded the gap in V2a rather than
+guessing at it. This is V2b filling it, and it is the sixth and last V2b card for which **`render`'s
+signature did not move**.
+
+**The decision: `recent` is five, and the number is `kaya_client.client.RECENT_NOTES`.** A bare
+invocation shows the five most recently updated notes the caller owns, in the API's own order, with
+ADR 0005 §contract 5's footer over *those five*.
+
+**Why a number at all, and why five.** `list_notes()` returns every note the caller owns — there is
+no `?limit=` on `GET /api/v1/notes` and paging is deferred — so "recent notes" without a limit is
+the whole corpus, and a bare invocation that prints four hundred rows is not content-first, it is a
+wall. Five is what makes the whole invocation one screen (three banner lines, five rows, a footer
+and two `help:` lines is 13 lines, inside a 24-line default with the command still visible), and it
+is measured at **174 `human` tokens against 893** for the same invocation unsliced — the first call
+an agent makes, and the one most likely to be made speculatively, so the read whose cost matters
+most. Ten costs 284, **+63%** for five rows nobody asked for.
+
+**Where the slice lives, which is the part with a rule behind it.** A slice is a shaping decision —
+it changes what a consumer is shown and therefore what a read costs — so
+[ADR 0004](0004-shaping-lives-in-the-shared-client.md) puts it in `kaya-client`. It is
+`Payload.limited_to()`, the rows-wise twin of `narrowed_to`, applied at the *call* by
+`KayaClient.recent_notes()`. The obvious alternative, `payload.records[:5]` in `kaya_cli`, is a
+projection rule in the one package ADR 0004 forbids one in, and V6's MCP server would inherit none
+of it. The alternative that ADR 0005 forbids — a `limit` parameter on `render` — is the stop signal
+rather than a step.
+
+**And the property that falls out of that placement rather than being arranged.** §contract 5
+requires the summary to describe "the returned set — under a filter or `--limit`, the returned set,
+not the whole corpus". `aggregates.attach_summary` counts the records it is handed and takes exactly
+one parameter, and the slice happened before it was handed anything, so a bare `kaya` over forty
+notes reports `5 notes` with **no rule added to `aggregates` at all**. Nothing in that module learned
+what a limit is. `kaya-client/tests/test_overview.py` asserts it end to end, where
+`test_aggregates.py` already asserted it structurally.
+
+**The banner is not a rendering, and the guard is a signature.** `kaya_client.overview.overview()`
+takes three `str`s — program, version, executable path — and **no `Payload`**. It therefore *cannot*
+format a result, which is what keeps "`render` is called in exactly one place in `kaya-cli`" a
+checkable claim rather than a habit; `kaya-cli/tests/test_bare_invocation.py` counts the call sites
+over the package's AST. It takes the same door `provenance.version_line` already takes, for the
+reason that module's docstring gives: shaping lives in `kaya-client`, and it does not all live in
+one function. The three lines are joined to `render`'s output by `serialization.BLOCK_GAP` on one
+`print`, which is the same separator every other trailing block already uses.
+
+**The third banner line is static, and that is the interesting restraint.** The reader has to be
+told a slice happened, or `5 notes` under five rows reads as "you have five notes". The honest-looking
+answer is "showing 5 of 42" — and the total is *right there*, since `list_notes` fetched all forty-two.
+It is not printed, because a banner that derived a number from the payload would be a second thing in
+the process shaping output from a payload, and the second one is always where a projection rule
+eventually lands. So the line names the limit and the verb that lifts it (`kaya note list`), the
+footer stays contract 5's returned set, and the caller who wants forty-two types one command and gets
+it from the one seam. This is the same trade §contract 8 makes for `help[]` templates: advice about
+the tool is static, facts about the result are in-band.
+
+**A bare invocation has no `--format`, and that is deliberate.** The top-level parser carries no
+output flags — they live on the verbs — so `kaya --format json` is a usage error, unchanged from
+V2a. A banner is prose: under a structured format it would have to be either invalid JSON in front
+of a document or a key inside one, and `kaya note list --format json` already answers the question
+that reaches for. The banner is therefore `human`'s alone by construction rather than by a
+suppression rule.
+
+**What is withdrawn from a user, stated plainly.** Bare `kaya` used to exit `0` on any machine,
+printing a banner and the epilogue. It now opens a session, so **with no token it exits `1` and
+prints `error<TAB>no_credential<TAB>…` on stdout**. That is contract 7's own note ("no token → a
+structured auth error, not a stack trace") arriving rather than a change of mind, and it is why
+`kaya-cli` takes a minor bump: a script running `kaya` as a liveness check would now see a non-zero
+status, which is the correct answer to "is this kaya usable?" and was not what it was told before.
+`--help` and `--version` are untouched and both still answer before anything opens a session, which
+is what keeps the two commands a confused user reaches for working on a machine with no credential.

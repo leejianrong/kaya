@@ -13,6 +13,7 @@ from importlib.metadata import entry_points
 from pathlib import Path
 
 import pytest
+from conftest import NOTES
 
 import kaya_cli
 from kaya_cli.__main__ import main, version_string
@@ -24,7 +25,10 @@ def declared() -> dict:
     return tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]
 
 
-def test_main_prints_a_banner_and_exits_zero(capsys) -> None:
+def test_main_prints_a_banner_and_exits_zero(capsys, answering) -> None:
+    """KAN-549 gave a bare invocation a session, so it needs an API to answer it. What is asserted
+    here is unchanged: the banner is the first thing on stdout and the exit code is `0`."""
+    answering(200, NOTES)
     code = main([])
     out = capsys.readouterr().out
 
@@ -33,11 +37,13 @@ def test_main_prints_a_banner_and_exits_zero(capsys) -> None:
     assert kaya_cli.__version__ in out
 
 
-def test_the_banner_leads_with_the_version_line(capsys) -> None:
+def test_the_banner_leads_with_the_version_line(capsys, answering) -> None:
     """So provenance is available from a mistyped command, not only from someone who knew to ask.
 
-    ADR 0007's diagnostic only helps if the person confused by a symptom reaches it.
+    ADR 0007's diagnostic only helps if the person confused by a symptom reaches it. KAN-549 put
+    two more lines under this one and left it first, deliberately.
     """
+    answering(200, NOTES)
     main([])
     first_line = capsys.readouterr().out.splitlines()[0]
 
@@ -101,21 +107,42 @@ def test_the_installed_script_runs_end_to_end() -> None:
 
     Every other test here imports the module, so they would all pass with the console script
     pointing at a function that doesn't exist. This one runs the installed `kaya` binary.
+
+    **It drives ``--version`` rather than a bare invocation, since KAN-549.** A bare `kaya` now
+    opens a session, and this subprocess has no API and no credential — it would be asserting on the
+    refusal path, which is a weaker witness for "the entry point works" and a stronger dependency on
+    the environment. ``--version`` is answered before the dispatch, so it exercises argv → parser →
+    ``main`` → stdout with nothing else in the way. The bare path with no token is checked below.
     """
     kaya = shutil.which("kaya")
     if kaya is None:  # pragma: no cover - only when run outside the project environment
         pytest.skip("`kaya` is not on PATH; run under `uv run pytest`")
 
-    result = subprocess.run([kaya], capture_output=True, text=True, check=False)
+    result = subprocess.run([kaya, "--version"], capture_output=True, text=True, check=False)
 
     assert result.returncode == 0
     assert result.stdout.startswith("kaya ")
     assert result.stderr == ""
 
 
+def test_the_installed_script_answers_a_bare_invocation_with_no_credential() -> None:
+    """ADR 0005 §contract 7's note, through the real console script: "a structured auth error, not a
+    stack trace". Exit `1`, one four-field row on stdout, and nothing at all on stderr — which is
+    where a traceback would be, and is the reason this assertion is worth its own test."""
+    kaya = shutil.which("kaya")
+    if kaya is None:  # pragma: no cover - only when run outside the project environment
+        pytest.skip("`kaya` is not on PATH; run under `uv run pytest`")
+
+    result = subprocess.run([kaya], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 1
+    assert result.stdout.startswith("error\tno_credential\t")
+    assert result.stderr == ""
+
+
 def test_the_module_is_also_runnable_with_dash_m() -> None:
     result = subprocess.run(
-        [sys.executable, "-m", "kaya_cli"], capture_output=True, text=True, check=False
+        [sys.executable, "-m", "kaya_cli", "--version"], capture_output=True, text=True, check=False
     )
 
     assert result.returncode == 0

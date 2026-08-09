@@ -2,12 +2,14 @@
 
 ## Build status
 
-**V1 and V2a are complete; V2b is four cards in (KAN-546, KAN-547, KAN-548, KAN-551).** A pandan
-PAT creates, reads, edits and deletes notes over `/api/v1/notes`, and **`kaya` now drives all of it
-from a shell** — `note {list,get,create,edit,move,delete}` and `config {set,show,path}` — in
-`human`, `json` or `toon`, with `--fields a,b,c` selecting columns on a list, prose cut to
-`KAYA_MAX_TEXT_CHARS` (default 500) unless `--full`, and a list carrying `{"count": n}` over the
-rows it returned — a trailing `3 notes` for a person, a `summary` key for everything else.
+**V1, V2a and V2b are complete.** A pandan PAT creates, reads, edits and deletes notes over
+`/api/v1/notes`, and **`kaya` drives all of it from a shell** — `note
+{list,get,create,edit,move,delete}` and `config {set,show,path}` — in `human`, `json` or `toon`,
+with `--fields a,b,c` selecting columns on a list, prose cut to `KAYA_MAX_TEXT_CHARS` (default 500)
+unless `--full`, a list carrying `{"count": n}` over the rows it returned — a trailing `3 notes` for
+a person, a `summary` key for everything else — and `help:` next-step templates under every `human`
+render. **Bare `kaya` is content-first** (KAN-549): three banner lines and your five most recently
+updated notes, exit `0`; with no token, exit `1` and the structured `no_credential` row.
 `make up` runs the whole stack on
 `:8000` from the image, and `make k3d` applies `deploy/k8s/` to a throwaway cluster and then makes
 requests against it, because an `apply` that succeeds only proves the API server liked the YAML
@@ -17,19 +19,22 @@ requests against it, because an `apply` that succeeds only proves the API server
 | Package | What's in it |
 |---|---|
 | `backend/` | The whole of V1: migration `0001`, `app/auth/` (principal resolver, `authorize_note`), `app/api/` (`/api/v1/notes` CRUD, the central ref resolver, ADR 0009's `409`), `app/spa.py`, `app/observability/` |
-| `kaya-client/` | KAN-540: `KayaClient` over httpx and the `render()` seam as four composable steps. KAN-551: the full CRUD set (`create_note`, `update_note`, `move_note`, `delete_note`) — `move_note` *is* `update_note` because ADR 0008 makes a move a `PATCH` to one column, and every ref-taking method shares one `_note_path` that percent-encodes the ref as a single segment. ADR 0009's `if_updated_at` is forwarded as an **opaque string**, so nothing here can lose a microsecond. Same card: the config *file* tier (JSON at `$XDG_CONFIG_HOME/kaya/config.json`, consulted per key after the environment) and the three `config` verbs as `Payload` builders — `settings_payload()`, `path_payload()`, `write_settings()`, which read-modify-writes so a hand-set `max_text_chars` survives a `config set --api-url`. `human`/`json`/`toon` user-facing, `data` adapter-only. KAN-548: `aggregates.py` is live — a collection gets `{"count": len(records)}` and an entity gets nothing, rendered as a blank-line-separated `2 notes` footer under `human` and as a `summary` key beside the envelope everywhere else, both out of the one mapping via `summary_line()`. KAN-547: `truncation.py` is live — `text_limit` cuts the fields `Payload.prose_fields` names and appends a hint carrying the **true** total **in-band**, so the total reaches `json`/`toon`/`data`; `0` disables, and `config.max_text_chars()` resolves `KAYA_MAX_TEXT_CHARS` (default 500, a non-number is a `UsageError`). KAN-546: `projection.py` is live — `fields` narrows `records` *and* `columns` uniformly for every format, via `Payload.narrowed_to()`, with the vocabulary read from `field_names()` before anything narrows. KAN-541: `toon.py`, a stdlib-only **encode-only** TOON encoder registered in `Format`, `_SERIALIZERS` and `_ERROR_SERIALIZERS`, plus `config.py` (PLAN §Config's `KAYA_API_URL`/`KAYA_TOKEN` and `open_client()`) and `MissingCredential`. KAN-543: `provenance.version_line()` and the `_build_stamp.COMMIT` a release rewrites. KAN-542: the failure half of the layer — `error_payload()` / `render_error()`, and a `code` on every exception class so a raise site names a meaning. KAN-716: `DEFAULT_TIMEOUT` split by phase (`DEFAULT_CONNECT_TIMEOUT` 5 s, `DEFAULT_READ_TIMEOUT` 40 s) so the client outlasts the backend's authentication budget |
-| `kaya-cli/` | The `kaya` console script, one entry point. KAN-541: `note list` and `note get <ref>` (`verbs.py`, a dispatch table), `--format {human,json,toon}` with `--json` as an alias and `--format` winning if both are given. KAN-551: the other seven verbs — four writes in `VERBS` and three `config` words in a second table, `LOCAL_VERBS`, because `config show` must answer with no credential at all. `parsing.resolve_body()` turns `--body`/`--body-file` into one string; there is **no `-`** for the standard input, so `tests/test_no_prompting.py` keeps proving ADR 0005 §contract 9 structurally. KAN-547: `--full` on `output_flags()`, and `resolve_text_limit()` — a flag-beats-environment precedence and nothing else, since the number and the cut are both the client's. KAN-546: `--fields` on `output_flags()`, and `resolve_fields()` — one `split(",")`, which is the entire projection logic this package is allowed to contain. KAN-543: an argparse parser with `--version` and `--help` on it. KAN-542: that parser subclassed so it raises instead of exiting, plus `failures.py` (ADR 0005's exit table, and the only place a meaning becomes a number) and `parsing.py` (`usage:` on stderr *and* the structured row on stdout, from one event) |
+| `kaya-client/` | KAN-540: `KayaClient` over httpx and the `render()` seam as four composable steps. KAN-551: the full CRUD set (`create_note`, `update_note`, `move_note`, `delete_note`) — `move_note` *is* `update_note` because ADR 0008 makes a move a `PATCH` to one column, and every ref-taking method shares one `_note_path` that percent-encodes the ref as a single segment. ADR 0009's `if_updated_at` is forwarded as an **opaque string**, so nothing here can lose a microsecond. Same card: the config *file* tier (JSON at `$XDG_CONFIG_HOME/kaya/config.json`, consulted per key after the environment) and the three `config` verbs as `Payload` builders — `settings_payload()`, `path_payload()`, `write_settings()`, which read-modify-writes so a hand-set `max_text_chars` survives a `config set --api-url`. `human`/`json`/`toon` user-facing, `data` adapter-only. KAN-548: `aggregates.py` is live — a collection gets `{"count": len(records)}` and an entity gets nothing, rendered as a blank-line-separated `2 notes` footer under `human` and as a `summary` key beside the envelope everywhere else, both out of the one mapping via `summary_line()`. KAN-547: `truncation.py` is live — `text_limit` cuts the fields `Payload.prose_fields` names and appends a hint carrying the **true** total **in-band**, so the total reaches `json`/`toon`/`data`; `0` disables, and `config.max_text_chars()` resolves `KAYA_MAX_TEXT_CHARS` (default 500, a non-number is a `UsageError`). KAN-546: `projection.py` is live — `fields` narrows `records` *and* `columns` uniformly for every format, via `Payload.narrowed_to()`, with the vocabulary read from `field_names()` before anything narrows. KAN-550: `hints.py` — ADR 0005 §contract 8's `help[]` templates, keyed on `(kind, noun)` and never on a verb name, placeholders left unfilled, and **human-only** (the reverse of KAN-547's hint, because a template is advice about the tool and a total is a fact about the payload). KAN-549: `overview.py` — the three banner lines a bare `kaya` prints, which take three `str`s and **no `Payload`** so they cannot format a result — plus `RECENT_NOTES` (5), `KayaClient.recent_notes()` and `Payload.limited_to()`, the rows-wise twin of `narrowed_to`. KAN-541: `toon.py`, a stdlib-only **encode-only** TOON encoder registered in `Format`, `_SERIALIZERS` and `_ERROR_SERIALIZERS`, plus `config.py` (PLAN §Config's `KAYA_API_URL`/`KAYA_TOKEN` and `open_client()`) and `MissingCredential`. KAN-543: `provenance.version_line()` and the `_build_stamp.COMMIT` a release rewrites. KAN-542: the failure half of the layer — `error_payload()` / `render_error()`, and a `code` on every exception class so a raise site names a meaning. KAN-716: `DEFAULT_TIMEOUT` split by phase (`DEFAULT_CONNECT_TIMEOUT` 5 s, `DEFAULT_READ_TIMEOUT` 40 s) so the client outlasts the backend's authentication budget |
+| `kaya-cli/` | The `kaya` console script, one entry point. KAN-541: `note list` and `note get <ref>` (`verbs.py`, a dispatch table), `--format {human,json,toon}` with `--json` as an alias and `--format` winning if both are given. KAN-551: the other seven verbs — four writes in `VERBS` and three `config` words in a second table, `LOCAL_VERBS`, because `config show` must answer with no credential at all. `parsing.resolve_body()` turns `--body`/`--body-file` into one string; there is **no `-`** for the standard input, so `tests/test_no_prompting.py` keeps proving ADR 0005 §contract 9 structurally. KAN-549: bare `kaya` is `verbs.BARE`, a row in the same dispatch table as every other verb, so `render` is still called in **exactly one place** in the package; the banner is `kaya_client.overview` joined on by `BLOCK_GAP`, and `executable_path()` — `argv[0]` resolved through `PATH`, or `sys.executable` when frozen — is this package's only new logic. KAN-547: `--full` on `output_flags()`, and `resolve_text_limit()` — a flag-beats-environment precedence and nothing else, since the number and the cut are both the client's. KAN-546: `--fields` on `output_flags()`, and `resolve_fields()` — one `split(",")`, which is the entire projection logic this package is allowed to contain. KAN-543: an argparse parser with `--version` and `--help` on it. KAN-542: that parser subclassed so it raises instead of exiting, plus `failures.py` (ADR 0005's exit table, and the only place a meaning becomes a number) and `parsing.py` (`usage:` on stderr *and* the structured row on stdout, from one event) |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
 | `frontend/` | Svelte 5 + Vite + TS, a shell page, the dev proxy for `/api` |
 | *root* | `Dockerfile` (bases pinned by digest), `docker-compose.yml`, `deploy/k8s/`. KAN-544: `scripts/check-version-bump.sh` (+ `lib/pyproject_diff.py`), `scripts/build-cli-artifact.sh`, `scripts/check-release-artifact.sh`, `.github/workflows/release.yml`'s `build` job. KAN-545: that workflow's `publish` job — the only `contents: write` in the repository, and it runs for a pushed `v*` tag and nothing else |
 
-Next: **the rest of V2b** — all four of `render()`'s steps are now live and the verb set is
-complete, so what is left is content-first bare invocation and `help[]`. PLAN §Config's **third**
-tier, the nearest `.mcp.json`, is deliberately not built: choosing which server entry in an MCP
-host's file is kaya's is a guess until V6 names one, and a host launching a server usually exports
-the `env` block anyway, so tier one covers the common case (see `config.py`). Still unbuilt
-anywhere are `?q=` search (KAN-558/559), `/links` and `/backlinks` (KAN-566), the MCP server (V6)
-and the SPA's real UI (V3).
+Next: **V3, the editor** — `frontend/` is still a shell page, so nothing in this repository has a
+UI. After it, V4/V5 are `?q=` search (KAN-558/559) and `/links` / `/backlinks` (KAN-566), neither
+of which exists at any layer, and V6 is the MCP server: `mcp/` holds ADR 0006's frozen tool-name
+tuple and no server and no tools, and every one of those tools is meant to call the `render()` seam
+V2a and V2b just finished. PLAN §Config's **third** tier, the nearest `.mcp.json`, is deliberately
+not built and arrives with V6: choosing which server entry in an MCP host's file is kaya's is a
+guess until there is a server to name, and a host launching one usually exports the `env` block
+anyway, so tier one covers the common case (see `config.py`). Also unbuilt: `make test-e2e` is a
+stub (KAN-552), and ADR 0005 §Consequences defers ambient session context (pandan's V48)
+post-MVP.
 
 **Trust the code over the docs.** When this file and the repository disagree, the repository is
 right and this file is stale. Fix it in the same PR.
@@ -74,8 +79,11 @@ Each one is a place where the obvious implementation is wrong.
    `sha256(token)`. Do not add a `startswith` guard: pandan still accepts pre-rebrand `kanban_pat_…`
    tokens, and that exact guard is the bug pandan ADR 0018 had to correct.
 3. **The output layer's signature lands before behaviour goes inside it** ([ADR 0005](docs/adr/0005-born-agent-conformant.md)).
-   V2a builds the seam; V2b fills it. If a V2b-or-later change needs to alter `render()`'s signature,
-   stop. That is the signal the sequencing was violated, not a reason to push through.
+   V2a built the seam; V2b filled it, in six cards, and the signature never moved. If a change from
+   here on needs to alter `render()`'s signature, stop. That is the signal the sequencing was
+   violated, not a reason to push through — and it now has six precedents for finding the other
+   answer, the most recent being KAN-549's "recent" slice, which became `Payload.limited_to()`
+   applied at the *call* rather than a fifth parameter.
 4. **Nothing in kaya may block on pandan** ([ADR 0003](docs/adr/0003-cross-linking-one-way-soft.md)).
    A note must save, render and appear in search with pandan completely down. Wikilink resolution is
    a cached read that degrades to an unresolved link. Authentication is the one exception ADR 0002
@@ -177,7 +185,8 @@ source-checkout wording rather than being printed as provenance. Stamp *after* t
 asserts the committed stamp is empty, because a committed sha makes every checkout claim to be a
 release. `version_line()` lives in `kaya-client` and not in the CLI because V6's MCP server reports
 provenance through the same function (ADR 0004) — and deliberately *not* through `render()`, whose
-signature ADR 0005 freezes until V2b.
+signature ADR 0005 freezes. `kaya_client.overview` (KAN-549) takes the same door for the same
+reason: shaping lives in that package, and it does not all live in one function.
 
 **Base images are pinned by digest, never by tag.** A tag is a mutable pointer, so provenance labels
 on a floating base describe nothing (pandan's KAN-475). `scripts/check-image-pins.sh` runs in the
@@ -226,7 +235,10 @@ each collection literal gained `\n\n<count> <noun>` and *nothing else moved*: `S
 unchanged and still asserted. That file's docstring records what moved and why, because a pin
 quietly edited is a pin destroyed. For every other slice the old rule stands: if it reddens while
 `--fields` was omitted and the prose is under the limit, that is the guard working, not a stale
-test to update.
+test to update. **A bare `kaya` prints through that same one call** (KAN-549): the banner beside it
+is `kaya_client.overview`, which takes three `str`s and no `Payload` and therefore cannot format a
+result, and `kaya-cli/tests/test_bare_invocation.py` counts `render`'s call sites over the package's
+AST so "exactly one place in `kaya-cli`" stays a fact rather than a habit.
 
 **`--fields` narrows the shaped dict *uniformly*, and that settled a contradiction rather than
 inheriting one** (KAN-546, ADR 0005's amendment of the same date). ADR 0004 §Decision describes

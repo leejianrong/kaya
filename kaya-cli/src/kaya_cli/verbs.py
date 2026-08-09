@@ -1,4 +1,4 @@
-"""The verbs. `note {list,get,create,edit,move,delete}` and `config {set,show,path}` (KAN-551).
+"""The verbs. `note {list,get,create,edit,move,delete}`, `config {set,show,path}`, and bare `kaya`.
 
 ### What a verb is allowed to be
 
@@ -20,6 +20,11 @@ thing ADR 0004 leaves to the adapter.
 **KAN-551 quadrupled the verb count and this file gained no new kind of thing**, which is ADR 0005's
 sequencing rule paying out on its own terms: "adding a verb is adding a verb". Every write below is
 one client call, every argument is passed through, and nothing here knows what a `409` is.
+
+**KAN-549 added a verb with no word.** ADR 0005 §contract 7's bare `kaya` is ``BARE`` in the table
+below, dispatched by the same lookup as everything else, so "content-first" cost this file one row
+and one four-line function. The two things a bare invocation has that a verb does not — a banner,
+and a slice of the corpus — are both in `kaya_client`, and neither is in this package at all.
 
 ### Two tables, because a `config` verb has no session
 
@@ -98,11 +103,39 @@ SET = "set"
 SHOW = "show"
 PATH = "path"
 
+BARE: tuple[None, None] = (None, None)
+"""ADR 0005 §contract 7's bare `kaya`, as a row in ``VERBS`` like everything else (KAN-549).
+
+**It is a verb with no word**, which is the whole of how this card avoided a special case. The two
+``None``s are what `build_parser`'s ``set_defaults`` leaves on the namespace when argv named no
+command, so `run` below dispatches it through the same table lookup as `note list` — no branch, no
+second session-opening path, and the client is closed by the same ``with``.
+
+It is deliberately **not** reachable from the parser, so `tests/test_verbs.py`'s "every parser word
+has a verb" assertion names it explicitly rather than deriving it. A word that dispatched here would
+be a second spelling of a bare invocation.
+"""
+
 Verb = Callable[[KayaClient, Namespace], Payload]
 LocalVerb = Callable[[Namespace], Payload]
 
 
 # ------------------------------------------------------------------------------ notes
+
+
+def _overview(client: KayaClient, _args: Namespace) -> Payload:
+    """Bare `kaya`: the caller's most recent notes. **One client call, like every other verb.**
+
+    The number of rows, the order and the fact that a slice happened at all are
+    `KayaClient.recent_notes`' — see its docstring, and `payloads.Payload.limited_to` for why a
+    slice is the client's business and not an adapter's. A ``[:5]`` written here instead would be
+    exactly the projection rule this module's docstring says is a bug rather than a local
+    optimisation, and V6's MCP server would inherit none of it.
+
+    The banner above these rows is not this function's either, and it is not any payload's: see
+    `kaya_cli.__main__.main`, which prints `kaya_client.overview` beside what ``render`` returned.
+    """
+    return client.recent_notes()
 
 
 def _note_list(client: KayaClient, _args: Namespace) -> Payload:
@@ -162,7 +195,8 @@ def _config_set(args: Namespace) -> Payload:
     return write_settings({API_URL_ENV: args.api_url, TOKEN_ENV: args.token})
 
 
-VERBS: Mapping[tuple[str, str], Verb] = {
+VERBS: Mapping[tuple[str | None, str | None], Verb] = {
+    BARE: _overview,
     (NOTE, LIST): _note_list,
     (NOTE, GET): _note_get,
     (NOTE, CREATE): _note_create,
@@ -174,7 +208,7 @@ VERBS: Mapping[tuple[str, str], Verb] = {
 
 A table rather than an ``if`` chain, so `build_parser` and this module cannot drift about which
 words exist: `tests/test_verbs.py` asserts that every parser word has a row and every row is a
-parser word.
+parser word — plus ``BARE``, the one row with no word, named there rather than derived.
 """
 
 LOCAL_VERBS: Mapping[tuple[str, str], LocalVerb] = {
