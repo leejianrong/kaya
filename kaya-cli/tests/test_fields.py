@@ -16,12 +16,15 @@ layer — and a consumer reading stdout cannot tell, which is the point.
 import json
 
 import pytest
-from conftest import NOTES
+from conftest import LIST_HELP, NOTES
 
 from kaya_cli.__main__ import build_parser, main
 from kaya_cli.parsing import resolve_fields
 
-DEFAULT_ROW = "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list\n\n2 notes"
+DEFAULT_ROW = (
+    "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list\n\n2 notes\n\n"
+    + LIST_HELP
+)
 """Copied from `kaya-client/tests/test_human_row_is_pinned.py`, like `test_verbs.py`'s. The two
 literals disagreeing is how this package would find out it had grown a formatting rule.
 
@@ -38,7 +41,8 @@ def test_the_named_columns_reach_the_human_row(capsys, answering) -> None:
     answering(200, NOTES)
 
     assert main(["note", "list", "--fields", "ref,title"]) == 0
-    assert capsys.readouterr().out == "NOTE-12  Groceries\nNOTE-3   A reading list\n\n2 notes\n"
+    expected = f"NOTE-12  Groceries\nNOTE-3   A reading list\n\n2 notes\n\n{LIST_HELP}\n"
+    assert capsys.readouterr().out == expected
 
 
 def test_the_order_typed_is_the_order_printed(capsys, answering) -> None:

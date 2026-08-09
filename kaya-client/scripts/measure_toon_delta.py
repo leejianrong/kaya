@@ -22,6 +22,15 @@ number is a fact about the generated notes rather than about truncation. ``--ful
 because ``text_limit=0`` is what a read cost before this card, so the percentages are what the
 default now *saves* rather than what an opt-out costs.
 
+**KAN-550 added the fifth, and it is the only one measured on `human`.** ADR 0005 §contract 8's
+``help[]`` templates are suppressed under the structured formats, so a JSON or TOON column for them
+would be a row of zeros. The baseline is the same `human` render with exactly the block
+``hints.help_block`` produced sliced back off by its own length — not matched by a regex, for the
+same reason the summary's baseline is a ``Shaped`` with ``summary=None`` rather than a key deleted
+from a string. The cost is flat per render, so as with the summary the *percentage* is a statement
+about what it is being added to, and the interesting row is the cheap read rather than the expensive
+one.
+
 **KAN-548 added the fourth.** The aggregate is the one thing this package adds to a payload rather
 than taking away from it, so its cost has to be reported the way the savings are. The baseline is
 the same render with no summary attached — literally what a read cost before KAN-548 — produced by
@@ -79,10 +88,11 @@ from kaya_client.client import (  # noqa: E402 - after the path insert, so a che
     NOTE_NOUN,
     NOTE_PROSE_FIELDS,
 )
+from kaya_client.hints import help_block  # noqa: E402
 from kaya_client.payloads import Payload, Shaped  # noqa: E402
 from kaya_client.projection import project  # noqa: E402
 from kaya_client.render import render  # noqa: E402
-from kaya_client.serialization import serialize  # noqa: E402
+from kaya_client.serialization import BLOCK_GAP, serialize  # noqa: E402
 from kaya_client.truncation import DEFAULT_TEXT_LIMIT, truncate  # noqa: E402
 
 ENCODING = "o200k_base"
@@ -209,6 +219,31 @@ def measure_without_summary(
     return count_tokens(as_json), count_tokens(as_toon)
 
 
+def measure_hints(
+    payload: Payload,
+    count_tokens,
+    fields: Sequence[str] | None = None,
+    text_limit: int = DEFAULT_TEXT_LIMIT,
+) -> tuple[int, int]:
+    """``(human tokens without the help block, with it)`` for one payload (KAN-550).
+
+    ``human``, because the templates exist in no other format — that is SLICES §V2b's "suppressed
+    under structured formats", and measuring them in JSON would report zero and say nothing.
+
+    The baseline slices off **exactly** the string `hints.help_block` produced, plus the blank line
+    joining it, rather than stripping trailing ``help:`` lines with a pattern. Both are the shipped
+    code, and this way the pre-KAN-550 render is reconstructed rather than approximated: the same
+    discipline `measure_without_summary` follows by rebuilding a ``Shaped`` instead of deleting a
+    key out of a rendered string.
+    """
+    rendered = render(payload, fields=fields, text_limit=text_limit, fmt="human")
+    assert isinstance(rendered, str)
+
+    block = help_block(payload)
+    without = rendered if block is None else rendered[: -(len(BLOCK_GAP) + len(block))]
+    return count_tokens(without), count_tokens(rendered)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--notes", type=int, default=DEFAULT_NOTES)
@@ -282,6 +317,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         for name, fields in projections
     ]
 
+    hinted: list[tuple[str, tuple[int, int]]] = [
+        (f"`note list` ({args.notes} notes, default row)", measure_hints(listed, count_tokens)),
+        (
+            f"`note list --fields ref` ({args.notes} notes)",
+            measure_hints(listed, count_tokens, ("ref",)),
+        ),
+        ("`note get` (one note)", measure_hints(single, count_tokens)),
+        ("`note list` (empty)", measure_hints(list_payload([]), count_tokens)),
+    ]
+
     over_limit = sum(1 for note in notes if len(note["body"]) > DEFAULT_TEXT_LIMIT)
     listed_full_json = truncated[0][1][0]
     listed_full_toon = truncated[0][1][1]
@@ -331,6 +376,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"| {name} | {bare[0]:,} | {whole[0]:,} | {_share(whole[0], bare[0])} | "
                 f"{bare[1]:,} | {whole[1]:,} | {_share(whole[1], bare[1])} |"
             )
+        print()
+        print("| `human` payload | without `help:` | with | cost |")
+        print("|---|---:|---:|---:|")
+        for name, (bare_human, with_help) in hinted:
+            print(
+                f"| {name} | {bare_human:,} | {with_help:,} | "
+                f"{_share(with_help, bare_human)} |"
+            )
     else:
         for name, (as_json, as_toon, delta) in rows:
             print(f"{name}: json {as_json:,}  toon {as_toon:,}  delta {delta:+.1f}%")
@@ -353,6 +406,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(
                 f"{name}: json {bare[0]:,} -> {whole[0]:,} ({_share(whole[0], bare[0])})  "
                 f"toon {bare[1]:,} -> {whole[1]:,} ({_share(whole[1], bare[1])})"
+            )
+        print()
+        for name, (bare_human, with_help) in hinted:
+            print(
+                f"{name}: human {bare_human:,} -> {with_help:,} "
+                f"({_share(with_help, bare_human)})"
             )
     return 0
 

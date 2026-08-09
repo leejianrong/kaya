@@ -20,7 +20,7 @@ structured row is the whole of the output and stderr stays empty.
 import json
 
 import pytest
-from conftest import GROCERIES, NOTES
+from conftest import GROCERIES, LIST_HELP, NOTES, without_help
 from kaya_client import config
 from kaya_client.truncation import hint
 
@@ -31,7 +31,10 @@ LONG_BODY = "x" * 1200
 
 LONG_NOTE = {**GROCERIES, "body": LONG_BODY}
 
-DEFAULT_ROW = "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list\n\n2 notes"
+DEFAULT_ROW = (
+    "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list\n\n2 notes\n\n"
+    + LIST_HELP
+)
 """Copied from `kaya-client/tests/test_human_row_is_pinned.py`, like `test_fields.py`'s. Truncation
 must not move it: both bodies in that corpus are far under 500 characters."""
 
@@ -46,7 +49,8 @@ def test_a_long_note_is_truncated_with_a_true_total(capsys, answering) -> None:
     assert main(["note", "get", "NOTE-12"]) == 0
     out = capsys.readouterr().out
 
-    assert out.rstrip("\n").endswith(hint(1200, "body"))
+    # `without_help`: KAN-550 puts a `help:` block after the hint, so the hint is no longer last.
+    assert without_help(out).endswith(hint(1200, "body"))
     assert "x" * 500 in out
     assert "x" * 501 not in out
 
@@ -218,7 +222,7 @@ def test_a_truncated_body_in_a_table_stays_one_row(capsys, answering, monkeypatc
     answering(200, {"notes": [LONG_NOTE]})
     main(["note", "list", "--fields", "ref,body"])
 
-    table, footer = capsys.readouterr().out.rstrip("\n").split("\n\n")
+    table, footer = without_help(capsys.readouterr().out).split("\n\n")
     assert table.splitlines() == [f"NOTE-12  xxxxx {hint(1200, 'body')}"]
     assert footer == "1 note"  # KAN-548's, and not this card's business beyond staying off the row
 

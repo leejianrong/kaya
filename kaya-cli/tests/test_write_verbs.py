@@ -10,7 +10,7 @@ import json
 
 import httpx
 import pytest
-from conftest import GROCERIES
+from conftest import ENTITY_HELP, GROCERIES
 
 from kaya_cli.__main__ import main
 
@@ -189,7 +189,8 @@ def test_delete_calls_the_route_and_says_so(capsys, answering) -> None:
 
     assert main(["note", "delete", "NOTE-12"]) == 0
     assert (seen[0].method, seen[0].url.path) == ("DELETE", "/api/v1/notes/NOTE-12")
-    assert capsys.readouterr().out == "ref      NOTE-12\ndeleted  true\n"
+    expected = f"ref      NOTE-12\ndeleted  true\n\n{ENTITY_HELP}\n"
+    assert capsys.readouterr().out == expected
 
 
 def test_delete_is_structured_for_a_script(capsys, answering) -> None:

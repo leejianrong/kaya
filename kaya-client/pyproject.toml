@@ -1,5 +1,13 @@
 [project]
 name = "kaya-client"
+# 0.11.0 — KAN-550 adds ADR 0005 §contract 8's `help[]` next-step templates: `hints.help_lines` and
+# `hints.help_block`, keyed on the payload's own `kind` and `noun` and never on a verb name, with
+# every placeholder left unfilled. They are **human-only** — suppressed under `json`, `toon` and
+# `data` (SLICES §V2b) — which is deliberately the reverse of KAN-547's truncation hint: a true
+# total is a fact about *this* payload that a structured consumer cannot otherwise obtain, while a
+# template is a static string an agent learns once from `--help`. Behavioural for every caller of
+# `render(..., fmt="human")`, which is why it is a minor bump; no structured output changed a byte.
+# `render`'s signature did not move, for the fifth consecutive V2b card.
 # 0.10.0 — KAN-551 completes the client's CRUD surface and PLAN §Config's second tier. New:
 # `create_note`, `update_note`, `move_note` (which *is* `update_note` — ADR 0008 makes a move a
 # `PATCH` to one column) and `delete_note`, every one of them through the one `_note_path` that
@@ -42,7 +50,7 @@ name = "kaya-client"
 # 0.3.0 — KAN-543 adds `provenance`, the build stamp both adapters read. 0.2.0 was KAN-540's
 # `KayaClient` and `render()` seam. A behavioural change to a shipped package bumps it in the same
 # PR (ADR 0007 §3, CLAUDE.md §Conventions §Versioning).
-version = "0.10.0"
+version = "0.11.0"
 description = "The shared core for kaya: the API client and the one payload-shaping seam"
 readme = "README.md"
 license = "Apache-2.0"

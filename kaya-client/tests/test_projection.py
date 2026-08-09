@@ -24,7 +24,7 @@ had nowhere better to live while that file still existed.
 import json
 
 import pytest
-from conftest import GROCERIES, READING_LIST, note_collection, note_entity
+from conftest import GROCERIES, READING_LIST, note_collection, note_entity, without_help
 from toon_decode import decode as decode_toon
 
 from kaya_client import Payload, UsageError, error_payload, project, render
@@ -52,7 +52,9 @@ def test_fields_can_narrow_the_human_row_too(notes: Payload) -> None:
     ``--fields ref,title`` is a perfectly reasonable thing to ask a list verb for, and refusing to
     drop ``path`` because the ADR used the word "widens" would be reading a description as a rule.
     """
-    assert render(notes, fields=NARROW) == "NOTE-12  Groceries\nNOTE-3   A reading list\n\n2 notes"
+    assert without_help(render(notes, fields=NARROW)) == (
+        "NOTE-12  Groceries\nNOTE-3   A reading list\n\n2 notes"
+    )
 
 
 def test_the_order_asked_for_is_the_order_rendered(notes: Payload) -> None:
@@ -63,7 +65,7 @@ def test_the_order_asked_for_is_the_order_rendered(notes: Payload) -> None:
     hold. Trailing whitespace is still forbidden — that property is `test_human_row_is_pinned`'s and
     is asserted here again over a row it never sees.
     """
-    rendered = render(notes, fields=["path", "ref"])
+    rendered = without_help(render(notes, fields=["path", "ref"]))
 
     assert rendered == "home/groceries.md  NOTE-12\n" + " " * 19 + "NOTE-3\n\n2 notes"
     assert all(line == line.rstrip() for line in rendered.splitlines())
@@ -71,7 +73,7 @@ def test_the_order_asked_for_is_the_order_rendered(notes: Payload) -> None:
 
 def test_one_field_is_a_single_column(notes: Payload) -> None:
     """The narrowest useful projection, and the one an agent asking "which notes exist?" writes."""
-    assert render(notes, fields=["ref"]) == "NOTE-12\nNOTE-3\n\n2 notes"
+    assert without_help(render(notes, fields=["ref"])) == "NOTE-12\nNOTE-3\n\n2 notes"
 
 
 # ---------------------------------------------------------- the structured formats
@@ -212,7 +214,7 @@ def test_an_empty_result_accepts_any_field_and_still_says_so() -> None:
     somebody else's data — the corpus being empty is not information about the request — and the
     definitive zero state is the right answer to the question either way.
     """
-    assert render(note_collection(), fields=["ref", "anything"]) == "no notes"
+    assert without_help(render(note_collection(), fields=["ref", "anything"])) == "no notes"
 
 
 def test_a_field_missing_from_one_row_is_a_hole_rather_than_a_refusal() -> None:
@@ -225,7 +227,7 @@ def test_a_field_missing_from_one_row_is_a_hole_rather_than_a_refusal() -> None:
     thin = {key: value for key, value in READING_LIST.items() if key != "path"}
     payload = note_collection(GROCERIES, thin)
 
-    assert render(payload, fields=["ref", "path"]) == (
+    assert without_help(render(payload, fields=["ref", "path"])) == (
         "NOTE-12  home/groceries.md\nNOTE-3\n\n2 notes"
     )
     assert render(payload, fields=["ref", "path"], fmt="data") == {
@@ -254,7 +256,7 @@ def test_the_entity_refusal_is_not_derived_from_the_row_count() -> None:
     account runs `note list` — the same trap `Payload.kind` is not derived from ``len(records)``
     for.
     """
-    assert render(note_collection(GROCERIES), fields=["ref"]) == "NOTE-12\n\n1 note"
+    assert without_help(render(note_collection(GROCERIES), fields=["ref"])) == "NOTE-12\n\n1 note"
 
 
 def test_an_entity_is_refused_before_the_spelling_is_checked() -> None:

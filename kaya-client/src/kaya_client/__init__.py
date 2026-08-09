@@ -49,7 +49,8 @@ exception class here carries a ``code``, so a raise site names a meaning and the
 lookup rather than a judgement.
 
 **V2a (KAN-540) implemented the ``fmt`` dimension only; KAN-546 added ``fields``, KAN-547
-``text_limit`` and KAN-548 the aggregate.** Projection selects a subset of the record's own keys —
+``text_limit``, KAN-548 the aggregate and KAN-550 the ``help[]`` templates.** Projection selects a
+subset of the record's own keys —
 vocabulary from ``Payload.field_names()``, an unknown name refused by name, ``fields`` on a single
 entity a ``UsageError`` — and it does the same thing in every format, because the CLI's ``--fields``
 and MCP's ``fields`` are one parameter through one seam. Truncation cuts the fields named by
@@ -57,14 +58,18 @@ and MCP's ``fields`` are one parameter through one seam. Truncation cuts the fie
 survives into ``json``, ``toon`` and ``data``; ``0`` disables it and is what ``--full`` resolves to.
 The aggregate is ``{"count": n}`` over the records a call actually returned — one key, because every
 key is paid for on every list read — rendered as a trailing ``2 notes`` under ``human`` and as a
-``summary`` object everywhere else, both out of the one mapping. A single entity gets none.
+``summary`` object everywhere else, both out of the one mapping. A single entity gets none. The
+``help[]`` templates are `hints`, and they are the one dimension that is **human-only**: a template
+is a static per-kind string an agent learns once, so paying for it on every structured read would be
+the cost ADR 0004 exists to recover, spent by the layer written to recover it. They are keyed on the
+payload's own ``kind`` and ``noun``, never on a verb name, and every one of them parses as a real
+command — pinned in `kaya-cli`, which is where the parser lives.
 ADR 0005 puts the signature before the behaviour on purpose — **``render``'s signature did not move
-for any of the three cards and must not move for what follows**; if a later card needs it to change,
+for any of the four cards and must not move for what follows**; if a later card needs it to change,
 that is the signal the sequencing broke, not a reason to push through. ``render``'s module docstring
 argues requirement by requirement why.
 
-Still to come: content-first bare invocation and ``help[]``, search and links (KAN-558/559,
-KAN-566).
+Still to come: content-first bare invocation (KAN-549), search and links (KAN-558/559, KAN-566).
 """
 
 from importlib.metadata import PackageNotFoundError, version
@@ -98,6 +103,7 @@ from kaya_client.errors import (
     UsageError,
     error_payload,
 )
+from kaya_client.hints import HELP_PREFIX, HINTS, help_block, help_lines
 from kaya_client.payloads import Kind, Payload, Shaped
 from kaya_client.projection import project
 from kaya_client.provenance import SOURCE_CHECKOUT, build_sha, version_line
@@ -127,6 +133,8 @@ __all__ = [
     "COUNT_KEY",
     "DEFAULT_TEXT_LIMIT",
     "ERROR_MARKER",
+    "HELP_PREFIX",
+    "HINTS",
     "MAX_TEXT_CHARS_ENV",
     "MESSAGE_KEY",
     "ROW_SEPARATOR",
@@ -151,6 +159,8 @@ __all__ = [
     "build_sha",
     "config_path",
     "error_payload",
+    "help_block",
+    "help_lines",
     "hint",
     "max_text_chars",
     "open_client",
