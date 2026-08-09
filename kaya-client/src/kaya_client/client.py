@@ -32,10 +32,72 @@ import httpx
 from kaya_client.errors import ApiError, TransportError
 from kaya_client.payloads import Payload
 
-DEFAULT_TIMEOUT = 30.0
-"""Generous on purpose. A kaya request can sit behind a cold pandan introspection, measured at
-21.8 s (PLAN §Open risks, KAN-539). A client deadline under that turns a slow-but-working upstream
-into a client-side failure the server never hears about, which is strictly worse than waiting."""
+# --------------------------------------------------------------------------- the deadline
+#
+# THE INVARIANT (KAN-716):
+#
+#     DEFAULT_READ_TIMEOUT  >  backend connect budget + backend read budget  +  handling margin
+#              40.0 s       >            5.0 s        +        30.0 s        +      5.0 s
+#
+# The right-hand side is `KAYA_PANDAN_CONNECT_TIMEOUT_SECONDS` and
+# `KAYA_PANDAN_READ_TIMEOUT_SECONDS` in `backend/app/config.py`, the two budgets KAN-666 split the
+# introspection deadline into. A request that misses the principal cache pays both before kaya has
+# looked at a note, so they are a floor under how long the *server* may legitimately take, and a
+# client deadline under that floor abandons a request the backend was about to answer — the exact
+# failure KAN-666 exists to prevent, one layer out, and reported as a `TransportError` on a working
+# credential.
+#
+# Neither number can see the other: ADR 0004 points the dependency arrow at this package, so the
+# backend may not import it, and this package may not import the backend. The alarm therefore lives
+# where the change that breaks the invariant would actually be made —
+# `backend/tests/unit/test_client_deadline_outlasts_auth.py`, which reads `DEFAULT_READ_TIMEOUT`
+# below out of this file's AST and compares it against the live `Settings` defaults. Raising the
+# backend's read budget past what this constant tolerates is a red test there, with this file named
+# in the message. That guard owns the arithmetic; the numbers written above are today's values and
+# are prose.
+
+DEFAULT_CONNECT_TIMEOUT = 5.0
+"""How long the client waits to *reach* kaya: DNS, the TCP handshake, the TLS handshake.
+
+Short, and short on purpose. This is the phase that says whether kaya's front door is answering, and
+it does not get slower because pandan is asleep behind it. A refused connection is instant either
+way, but a blackholed one — wrong host, a VPN down, a firewall dropping SYNs — would otherwise hang
+for the read budget below, and a CLI that sits there for forty seconds before admitting it cannot
+reach the server is the fail-fast behaviour ADR 0003 asks for, thrown away in the one case where it
+was easy to keep.
+
+``write`` and ``pool`` take this budget too, for the reason ``split_timeout`` in
+`app/auth/upstream.py` gives: `write` blocking past it is a broken socket rather than a busy server
+(httpx charges it per write operation, not per upload, so V2b's note bodies do not need the read
+budget), and `pool` is contention for a local connection slot, which has nothing to do with how
+awake anything is."""
+
+DEFAULT_READ_TIMEOUT = 40.0
+"""How long the client waits for kaya's *answer* once the request is on the wire.
+
+Generous on purpose, and the invariant above is what makes it a derived number rather than a
+preference. A kaya request can sit behind a cold pandan introspection — measured at 21.8 s, PLAN
+§Open risks, KAN-539 — which the backend now budgets 5 s to reach and 30 s to wait out. 35 s of
+authentication plus 5 s for the request kaya was actually asked to serve is 40, and the margin is
+generous against measurement: the whole warm path, round trip and mirror write included, is 387 ms.
+
+**The cost of the number is smaller than it looks**, which is why fail-fast does not argue it down.
+A pandan outage does not reach it: the backend gives up on the connect budget and Q9's `503` comes
+back in about 5 s. An unreachable kaya does not reach it either — that is the connect budget
+above. What is left is a kaya that accepted the connection and has not answered yet, and waiting is
+the correct thing to do with one of those."""
+
+DEFAULT_TIMEOUT = httpx.Timeout(
+    connect=DEFAULT_CONNECT_TIMEOUT,
+    read=DEFAULT_READ_TIMEOUT,
+    write=DEFAULT_CONNECT_TIMEOUT,
+    pool=DEFAULT_CONNECT_TIMEOUT,
+)
+"""The two budgets as httpx sees them, with no phase left to a default.
+
+All four are named because ``httpx.Timeout`` hands back ``None`` for any phase omitted once one is
+given, and ``None`` means *wait forever* — a phase nobody thought about is how one of these ends up
+unbounded, which for a CLI is a process that never returns."""
 
 NOTES_PATH = "/api/v1/notes"
 
@@ -71,7 +133,7 @@ class KayaClient:
         base_url: str,
         token: str,
         *,
-        timeout: float = DEFAULT_TIMEOUT,
+        timeout: httpx.Timeout | float = DEFAULT_TIMEOUT,
         client: httpx.Client | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
@@ -80,6 +142,11 @@ class KayaClient:
         # which arrives carrying its own. Only tests pass `client`, and they pass a MockTransport
         # that never blocks — but the asymmetry is easy to misread, so: if you inject a client,
         # set its timeout on the client. (Same warning, same reason, as `app/auth/upstream.py`.)
+        #
+        # A plain float is still accepted and still means one deadline for every phase, which is
+        # what a caller who wants one number gets. It is not the default because the default has to
+        # satisfy the invariant above, and one number cannot: long enough to outlast a cold
+        # authentication is far too long to spend discovering that nothing is listening.
         self._client = client if client is not None else httpx.Client(timeout=timeout)
         self._owns_client = client is None
 

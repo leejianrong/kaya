@@ -12,7 +12,7 @@ GitHub Release carrying one asset, `kaya-linux-x86_64` (KAN-545).
 | Package | What's in it |
 |---|---|
 | `backend/` | The whole of V1: migration `0001`, `app/auth/` (principal resolver, `authorize_note`), `app/api/` (`/api/v1/notes` CRUD, the central ref resolver, ADR 0009's `409`), `app/spa.py`, `app/observability/` |
-| `kaya-client/` | KAN-540: `KayaClient` over httpx (`list_notes`, `get_note`) and the `render()` seam as four composable steps. Only the `fmt` dimension is implemented — `human`/`json`/`toon` user-facing, `data` adapter-only; `fields` and `text_limit` are **pinned no-ops**. KAN-541: `toon.py`, a stdlib-only **encode-only** TOON encoder registered in `Format`, `_SERIALIZERS` and `_ERROR_SERIALIZERS`, plus `config.py` (PLAN §Config's `KAYA_API_URL`/`KAYA_TOKEN` and `open_client()`) and `MissingCredential`. KAN-543: `provenance.version_line()` and the `_build_stamp.COMMIT` a release rewrites. KAN-542: the failure half of the layer — `error_payload()` / `render_error()`, and a `code` on every exception class so a raise site names a meaning |
+| `kaya-client/` | KAN-540: `KayaClient` over httpx (`list_notes`, `get_note`) and the `render()` seam as four composable steps. Only the `fmt` dimension is implemented — `human`/`json`/`toon` user-facing, `data` adapter-only; `fields` and `text_limit` are **pinned no-ops**. KAN-541: `toon.py`, a stdlib-only **encode-only** TOON encoder registered in `Format`, `_SERIALIZERS` and `_ERROR_SERIALIZERS`, plus `config.py` (PLAN §Config's `KAYA_API_URL`/`KAYA_TOKEN` and `open_client()`) and `MissingCredential`. KAN-543: `provenance.version_line()` and the `_build_stamp.COMMIT` a release rewrites. KAN-542: the failure half of the layer — `error_payload()` / `render_error()`, and a `code` on every exception class so a raise site names a meaning. KAN-716: `DEFAULT_TIMEOUT` split by phase (`DEFAULT_CONNECT_TIMEOUT` 5 s, `DEFAULT_READ_TIMEOUT` 40 s) so the client outlasts the backend's authentication budget |
 | `kaya-cli/` | The `kaya` console script, one entry point. KAN-541: `note list` and `note get <ref>` (`verbs.py`, a dispatch table), `--format {human,json,toon}` with `--json` as an alias and `--format` winning if both are given. **No write verbs**; those are V2b. KAN-543: an argparse parser with `--version` and `--help` on it. KAN-542: that parser subclassed so it raises instead of exiting, plus `failures.py` (ADR 0005's exit table, and the only place a meaning becomes a number) and `parsing.py` (`usage:` on stderr *and* the structured row on stdout, from one event) |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
 | `frontend/` | Svelte 5 + Vite + TS, a shell page, the dev proxy for `/api` |
@@ -206,6 +206,21 @@ those 40 misses into one upstream call and one held worker, and every waiter see
 for 39. It dedupes **per token**: many *distinct* cold PATs at once would still hold a worker each,
 accepted because kaya's shape is one agent with one PAT. No Postgres connection is held during
 introspection; the session is lazy and the mirror write happens after the upstream returns.
+
+**`kaya-client` has to outlast that budget, and a guard in `backend/` says so** (KAN-716). The
+invariant: the client's read deadline exceeds *connect + read* plus a margin for the request kaya
+was actually asked to serve — today `DEFAULT_READ_TIMEOUT` 40 s against 5 + 30 + 5. A client that
+gives up first abandons a request the backend was about to answer and reports a `TransportError` on
+a working credential, which is the paragraphs above one layer out; it is how KAN-540's correct 30 s
+silently stopped being correct when KAN-666 raised the other side. The two numbers live in different
+packages and ADR 0004's arrow means neither may import the other, so the alarm sits where the
+breaking change gets made: `backend/tests/unit/test_client_deadline_outlasts_auth.py` reads the
+client's constant out of its AST and compares it against the live `Settings` defaults — the same
+cross-package technique as `test_error_extras_stay_addressable.py`. Raise
+`KAYA_PANDAN_READ_TIMEOUT_SECONDS` and that test names the other number that has to move. The
+client's deadline is **split by phase** for the same reason the backend's is: 40 s is what it will
+wait for an *answer*, while an unreachable host is refused on a 5 s connect budget, so nothing
+spends the long number discovering that nothing is listening.
 
 ## Commands
 

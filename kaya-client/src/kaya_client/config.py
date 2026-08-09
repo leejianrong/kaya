@@ -41,7 +41,7 @@ from collections.abc import Mapping
 
 import httpx
 
-from kaya_client.client import KayaClient
+from kaya_client.client import DEFAULT_TIMEOUT, KayaClient
 from kaya_client.errors import MissingCredential
 
 API_URL_ENV = "KAYA_API_URL"
@@ -95,5 +95,12 @@ def open_client(
     this repository. Nothing in shipped code passes it.
     """
     bearer = token(env)
-    client = httpx.Client(transport=transport) if transport is not None else None
+    # `timeout=DEFAULT_TIMEOUT` because this is the injected-client branch, and `KayaClient` does
+    # not — cannot — reach into a client it was handed to set one (see its `__init__`). Without it
+    # this path would quietly run on httpx's own 5 s default and break KAN-716's invariant on the
+    # one code path no test would notice, since a `MockTransport` never blocks long enough to fire
+    # any deadline at all.
+    client = None
+    if transport is not None:
+        client = httpx.Client(transport=transport, timeout=DEFAULT_TIMEOUT)
     return KayaClient(api_url(env), bearer, client=client)

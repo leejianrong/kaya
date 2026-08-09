@@ -118,6 +118,24 @@ def test_open_client_builds_a_session_for_the_configured_origin() -> None:
     assert seen[0].headers["Authorization"] == f"Bearer {TOKEN}"
 
 
+def test_a_session_over_an_injected_transport_still_carries_the_shipped_deadline() -> None:
+    """The one path that could have kept httpx's 5 s default, and no other test would have said so.
+
+    ``KayaClient`` cannot set a timeout on a client it was handed — that is the asymmetry its
+    ``__init__`` warns about — so the deadline has to be put on the client *here*, at the only place
+    in shipped code that builds one to inject. A `MockTransport` never blocks, so this is invisible
+    to behaviour: it is asserted on the object because it could only ever be caught there.
+
+    The number itself is KAN-716's invariant, which a 5 s deadline would break by a factor of eight
+    on the one code path a future adapter is most likely to reach for.
+    """
+    from kaya_client.client import DEFAULT_TIMEOUT
+
+    env = {API_URL_ENV: "https://kaya.example", TOKEN_ENV: TOKEN}
+    with open_client(env, transport=httpx.MockTransport(lambda _: httpx.Response(200))) as client:
+        assert client._client.timeout == DEFAULT_TIMEOUT
+
+
 def test_open_client_refuses_before_it_builds_anything() -> None:
     """No client, no connection, no request. A session object that existed without a credential
     would be one an adapter could use, and the failure would then arrive from the API as a `401`
