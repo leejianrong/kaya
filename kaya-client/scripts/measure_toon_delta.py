@@ -22,6 +22,13 @@ number is a fact about the generated notes rather than about truncation. ``--ful
 because ``text_limit=0`` is what a read cost before this card, so the percentages are what the
 default now *saves* rather than what an opt-out costs.
 
+**KAN-548 added the fourth.** The aggregate is the one thing this package adds to a payload rather
+than taking away from it, so its cost has to be reported the way the savings are. The baseline is
+the same render with no summary attached — literally what a read cost before KAN-548 — produced by
+handing the shipped ``serialize`` a ``Shaped`` with ``summary=None`` rather than by deleting the key
+from a string. The interesting row is not the complete record, where it disappears, but the narrow
+projection, where the summary competes with a payload that ``--fields`` already made small.
+
 Method
 ------
 * **Unit: tokens, not bytes.** An agent's context is billed in tokens, and the two formats differ in
@@ -72,9 +79,11 @@ from kaya_client.client import (  # noqa: E402 - after the path insert, so a che
     NOTE_NOUN,
     NOTE_PROSE_FIELDS,
 )
-from kaya_client.payloads import Payload  # noqa: E402
+from kaya_client.payloads import Payload, Shaped  # noqa: E402
+from kaya_client.projection import project  # noqa: E402
 from kaya_client.render import render  # noqa: E402
-from kaya_client.truncation import DEFAULT_TEXT_LIMIT  # noqa: E402
+from kaya_client.serialization import serialize  # noqa: E402
+from kaya_client.truncation import DEFAULT_TEXT_LIMIT, truncate  # noqa: E402
 
 ENCODING = "o200k_base"
 
@@ -180,6 +189,26 @@ def measure(
     return json_tokens, toon_tokens, (toon_tokens - json_tokens) / json_tokens * 100
 
 
+def measure_without_summary(
+    payload: Payload,
+    count_tokens,
+    fields: Sequence[str] | None = None,
+    text_limit: int = NO_TEXT_LIMIT,
+) -> tuple[int, int]:
+    """``(json tokens, toon tokens)`` for the same payload with **no** aggregate attached.
+
+    The pre-KAN-548 baseline, and the only honest way to state what the summary costs. It runs the
+    shipped steps 1, 2 and 4 and skips step 3 — a ``Shaped`` with ``summary=None`` is exactly what
+    `aggregates.attach_summary` produced before that card — rather than stripping a key out of a
+    rendered string, which would measure this script's regex instead of the encoder.
+    """
+    bare = Shaped(payload=truncate(project(payload, fields), text_limit), summary=None)
+    as_json = serialize(bare, "json")
+    as_toon = serialize(bare, "toon")
+    assert isinstance(as_json, str) and isinstance(as_toon, str)
+    return count_tokens(as_json), count_tokens(as_toon)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--notes", type=int, default=DEFAULT_NOTES)
@@ -244,6 +273,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         for name, limit in limits
     ]
+    summarised: list[tuple[str, tuple[int, int], tuple[int, int]]] = [
+        (
+            name,
+            measure_without_summary(listed, count_tokens, fields),
+            measure(listed, count_tokens, fields)[:2],
+        )
+        for name, fields in projections
+    ]
+
     over_limit = sum(1 for note in notes if len(note["body"]) > DEFAULT_TEXT_LIMIT)
     listed_full_json = truncated[0][1][0]
     listed_full_toon = truncated[0][1][1]
@@ -282,6 +320,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{listing[1]:,} | {_share(listing[1], listed_full_toon)} | "
                 f"{entity[0]:,} | {_share(entity[0], single_full_json)} |"
             )
+        print()
+        print(
+            f"| `note list`, {args.notes} notes | JSON without `summary` | with | cost | "
+            "toon without | with | cost |"
+        )
+        print("|---|---:|---:|---:|---:|---:|---:|")
+        for name, bare, whole in summarised:
+            print(
+                f"| {name} | {bare[0]:,} | {whole[0]:,} | {_share(whole[0], bare[0])} | "
+                f"{bare[1]:,} | {whole[1]:,} | {_share(whole[1], bare[1])} |"
+            )
     else:
         for name, (as_json, as_toon, delta) in rows:
             print(f"{name}: json {as_json:,}  toon {as_toon:,}  delta {delta:+.1f}%")
@@ -298,6 +347,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"list toon {listing[1]:,} ({_share(listing[1], listed_full_toon)})  "
                 f"get json {entity[0]:,} ({_share(entity[0], single_full_json)})  "
                 f"get toon {entity[1]:,} ({_share(entity[1], single_full_toon)})"
+            )
+        print()
+        for name, bare, whole in summarised:
+            print(
+                f"{name}: json {bare[0]:,} -> {whole[0]:,} ({_share(whole[0], bare[0])})  "
+                f"toon {bare[1]:,} -> {whole[1]:,} ({_share(whole[1], bare[1])})"
             )
     return 0
 

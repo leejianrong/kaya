@@ -39,7 +39,7 @@ WIDE = ["ref", "title", "path", "updated_at"]
 
 def test_fields_widens_the_human_row(notes: Payload) -> None:
     """ADR 0005 §contract 2's own word for what this does, on the payload it was written about."""
-    first, second = _lines(render(notes, fields=WIDE))
+    first, second = _lines(render(notes, fields=WIDE))[:2]
 
     assert first == "NOTE-12  Groceries       home/groceries.md  2026-08-09T11:02:33.123456+00:00"
     assert second.startswith("NOTE-3   A reading list")
@@ -52,7 +52,7 @@ def test_fields_can_narrow_the_human_row_too(notes: Payload) -> None:
     ``--fields ref,title`` is a perfectly reasonable thing to ask a list verb for, and refusing to
     drop ``path`` because the ADR used the word "widens" would be reading a description as a rule.
     """
-    assert render(notes, fields=NARROW) == "NOTE-12  Groceries\nNOTE-3   A reading list"
+    assert render(notes, fields=NARROW) == "NOTE-12  Groceries\nNOTE-3   A reading list\n\n2 notes"
 
 
 def test_the_order_asked_for_is_the_order_rendered(notes: Payload) -> None:
@@ -65,13 +65,13 @@ def test_the_order_asked_for_is_the_order_rendered(notes: Payload) -> None:
     """
     rendered = render(notes, fields=["path", "ref"])
 
-    assert rendered == "home/groceries.md  NOTE-12\n" + " " * 19 + "NOTE-3"
+    assert rendered == "home/groceries.md  NOTE-12\n" + " " * 19 + "NOTE-3\n\n2 notes"
     assert all(line == line.rstrip() for line in rendered.splitlines())
 
 
 def test_one_field_is_a_single_column(notes: Payload) -> None:
     """The narrowest useful projection, and the one an agent asking "which notes exist?" writes."""
-    assert render(notes, fields=["ref"]) == "NOTE-12\nNOTE-3"
+    assert render(notes, fields=["ref"]) == "NOTE-12\nNOTE-3\n\n2 notes"
 
 
 # ---------------------------------------------------------- the structured formats
@@ -81,7 +81,7 @@ def test_json_carries_exactly_the_named_keys(notes: Payload) -> None:
     """ADR 0004's measurement, in the format it was measured on. The keys are gone, not blanked."""
     assert render(notes, fields=NARROW, fmt="json") == (
         '{"notes":[{"ref":"NOTE-12","title":"Groceries"},'
-        '{"ref":"NOTE-3","title":"A reading list"}]}'
+        '{"ref":"NOTE-3","title":"A reading list"}],"summary":{"count":2}}'
     )
 
 
@@ -96,7 +96,8 @@ def test_the_data_format_narrows_identically(notes: Payload) -> None:
         "notes": [
             {"ref": "NOTE-12", "title": "Groceries"},
             {"ref": "NOTE-3", "title": "A reading list"},
-        ]
+        ],
+        "summary": {"count": 2},
     }
 
 
@@ -173,7 +174,10 @@ def test_the_vocabulary_is_the_payloads_own_keys_and_not_the_default_row(notes: 
     This is the anti-drift property stated as a test: a vocabulary written down in this package
     would have to list ``id``, and would omit whatever the next deploy adds.
     """
-    assert render(notes, fields=["id"], fmt="data") == {"notes": [{"id": 12}, {"id": 3}]}
+    assert render(notes, fields=["id"], fmt="data") == {
+        "notes": [{"id": 12}, {"id": 3}],
+        "summary": {"count": 2},
+    }
 
 
 def test_the_refusal_carries_the_field_in_the_arg_slot(notes: Payload) -> None:
@@ -221,9 +225,12 @@ def test_a_field_missing_from_one_row_is_a_hole_rather_than_a_refusal() -> None:
     thin = {key: value for key, value in READING_LIST.items() if key != "path"}
     payload = note_collection(GROCERIES, thin)
 
-    assert render(payload, fields=["ref", "path"]) == "NOTE-12  home/groceries.md\nNOTE-3"
+    assert render(payload, fields=["ref", "path"]) == (
+        "NOTE-12  home/groceries.md\nNOTE-3\n\n2 notes"
+    )
     assert render(payload, fields=["ref", "path"], fmt="data") == {
-        "notes": [{"ref": "NOTE-12", "path": "home/groceries.md"}, {"ref": "NOTE-3"}]
+        "notes": [{"ref": "NOTE-12", "path": "home/groceries.md"}, {"ref": "NOTE-3"}],
+        "summary": {"count": 2},
     }
 
 
@@ -247,7 +254,7 @@ def test_the_entity_refusal_is_not_derived_from_the_row_count() -> None:
     account runs `note list` — the same trap `Payload.kind` is not derived from ``len(records)``
     for.
     """
-    assert render(note_collection(GROCERIES), fields=["ref"]) == "NOTE-12"
+    assert render(note_collection(GROCERIES), fields=["ref"]) == "NOTE-12\n\n1 note"
 
 
 def test_an_entity_is_refused_before_the_spelling_is_checked() -> None:

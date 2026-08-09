@@ -21,9 +21,14 @@ from conftest import NOTES
 from kaya_cli.__main__ import build_parser, main
 from kaya_cli.parsing import resolve_fields
 
-DEFAULT_ROW = "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list"
+DEFAULT_ROW = "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list\n\n2 notes"
 """Copied from `kaya-client/tests/test_human_row_is_pinned.py`, like `test_verbs.py`'s. The two
-literals disagreeing is how this package would find out it had grown a formatting rule."""
+literals disagreeing is how this package would find out it had grown a formatting rule.
+
+The footer arrived with KAN-548 and belongs to the *client*. What "byte-identical" protects is that
+omitting ``--fields`` leaves the row ``render`` produces alone — not that the row can never change
+for any reason: KAN-546 and KAN-547 both landed without touching this literal, which was their
+evidence, and ADR 0005 §contract 5 is what required this one to move."""
 
 
 # ------------------------------------------------------------------ what it selects
@@ -33,7 +38,7 @@ def test_the_named_columns_reach_the_human_row(capsys, answering) -> None:
     answering(200, NOTES)
 
     assert main(["note", "list", "--fields", "ref,title"]) == 0
-    assert capsys.readouterr().out == "NOTE-12  Groceries\nNOTE-3   A reading list\n"
+    assert capsys.readouterr().out == "NOTE-12  Groceries\nNOTE-3   A reading list\n\n2 notes\n"
 
 
 def test_the_order_typed_is_the_order_printed(capsys, answering) -> None:
@@ -54,7 +59,8 @@ def test_the_structured_output_narrows_too(capsys, answering) -> None:
         "notes": [
             {"ref": "NOTE-12", "title": "Groceries"},
             {"ref": "NOTE-3", "title": "A reading list"},
-        ]
+        ],
+        "summary": {"count": 2},
     }
 
 

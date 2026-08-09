@@ -50,15 +50,16 @@ uv run ruff check .
 ## What is and is not implemented
 
 **V2a implemented the `fmt` dimension only**, per ADR 0005's sequencing rule: the signature lands
-before the behaviour goes inside it. V2b has since filled `fields` (KAN-546) and `text_limit`
-(KAN-547) without that signature moving.
+before the behaviour goes inside it. V2b has since filled `fields` (KAN-546), `text_limit`
+(KAN-547) and the aggregate (KAN-548) without that signature moving — the aggregate needed no
+argument at all, because it is computed from the very records it describes.
 
 | | Today |
 |---|---|
 | `fmt` | User-facing: `human`, `json`, `toon`. Adapter-facing: `data`. `_ERROR_SERIALIZERS` has the same keys as `_SERIALIZERS`, pinned by a test, so a format cannot render a note list but not a `404` |
 | `fields` | **Live** (KAN-546). Narrows `records` *and* `columns`, in the caller's order, uniformly for every format. Vocabulary from `Payload.field_names()`; an unknown name and a single-entity payload are both `UsageError` |
 | `text_limit` | **Live** (KAN-547). Cuts the fields `Payload.prose_fields` names, appending a hint with the **true** total in-band so it reaches the structured formats. `0` means `--full`; the default is `config.max_text_chars()` over `KAYA_MAX_TEXT_CHARS` |
-| `summary` | Never attached. `Shaped` already carries the slot (KAN-548) |
+| `summary` | **Live** (KAN-548). A collection carries `{"count": n}` over the rows it returned; an entity carries none. `human` prints it as a trailing `2 notes` after a blank line, every other format as a `summary` key beside the envelope — one mapping, two renderings. `no notes` is the human zero state and gains no footer. One key on purpose: it is paid on every list read, and it costs +0.1% on a complete record and +2.4% on `--fields ref` |
 | Verbs | `list_notes()`, `get_note(ref)`. The writes arrive with V2b's full verb set |
 
 ### Two format vocabularies, because two audiences

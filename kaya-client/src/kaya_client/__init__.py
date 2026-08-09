@@ -41,25 +41,28 @@ the exit number — ADR 0005's exit table is `kaya-cli`'s, because an MCP tool h
 exception class here carries a ``code``, so a raise site names a meaning and the CLI's table is a
 lookup rather than a judgement.
 
-**V2a (KAN-540) implemented the ``fmt`` dimension only; KAN-546 added ``fields`` and KAN-547
-``text_limit``.** Projection selects a subset of the record's own keys — vocabulary from
-``Payload.field_names()``, an unknown name refused by name, ``fields`` on a single entity a
-``UsageError`` — and it does the same thing in every format, because the CLI's ``--fields`` and
-MCP's ``fields`` are one parameter through one seam. Truncation cuts the fields named by
+**V2a (KAN-540) implemented the ``fmt`` dimension only; KAN-546 added ``fields``, KAN-547
+``text_limit`` and KAN-548 the aggregate.** Projection selects a subset of the record's own keys —
+vocabulary from ``Payload.field_names()``, an unknown name refused by name, ``fields`` on a single
+entity a ``UsageError`` — and it does the same thing in every format, because the CLI's ``--fields``
+and MCP's ``fields`` are one parameter through one seam. Truncation cuts the fields named by
 ``Payload.prose_fields`` and appends a hint carrying the **true** total in-band, so the total
 survives into ``json``, ``toon`` and ``data``; ``0`` disables it and is what ``--full`` resolves to.
+The aggregate is ``{"count": n}`` over the records a call actually returned — one key, because every
+key is paid for on every list read — rendered as a trailing ``2 notes`` under ``human`` and as a
+``summary`` object everywhere else, both out of the one mapping. A single entity gets none.
 ADR 0005 puts the signature before the behaviour on purpose — **``render``'s signature did not move
-for either card and must not move for what follows**; if a later card needs it to change, that is
-the signal the sequencing broke, not a reason to push through. ``render``'s module docstring argues
-requirement by requirement why.
+for any of the three cards and must not move for what follows**; if a later card needs it to change,
+that is the signal the sequencing broke, not a reason to push through. ``render``'s module docstring
+argues requirement by requirement why.
 
-Still to come: aggregates (KAN-548), content-first and ``help[]``, the write verbs, search and links
+Still to come: content-first bare invocation and ``help[]``, the write verbs, search and links
 (KAN-558/559, KAN-566).
 """
 
 from importlib.metadata import PackageNotFoundError, version
 
-from kaya_client.aggregates import attach_summary
+from kaya_client.aggregates import COUNT_KEY, attach_summary, summary_line
 from kaya_client.client import KayaClient
 from kaya_client.config import (
     API_URL_ENV,
@@ -108,6 +111,7 @@ __all__ = [
     "CLI_FORMATS",
     "CODE_KEY",
     "CONTRACT_KEYS",
+    "COUNT_KEY",
     "DEFAULT_TEXT_LIMIT",
     "ERROR_MARKER",
     "MAX_TEXT_CHARS_ENV",
@@ -140,6 +144,7 @@ __all__ = [
     "render_error",
     "serialize",
     "serialize_error",
+    "summary_line",
     "truncate",
     "version_line",
 ]

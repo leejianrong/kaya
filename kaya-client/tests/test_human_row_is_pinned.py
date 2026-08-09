@@ -7,10 +7,30 @@ out here as a literal — every space, in a triple-quoted block that shows the a
 rebuilt from the same code that produced it. A test that formats its own expectation agrees with any
 bug it shares with the implementation.
 
-**The expected strings below are the contract for V2b.** If `--fields`, truncation, aggregates or
-content-first rendering change one byte of them while `--fields` is omitted and the text is under
-the limit, this file goes red and that is the guard doing its job (SLICES §V2b repeats the pin as
-"this is V2a's pin doing its job").
+**KAN-548 changed ``LIST_ROWS`` on purpose, and it is the first card allowed to.** V2a wrote here
+that a later slice reddening this file while ``--fields`` was omitted would be "the guard working,
+not a stale test to update", and that sentence did its job twice: KAN-546 (`--fields`) and KAN-547
+(truncation) both landed with this file untouched and green, which was their evidence. ADR 0005
+§contract 5 then requires a trailing summary line on every human *collection*, so the bytes below a
+`note list` genuinely moved and there is no version of the contract under which they did not.
+
+What moved, exactly, so this is a record rather than an edit:
+
+- **every collection literal gained ``\\n\\n<count> <noun>``** — a blank line and a footer. Nothing
+  inside the table changed: the columns, the two-space gap, the widths taken from the returned rows,
+  the absence of a header and the absence of trailing whitespace are all still asserted, still
+  byte-for-byte, and `test_no_row_carries_trailing_whitespace` still runs over every line.
+- **``SINGLE_NOTE`` did not change.** A summary describes a returned *set* and one note is not a set
+  of anything, so an entity gets none. If `test_the_default_single_note_is_byte_identical` ever
+  reddens, that is a bug in the aggregate and not a pin to update.
+- **the zero state did not change.** ``no notes`` *is* the rendering of ``count: 0``, so it gained
+  no footer.
+
+**Everything else this file pins is still the contract for the rest of V2b.** Content-first
+rendering and `help[]` land next; if either changes one byte of the literals below while
+``--fields`` is omitted and the text is under the limit, this file goes red and that is still the
+guard doing its job (SLICES §V2b repeats the pin as "this is V2a's pin doing its job"). A pin
+quietly edited is a pin destroyed, which is why the paragraph above exists at all.
 """
 
 import pytest
@@ -20,12 +40,19 @@ from kaya_client import Payload, render
 
 LIST_ROWS = (
     "NOTE-12  Groceries       home/groceries.md\n"  #
-    "NOTE-3   A reading list"
+    "NOTE-3   A reading list\n"
+    "\n"
+    "2 notes"
 )
 """Two notes, columns ``ref``/``title``/``path``, two spaces between columns, widths from the rows
 actually returned, no header, and **no trailing whitespace** — the second note's ``path`` is empty
 and the line stops at the title rather than carrying seventeen spaces nobody can see. Trailing
-whitespace is the classic thing a later refactor adds silently and a diff review misses."""
+whitespace is the classic thing a later refactor adds silently and a diff review misses.
+
+Then a blank line and ADR 0005 §contract 5's footer, added by KAN-548. The blank line is why it
+reads as a footer rather than as a third note, and it is the same separation `SINGLE_NOTE` already
+used between a note's labels and its prose. The count describes **the rows above it** and nothing
+else; `test_aggregates.py` is where that is asserted against a corpus it is a slice of."""
 
 SINGLE_NOTE = (
     "ref         NOTE-12\n"
@@ -39,7 +66,11 @@ SINGLE_NOTE = (
 )
 """One note: a label block padded to the widest label, then a blank line, then the prose unlabelled.
 ``body`` keeps its own newlines — the collapse that keeps a table aligned applies to table cells
-only, and mangling prose would be the truncator's job done badly by the formatter."""
+only, and mangling prose would be the truncator's job done badly by the formatter.
+
+**Unchanged by KAN-548, and that is an assertion rather than an omission.** An entity has no summary
+because one note is not a returned set; ``count: 1`` here would be a key identical on every `note
+get` ever made."""
 
 
 def test_the_default_note_list_row_is_byte_identical(notes: Payload) -> None:
@@ -71,21 +102,27 @@ def test_column_widths_come_from_the_returned_rows_only() -> None:
 
     This is the same rule ADR 0005 §contract 5 states for aggregates — describe the returned set,
     not the corpus — applied to layout, and it is why the pin above is stable: it depends on the
-    two notes in the payload and on nothing else.
+    two notes in the payload and on nothing else. Since KAN-548 the footer says the same thing in
+    words, which is why this one-row render ends ``1 note``.
     """
-    assert render(note_collection(READING_LIST)) == "NOTE-3  A reading list"
+    assert render(note_collection(READING_LIST)) == "NOTE-3  A reading list\n\n1 note"
 
 
 def test_an_empty_result_is_a_definitive_zero_state() -> None:
-    """Not an empty string: that is indistinguishable from a crashed pipe or a swallowed error."""
+    """Not an empty string: that is indistinguishable from a crashed pipe or a swallowed error.
+
+    **Unchanged by KAN-548**: ``no notes`` is what ``count: 0`` renders as, so no ``0 notes`` footer
+    goes under it. SLICES §V2b asks an empty result to "still print a definitive zero state", and
+    one definitive sentence is more definitive than two.
+    """
     assert render(note_collection()) == "no notes"
 
 
 @pytest.mark.parametrize(
     ("title", "expected"),
     [
-        ("a\nb", "NOTE-12  a b  home/groceries.md"),
-        ("a\tb", "NOTE-12  a b  home/groceries.md"),
+        ("a\nb", "NOTE-12  a b  home/groceries.md\n\n1 note"),
+        ("a\tb", "NOTE-12  a b  home/groceries.md\n\n1 note"),
     ],
 )
 def test_a_newline_in_a_cell_never_breaks_the_grid(title: str, expected: str) -> None:
@@ -104,7 +141,7 @@ def test_a_missing_column_renders_blank_rather_than_raising() -> None:
     deploy. A `KeyError` here would take down `note list` entirely for a field nobody was reading.
     """
     thin = {key: value for key, value in READING_LIST.items() if key != "path"}
-    assert render(note_collection(thin)) == "NOTE-3  A reading list"
+    assert render(note_collection(thin)) == "NOTE-3  A reading list\n\n1 note"
 
 
 def test_an_entity_with_no_prose_has_no_trailing_blank_line() -> None:

@@ -387,15 +387,21 @@ def test_a_truncated_cell_is_one_line_and_the_grid_holds() -> None:
     `serialization._cell` collapses whitespace, so the same value that renders as a block under
     `get` renders as one line here — no branch in either module, and the columns stay aligned. A
     hint that broke the grid would be a bug in a table nobody looks at closely.
+
+    The table is separated from KAN-548's summary footer before the rows are counted, because "the
+    hint stayed on one line" is a claim about the *rows* and would otherwise be broken by a line
+    that has nothing to do with truncation.
     """
     payload = note_collection(
         {**GROCERIES, "body": "m" * 30}, {"ref": "NOTE-3", "title": "Short", "body": "hi"}
     )
-    rows = str(render(payload, fields=["ref", "body"], text_limit=10)).splitlines()
+    table, footer = str(render(payload, fields=["ref", "body"], text_limit=10)).split("\n\n")
+    rows = table.splitlines()
 
     assert len(rows) == 2
     assert rows[0] == f"NOTE-12  {'m' * 10} {hint(30, 'body')}"
     assert rows[1] == "NOTE-3   hi"
+    assert footer == "2 notes"
 
 
 def test_the_hint_reaches_every_structured_format() -> None:

@@ -87,12 +87,25 @@ from collections.abc import Callable, Mapping
 from enum import StrEnum
 from typing import Any
 
+from kaya_client.aggregates import summary_line
 from kaya_client.errors import ARG_KEY, CODE_KEY, MESSAGE_KEY, UnknownFormat
 from kaya_client.payloads import Kind, Shaped
 from kaya_client.toon import encode as encode_toon
 
 COLUMN_GAP = "  "
 """Two spaces between columns. Fixed, because the default human row is pinned byte-identically."""
+
+SUMMARY_GAP = "\n\n"
+"""A blank line between the table and ADR 0005 §contract 5's trailing summary line (KAN-548).
+
+A blank line rather than a single newline, for one reason: a footer must not be readable as another
+row. ``2 notes`` on the line directly under a table of two notes is a third row to anything that
+split the output on newlines, and the consumer most likely to do that is the agent this whole layer
+exists for. Separated by a blank line it is a block, which is what `_entity` below already does with
+a note's prose and what `truncation.HINT_SEPARATOR` already does with the truncation hint — the same
+device, for the same reason, in the third place a footer needed one.
+
+A structured consumer never meets this: it reads ``summary`` out of the object."""
 
 
 class Format(StrEnum):
@@ -162,12 +175,19 @@ def _as_toon(shaped: Shaped) -> str:
 
 
 def _as_human(shaped: Shaped) -> str:
-    # V2b appends ADR 0005 §contract 5's trailing summary line here, from `shaped.summary`, which
-    # is `None` for the whole of V2a. Not stubbed: a placeholder that renders a dict's `repr` would
-    # be a wrong human format shipping under the byte-identity pin that is supposed to catch it.
-    if shaped.payload.kind is Kind.COLLECTION:
-        return _rows(shaped)
-    return _entity(shaped)
+    """A collection as a table with contract 5's footer under it; one note as a block.
+
+    The footer is `aggregates.summary_line` — the summary *dict* rendered, not the records recounted
+    — so the line a person reads and the object a structured consumer receives cannot disagree about
+    the number. ``None`` covers both the entity (no summary exists) and the empty collection (whose
+    zero state is `_rows`' own ``no notes``), so this function needs no case for either.
+    """
+    if shaped.payload.kind is not Kind.COLLECTION:
+        return _entity(shaped)
+
+    table = _rows(shaped)
+    line = summary_line(shaped)
+    return table if line is None else f"{table}{SUMMARY_GAP}{line}"
 
 
 def _rows(shaped: Shaped) -> str:

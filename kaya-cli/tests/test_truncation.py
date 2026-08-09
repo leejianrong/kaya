@@ -31,7 +31,7 @@ LONG_BODY = "x" * 1200
 
 LONG_NOTE = {**GROCERIES, "body": LONG_BODY}
 
-DEFAULT_ROW = "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list"
+DEFAULT_ROW = "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list\n\n2 notes"
 """Copied from `kaya-client/tests/test_human_row_is_pinned.py`, like `test_fields.py`'s. Truncation
 must not move it: both bodies in that corpus are far under 500 characters."""
 
@@ -198,8 +198,9 @@ def test_a_truncated_body_in_a_table_stays_one_row(capsys, answering, monkeypatc
     answering(200, {"notes": [LONG_NOTE]})
     main(["note", "list", "--fields", "ref,body"])
 
-    rows = capsys.readouterr().out.splitlines()
-    assert rows == [f"NOTE-12  xxxxx {hint(1200, 'body')}"]
+    table, footer = capsys.readouterr().out.rstrip("\n").split("\n\n")
+    assert table.splitlines() == [f"NOTE-12  xxxxx {hint(1200, 'body')}"]
+    assert footer == "1 note"  # KAN-548's, and not this card's business beyond staying off the row
 
 
 # ------------------------------------------------------------------ the resolver itself
