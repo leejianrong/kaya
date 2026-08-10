@@ -66,6 +66,31 @@ affordance — the SPA "sends it always", so a `409` on a rename would be a bann
 dismiss before the one that matters arrives. The mixed write is refused whole because applying half of a
 rejected write would be a second silent edit, in the opposite direction.
 
+**Clarified while implementing the affordance (KAN-556).** "Renders a conflict banner offering keep mine,
+keep theirs, or a side-by-side view" left four things to the implementation, and all four are decisions
+rather than layout:
+
+- **"Keep mine" is this same `PATCH` again**, with `body` from `attempted` and `if_updated_at` from
+  **`stored`** — the crossing is why both objects on the `409` carry their own `updated_at`. It stays
+  guarded, so a third writer arriving while the banner is open is refused identically and the banner
+  refreshes against the newer version. Resolution therefore *converges* rather than being a force-write
+  wearing a friendly label, and there is still no `--force` anywhere in this product.
+- **"Keep theirs" makes no request at all.** The stored version already is what the server holds; the
+  whole `409` was kaya refusing to overwrite it. So it is a client-side discard, and the only copy of the
+  discarded text is the editor's own undo history — which is the reason it goes in as a **transaction**
+  (`isolateHistory`, so it is exactly one undo) rather than as a re-mount. This is the sharp end of
+  "there is no revision history", and the banner says so before the click.
+- **The comparison is a bound, not a diff.** SLICES §V3's demo says "a real diff"; what shipped trims
+  the lines the two bodies share at each end and marks the region between them, which provably contains
+  every difference and cannot mis-align anything, because it aligns nothing. An LCS line diff would mark
+  less and would be the first thing here that can be *wrong* about what changed while looking
+  authoritative — the same objection this ADR already makes to auto-merging prose, one step down. Both
+  bodies are rendered whole and byte for byte beside it.
+- **Fields the caller did not send are shown once, as shared.** `attempted_version` fills them from the
+  stored note, so a body-only write — every write the SPA makes — produces a `409` whose `title` and
+  `path` match on both sides *by construction*. Rendered as two columns that is an invitation to choose
+  between two identical strings, so the banner names them once and says why.
+
 ## Alternatives considered
 
 | Option | Why not |
@@ -92,4 +117,8 @@ rejected write would be a second silent edit, in the opposite direction.
   it isn't mistaken for a bug.
 - **The guard:** an integration test where two writers read the same note, both write, and the second gets a
   `409` with both bodies present. Mutation-tested, because a concurrency assertion that passes when the
-  precondition is ignored entirely is precisely the blind guard pandan kept finding.
+  precondition is ignored entirely is precisely the blind guard pandan kept finding. The SPA's half is
+  `frontend/tests/conflict.test.ts` (the resolution rule as one expression, in `node`) and
+  `frontend/tests/conflict-banner.test.ts` (both resolutions end to end, including a conflict on the
+  retry), and the mutation that matters in both is replacing the precondition with
+  `new Date(stamp).toISOString()`: it rounds `.881903` to `.881`, which refuses every correct write.
