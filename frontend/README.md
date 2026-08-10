@@ -209,17 +209,23 @@ KAN-554 then added the folder tree, the note list and live preview. Measured the
 
 | | before (KAN-556) | after (KAN-554) | delta |
 |---|---|---|---|
-| JS raw | 368,984 B | 382,302 B | **+13,318 B (+3.6%)** |
-| JS gzip -9 | 121,553 B | 126,050 B | **+4,497 B (+3.7%)** |
-| CSS raw | 6,293 B | 10,455 B | +4,162 B (+66.1%) |
-| CSS gzip -9 | 1,737 B | 2,397 B | +660 B (+38.0%) |
+| JS raw | 368,984 B | 381,926 B | **+12,942 B (+3.5%)** |
+| JS gzip -9 | 121,553 B | 125,862 B | **+4,309 B (+3.5%)** |
+| CSS raw | 6,293 B | 10,590 B | +4,297 B (+68.3%) |
+| CSS gzip -9 | 1,737 B | 2,421 B | +684 B (+39.4%) |
+
+Those are the figures **after** review, and the JS number went *down* by 376 B raw / 188 B gzip when
+`lib/livedoc.ts` was replaced by `EditorPane`'s `ondocument` prop: a published callback costs less than
+a `MutationObserver`, a `WeakMap` and a `StateEffect.appendConfig` attach. The better seam was also the
+cheaper one, which is not always how that goes and is worth writing down when it is.
 
 **The markdown parser is free, and that is measured rather than argued.** `lib/markdown.ts` walks
 `@lezer/markdown`'s syntax tree, which `@codemirror/lang-markdown` already imports to build
 `markdownLanguage` — the extension `EditorPane.svelte` mounts. Two proofs: `package-lock.json`'s diff
 adds **zero packages**, and a measurement build with the import deleted and the parse call stubbed out
 comes back **376,851 B raw / 124,331 B gzip -9** against **376,838 / 124,319** with it — thirteen bytes
-*larger*, i.e. noise from the stub. What that reuse is worth, and what the alternatives cost (esbuild,
+*larger*, i.e. noise from the stub. (Both measured pre-merge, against `82f867f`; the *difference* is
+what the claim rests on and it does not move.) What that reuse is worth, and what the alternatives cost (esbuild,
 minified, `gzip -9`):
 
 | Option | raw | gzip -9 | Note |
@@ -245,7 +251,7 @@ its own (a two-column grid, two scrolling `<pre>`s, a highlight) and the baselin
 1.7 kB gzip is still less than 1.5% of what the page fetches. No new dependency: the comparison is
 about forty lines of stdlib string work, and CodeMirror is still the only runtime dependency.
 
-One JS chunk and one CSS file, so an editor page fetches **392,757 B raw / 128,447 B gzip -9** in
+One JS chunk and one CSS file, so an editor page fetches **392,516 B raw / 128,283 B gzip -9** in
 total and there is no second request hiding behind the entry number. CSS barely moves because CM6
 injects its own styles through `style-mod` at runtime — the editor's theme is JavaScript, which is
 also why it can read `app.css`'s tokens.
