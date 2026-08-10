@@ -107,6 +107,9 @@ export interface RequestOptions {
   fetchImpl?: typeof fetch
 }
 
+/** What a caller of {@link publicRequest} may ask for: a `GET`, and nothing else. */
+export type PublicOptions = Pick<RequestOptions, 'signal' | 'fetchImpl'>
+
 /**
  * One request against `/api/v1`, authenticated from the credential seam.
  *
@@ -118,20 +121,51 @@ export interface RequestOptions {
  *
  * Returns `null` for a `204`, which is what `DELETE /notes/{ref}` answers.
  */
+// `async` rather than a plain function returning `send(…)`, and the keyword is load-bearing: the
+// `MissingCredential` below must arrive as a **rejection**. `notes.ts` has non-async callers that
+// return this promise straight through, so a synchronous throw would escape their `.catch()` and
+// land in a `$effect` as an uncaught error.
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, signal, fetchImpl } = options
-  const url = apiPath(path)
-
   const bearer = authorization()
   if (bearer === null) {
     // Refused before the request rather than after a 401, so an unauthenticated app does not
     // hammer the backend — and so the landing state is reached without a round trip.
     throw new MissingCredential()
   }
+  return send<T>(path, options, { Authorization: bearer })
+}
+
+/**
+ * A `GET` that carries **no** credential, for the one route that has to answer without one.
+ *
+ * That route is `/api/v1/meta` and its caller is KAN-555's landing state: a visitor with no token
+ * needs to be told where to mint one, and the answer lives in the backend's `KAYA_PANDAN_URL`.
+ * `apiRequest` cannot serve it — it throws `MissingCredential` before the fetch, which is correct
+ * for every *other* path and exactly wrong for this one.
+ *
+ * It does not read the credential seam **at all**, and that is the property rather than an
+ * accident of there being nothing to read: the landing state is also reached with a *stale* token
+ * still in the tab (the `401` recovery path), and a request that helpfully attached it would send a
+ * credential the caller did not ask to send, to a route that has no use for it.
+ *
+ * No `method` and no `body` parameter, because a public write does not exist and should not be
+ * constructible here. If one is ever needed, that is a card with an argument in it.
+ */
+export async function publicRequest<T>(path: string, options: PublicOptions = {}): Promise<T> {
+  return send<T>(path, options)
+}
+
+async function send<T>(
+  path: string,
+  options: RequestOptions,
+  auth: Record<string, string> = {},
+): Promise<T> {
+  const { method = 'GET', body, signal, fetchImpl } = options
+  const url = apiPath(path)
 
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    Authorization: bearer,
+    ...auth,
   }
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json'
