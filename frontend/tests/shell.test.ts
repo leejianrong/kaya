@@ -20,6 +20,7 @@ import EditorPane from '../src/components/EditorPane.svelte'
 import Sidebar from '../src/components/Sidebar.svelte'
 import * as auth from '../src/lib/auth'
 import type { Note } from '../src/lib/types'
+import { box } from './reactive.svelte'
 
 const FAKE_TOKEN = 'kanban_pat_9QxZ4mR7vT2LbWc8NsHdKfJgYpAeUiOn3XzVrQtE5w'
 
@@ -99,15 +100,45 @@ describe("PLAN §S9's editor container", () => {
     expect(container!.textContent).toContain('KAN-553')
   })
 
-  it('empties the container on teardown, which is where view.destroy() goes', () => {
-    const instance = mount(EditorPane, { target: host, props: { note: note(), error: null } })
+  it('tears the old contents down when the note changes, rather than stacking them up', () => {
+    // SLICES §V3: "the editor mounts once per note and tears down cleanly on navigation (no leaked
+    // listeners)". The `$effect`'s return value is what makes that true, and this is the assertion
+    // that notices when it stops being returned — an `EditorView` per visited note, all of them
+    // still listening, is a leak that looks like nothing until the app is slow.
+    const opened = box<Note | null>(note())
+    mounted.push(
+      mount(EditorPane, {
+        target: host,
+        props: {
+          get note() {
+            return opened.value
+          },
+          error: null,
+        },
+      }),
+    )
     flushSync()
+
     const container = host.querySelector('.editor-host')!
     expect(container.childElementCount).toBe(1)
 
+    opened.value = note({ ref: 'NOTE-7', title: 'Architecture notes' })
+    flushSync()
+    expect(container.childElementCount).toBe(1)
+
+    opened.value = null
+    flushSync()
+    expect(container.childElementCount).toBe(1)
+    expect(container.textContent).toContain('No note open')
+  })
+
+  it('removes the container itself on unmount', () => {
+    const instance = mount(EditorPane, { target: host, props: { note: note(), error: null } })
+    flushSync()
+    expect(host.querySelector('.editor-host')).not.toBeNull()
+
     unmount(instance)
     flushSync()
-    // SLICES §V3: "the editor mounts once per note and tears down cleanly on navigation".
     expect(host.querySelector('.editor-host')).toBeNull()
   })
 
