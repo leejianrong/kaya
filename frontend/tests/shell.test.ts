@@ -84,19 +84,79 @@ describe('the component harness', () => {
   })
 })
 
-describe("PLAN §S9's editor container", () => {
-  it('gives CodeMirror an element whose children Svelte does not own', () => {
-    const target = render(EditorPane, { note: note(), error: null })
-    const container = target.querySelector('.editor-host')
+/**
+ * The nodes `EditorPane`'s `$effect` creates — the *only* nodes allowed inside S9's container.
+ *
+ * **KAN-553 changes this one line** and nothing else in this file: when the placeholder becomes
+ * `new EditorView({ parent })`, the selector becomes `:scope > .cm-editor`. The assertions below
+ * are written against "whatever the effect made", so they keep holding across that swap.
+ */
+const IMPERATIVE = ':scope > p.editor-placeholder'
 
-    expect(container).not.toBeNull()
-    // Every child in here was created imperatively by the `$effect`, which is what
-    // `new EditorView({ parent })` will be in KAN-553. Svelte's client runtime marks the nodes it
-    // owns with a `svelte-` scoping class, and there are none in this subtree.
-    for (const child of Array.from(container!.children)) {
-      expect(child.className).not.toMatch(/\bs-/)
+/** A node named for a failure message: `text "loading"`, `comment ""`, `<span>`. */
+function describeNode(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return `text ${JSON.stringify(node.textContent)}`
+  }
+  if (node.nodeType === Node.COMMENT_NODE) {
+    return `comment ${JSON.stringify(node.textContent)} (a Svelte block anchor)`
+  }
+  return `<${node.nodeName.toLowerCase()}> ${JSON.stringify(node.textContent)}`
+}
+
+/**
+ * Everything in the container that the `$effect` did not put there.
+ *
+ * Over **`childNodes`**, not `children`. That distinction is the whole assertion: `children` is an
+ * `HTMLCollection` of elements, so it cannot see a text node — and one word of interpolated text is
+ * the single most likely way a future author breaks S9. `childNodes` also sees the comment anchor a
+ * `{#if}` leaves behind even when the block renders nothing, which is a Svelte-owned node in CM6's
+ * subtree that looks like an empty container to any element-wise check.
+ */
+function foreignNodes(container: Element): string[] {
+  const own = new Set<Node>(container.querySelectorAll(IMPERATIVE))
+  return Array.from(container.childNodes)
+    .filter((node) => !own.has(node))
+    .map(describeNode)
+}
+
+describe("PLAN §S9's editor container", () => {
+  it('holds exactly the nodes its own $effect created, and nothing Svelte made', () => {
+    // An **identity** check, not a property check. The earlier version of this test asked whether
+    // each child element carried a Svelte scoping class, which was blind three ways over: a
+    // scoping class only exists when a scoped style rule matches the element, `children` never
+    // sees text, and neither sees a block anchor. Asking "is this node one the effect made?"
+    // replaces all three questions with one that cannot be satisfied accidentally.
+    const opened = box<Note | null>(note())
+    mounted.push(
+      mount(EditorPane, {
+        target: host,
+        props: {
+          get note() {
+            return opened.value
+          },
+          error: null,
+        },
+      }),
+    )
+    flushSync()
+
+    const container = host.querySelector('.editor-host')!
+
+    // Both halves are load-bearing. Without the first, an empty container would pass — and an
+    // empty container means the effect never ran, which is a broken editor rather than a clean one.
+    expect(container.querySelectorAll(IMPERATIVE)).toHaveLength(1)
+    expect(foreignNodes(container)).toEqual([])
+
+    // Across prop states, because a rendered check only ever sees the props it was handed, and a
+    // `{#if note}` inside the container would be invisible in whichever state made it false.
+    // `tests/editor-container.test.ts` closes that gap properly, over the template source.
+    for (const next of [note({ ref: 'NOTE-7', title: 'Architecture notes' }), null, note()]) {
+      opened.value = next
+      flushSync()
+      expect(container.querySelectorAll(IMPERATIVE)).toHaveLength(1)
+      expect(foreignNodes(container)).toEqual([])
     }
-    expect(container!.textContent).toContain('KAN-553')
   })
 
   it('tears the old contents down when the note changes, rather than stacking them up', () => {

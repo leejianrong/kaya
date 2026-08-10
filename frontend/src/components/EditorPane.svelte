@@ -16,6 +16,14 @@
    * safe: Svelte owns *this element*, and everything inside it is written imperatively. The
    * `$effect` below is a rehearsal of the one that will construct an `EditorView` — same
    * boundary, same teardown, no library yet.
+   *
+   * **KAN-553: that effect must re-run on note *identity* and never on note content.** Reading the
+   * `note` prop at all registers it, so a parent handing down a new object per keystroke re-runs
+   * this effect whichever field you read — destroying and rebuilding the `EditorView` on every
+   * character, losing the selection, the undo history and the scroll position with it. Compare the
+   * incoming `note.ref` against the ref the view was built for and return early when they match;
+   * the document goes in as a transaction, never as a remount. That is the loop PLAN §Open risks
+   * warns about wearing different clothes, and this is the file its author will be reading.
    */
   let host: HTMLDivElement | undefined = $state()
 
