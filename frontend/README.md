@@ -235,8 +235,8 @@ note content. `lib/markdown.ts` returns a `DocumentFragment` instead — `create
 names, `createTextNode` for every byte of source — so there is no string to sanitise and no escaping
 function to get wrong. Cheaper *and* one fewer class of bug.
 
-So the whole JS delta is this repo's own code: the renderer, `lib/tree.ts`, `lib/livedoc.ts`, two
-components and `svelte/reactivity`'s `SvelteSet`. CSS moves proportionally more again, for the same
+So the whole JS delta is this repo's own code: the renderer, `lib/tree.ts`, two components,
+`EditorPane`'s `ondocument` seam and `svelte/reactivity`'s `SvelteSet`. CSS moves proportionally more again, for the same
 reason the banner's did — the preview needs a typographic stylesheet for markup Svelte did not create,
 so every rule in it is `:global` under a scoped `.rendered`.
 

@@ -1,7 +1,4 @@
 <script lang="ts">
-  import { untrack } from 'svelte'
-
-  import { trackEditor, watchDocument } from '../lib/livedoc'
   import { renderMarkdown } from '../lib/markdown'
   import type { Note } from '../lib/types'
 
@@ -9,13 +6,20 @@
    * KAN-554's live preview: the markdown being edited, rendered as you type.
    *
    * **A sibling of the editor pane, never a child of CM6's subtree** (PLAN §S9, ADR 0001 §2). Nothing
-   * here touches the editor's DOM; it reads the view's `state.doc` and writes into its own element.
+   * here touches the editor's DOM, and this component holds no editor reference at all.
    *
-   * **The document arrives laterally.** `lib/livedoc.ts` has the argument in full: the preview
-   * attaches its own `updateListener` to the live `EditorView`, so no keystroke passes through a prop
-   * or through the parent's state, and therefore nothing the preview does can re-run the `$effect`
-   * that owns the editor. `tests/preview.test.ts` asserts both halves — the preview follows the
-   * document, and the parent's `note` object is the same object afterwards.
+   * **The document arrives through `EditorPane`'s `ondocument` seam**, which `App.svelte` wires into a
+   * rune and hands down here as `source`. That is the second design this card had: the first found the
+   * live `EditorView` through `EditorView.findFromDOM` and attached its own `updateListener`, because
+   * KAN-556 held `EditorPane.svelte` and a card may not edit a file another card is holding. KAN-556
+   * landed, so the blocker lifted and the reach was replaced with the seam — `findFromDOM` is public
+   * CM6 API, but a cross-component reach into another component's internals is not a seam whichever
+   * API makes it possible. V5's wikilink pills and backlinks panel read the same prop.
+   *
+   * That leaves this component with no imperative machinery and one job: render a string. The
+   * `MutationObserver` that used to re-find the view when the editor was rebuilt, and the
+   * `StateEffect.appendConfig` that attached the listener, are both gone — a note change now reaches
+   * the preview as an ordinary prop update, so there is no ordering hazard left to insure against.
    *
    * **The rendered content is built imperatively, and that is the security decision.** `renderMarkdown`
    * returns a `DocumentFragment` of elements this repo named and `Text` nodes holding the author's
@@ -27,52 +31,10 @@
    * different reason than the editor's: not an update loop, but the fact that a `{#if}` or an
    * interpolation in there would be Svelte writing into a subtree `replaceChildren` replaces whole.
    */
-  const { note }: { note: Note | null } = $props()
-
-  /**
-   * The region the editor lives in — this component's own parent.
-   *
-   * `parentElement` rather than a prop, because it is the same fact either way and a prop would put
-   * the layout's shape in two files: `App.svelte` places the preview beside the editor, and "beside"
-   * is exactly what `parentElement` means. `lib/livedoc.ts` only needs a `ParentNode` containing the
-   * view.
-   */
-  let host: HTMLElement | undefined = $state()
+  const { note, source }: { note: Note | null; source: string } = $props()
 
   /** The element `replaceChildren` owns. No template children — see the docstring above. */
   let rendered: HTMLDivElement | undefined = $state()
-
-  /** The document on screen in the editor. Written only by the watcher below. */
-  let doc = $state('')
-
-  $effect(() => {
-    const region = host?.parentElement ?? null
-    // The **ref**, so this re-runs per note: `EditorPane` rebuilds its view when the open note
-    // changes, and a listener on the destroyed one would leave the preview on the previous note.
-    const openedRef = note?.ref ?? null
-
-    if (openedRef === null || region === null) {
-      doc = ''
-      return
-    }
-
-    // A seed for the frame before the view is found, `untrack`ed so reading it does not make this
-    // effect depend on the *body*. It must not: the parent's copy goes stale the moment you type, and
-    // an effect that re-ran on it would reseed the preview from the stale value. `watchDocument`
-    // publishes the editor's real document immediately on attach and overwrites this.
-    doc = untrack(() => note?.body ?? '')
-
-    let unwatch: (() => void) | null = null
-    const stop = trackEditor(region, (view) => {
-      unwatch?.()
-      unwatch = view === null ? null : watchDocument(view, (text) => (doc = text))
-    })
-
-    return () => {
-      unwatch?.()
-      stop()
-    }
-  })
 
   $effect(() => {
     const target = rendered
@@ -81,11 +43,11 @@
     }
     // `replaceChildren` and not an incremental patch: the fragment is the whole rendering, and a
     // preview is cheap to rebuild. A diff here would be a second rendering strategy to keep correct.
-    target.replaceChildren(renderMarkdown(doc))
+    target.replaceChildren(renderMarkdown(source))
   })
 </script>
 
-<section class="preview" aria-label="Preview" bind:this={host}>
+<section class="preview" aria-label="Preview">
   <header>
     <h2>Preview</h2>
     {#if note === null}
@@ -236,6 +198,18 @@
     font-size: 0.7rem;
     letter-spacing: 0.04em;
     text-transform: uppercase;
+  }
+
+  /*
+    A link this renderer will not make clickable, shown as the markdown that was typed. Same principle
+    as the raw-HTML block: a refusal a reader can see beats a silent disappearance. `lib/markdown.ts`
+    has the argument, and `title` carries the reason for anyone who hovers.
+  */
+  .rendered :global(span.unlinked) {
+    border-bottom: 1px dotted var(--muted);
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 0.9em;
   }
 
   .rendered :global(table) {

@@ -45,6 +45,7 @@ const ALLOWED_TAGS = new Set([
   'ol',
   'p',
   'pre',
+  'span',
   'strong',
   'sub',
   'sup',
@@ -76,6 +77,9 @@ const ALLOWED_ATTRIBUTES = new Set([
   'src',
   'start',
   'target',
+  // Built from a literal in `lib/markdown.ts` plus a target already refused as a URL — the reason a
+  // refused link is not clickable, for anyone who hovers it.
+  'title',
   'type',
 ])
 
@@ -143,6 +147,9 @@ const PAYLOADS: Record<string, string> = {
   'javascript image': '![x](javascript:alert(1))',
   'data url image': '![x](data:text/html,<script>alert(1)</script>)',
   'reference link to javascript': '[click][evil]\n\n[evil]: javascript:alert(1)',
+  'protocol-relative link': '[go](//evil.example.com/steal)',
+  'backslash-relative link': '[go](\\\\evil.example.com/steal)',
+  'protocol-relative image': '![x](//evil.example.com/pixel.png)',
   'entity encoded script': '&lt;script&gt;alert(1)&lt;/script&gt;',
   'style block': '<style>body { display: none }</style>',
   'html comment with markup': '<!-- <script>alert(1)</script> -->',
@@ -237,22 +244,59 @@ describe('inert is not the same as gone', () => {
     expect(holder.querySelector('script')).toBeNull()
   })
 
-  it('keeps the words of a link it refuses to make clickable', () => {
+  it('shows the markdown of a link it refuses, marked as not a link', () => {
+    // The refusal has to be *visible*. An earlier version rendered only the label, so
+    // `[REL](/notes/NOTE-1)` became the word `REL` with nothing to explain it — somebody typed a link
+    // and got prose. Showing the source also reveals a hostile payload instead of innocent words.
     const fragment = renderMarkdown('[click me](javascript:alert(1))')
     const holder = document.createElement('div')
     holder.append(fragment)
+    const marked = holder.querySelector('span.unlinked')
 
-    expect(holder.textContent).toContain('click me')
     expect(holder.querySelector('a')).toBeNull()
+    expect(marked).not.toBeNull()
+    expect(marked!.textContent).toBe('[click me](javascript:alert(1))')
+    expect(marked!.getAttribute('title')).toContain('only http, https and mailto')
   })
 
-  it('shows the source of an image it refuses, rather than a broken element', () => {
+  it('shows the markdown of an image it refuses, rather than a broken element', () => {
     const fragment = renderMarkdown('![alt](javascript:alert(1))')
     const holder = document.createElement('div')
     holder.append(fragment)
 
     expect(holder.querySelector('img')).toBeNull()
-    expect(holder.textContent).toContain('![alt](javascript:alert(1))')
+    expect(holder.querySelector('span.unlinked')?.textContent).toBe('![alt](javascript:alert(1))')
+  })
+
+  it('refuses every scheme-less shape visibly, and never silently', () => {
+    // `safeUrl`'s docstring has the argument for refusing rather than allowing these. What is asserted
+    // here is the part that is not a judgement call: whichever way that goes, **nothing disappears**.
+    for (const source of [
+      '[REL](/notes/NOTE-1)',
+      '[ANCHOR](#section)',
+      '[SIBLING](other-note.md)',
+      '[PROTO](//evil.example.com/steal)',
+      '[BACKSLASH](\\\\evil.example.com/steal)',
+      '[MISSING][nosuchlabel]',
+      '[bare]',
+    ]) {
+      const holder = document.createElement('div')
+      holder.append(renderMarkdown(source))
+
+      expect(holder.querySelector('a'), source).toBeNull()
+      expect(holder.querySelector('span.unlinked'), source).not.toBeNull()
+      // Every character of what was typed is still on screen.
+      expect(holder.textContent, source).toContain(source)
+    }
+  })
+
+  it('refuses a protocol-relative target, which is the one that looks relative and is not', () => {
+    // `//evil.example.com` inherits the page's scheme and goes offsite; so does `\\evil.example.com`,
+    // because browsers normalise backslashes in a URL. This is why the allow-list parses absolutely
+    // rather than carving an exception for "no scheme, so it must be local".
+    expect(safeUrl('//evil.example.com/steal')).toBeNull()
+    expect(safeUrl('\\\\evil.example.com/steal')).toBeNull()
+    expect(renderMarkdown('![x](//evil.example.com/pixel.png)').querySelector('img')).toBeNull()
   })
 })
 

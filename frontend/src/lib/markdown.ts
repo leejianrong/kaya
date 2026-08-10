@@ -160,9 +160,26 @@ const NAMED_ENTITIES: Record<string, string> = {
 /**
  * A URL fit to put in an attribute, or `null` if it is not one.
  *
- * Parsed **absolutely**, with no base: a relative or fragment-only target has no meaning in a
- * preview until there is a resolver for it (wikilinks are KAN-567), so it comes back `null` and the
- * caller renders the source as text instead of inventing a destination.
+ * Parsed **absolutely**, with no base, so a relative or fragment-only target comes back `null` and
+ * the caller renders {@link unlinked} — the markdown you typed, marked as not a link. Three reasons
+ * that is a refusal rather than a gap, because "they carry no scheme so they cannot execute" is true
+ * and is not the whole question:
+ *
+ * - **There is nothing to resolve a relative path against.** ADR 0008: a note's identity is its
+ *   `NOTE-n` ref and `path` is *mutable metadata*, so `other-note.md` names nothing stable. Resolving
+ *   it would build exactly the path-to-identity coupling ADR 0008 exists to forbid, and it is what
+ *   V5's wikilinks (KAN-561/567) do properly, through the ref.
+ * - **A fragment has no target.** This renderer emits no `id` on a heading, so `#section` would scroll
+ *   nowhere. A link that silently does nothing is worse than one that says it is not a link.
+ * - **`//evil.com` looks relative and is not.** It is protocol-relative: it inherits the page's scheme
+ *   and goes offsite, as does `\\evil.com`, since browsers normalise backslashes in a URL. Any
+ *   "allow the scheme-less shapes" rule needs an exception carved out for a case that *looks* exactly
+ *   like the allowed one, and a sanitiser whose rule has that shape is a sanitiser with a bug in it
+ *   waiting for the next variant. Parsing absolutely refuses both by throwing, for free.
+ *
+ * `/notes/NOTE-4` is the one honest counter-example — it is a real route in this SPA — and it is still
+ * refused, because rendering it needs a different `target`/`rel` policy and a router-interception
+ * decision from the external case, i.e. two kinds of link in a card that has one.
  *
  * **What defeats a scheme smuggled past a filter is the allow-list reading `parsed.protocol`**, and
  * this paragraph is a correction: an earlier draft claimed the control-character scan below was the
@@ -563,7 +580,7 @@ function inlineNodeInto(node: SyntaxNode, context: Context, into: ParentNode): v
       const raw = url === null ? '' : source.slice(url.from, url.to)
       const href = safeUrl(raw)
       if (href === null) {
-        into.append(textNode(source.slice(node.from, node.to)))
+        into.append(unlinked(source.slice(node.from, node.to), raw))
         return
       }
       into.append(anchor(href, [textNode(raw)]))
@@ -594,10 +611,10 @@ function linkInto(node: SyntaxNode, context: Context, into: ParentNode): void {
   const labelFrom = marks[0]?.to ?? node.from
   const labelTo = marks[1]?.from ?? node.to
 
-  const href = safeUrl(target(node, context))
+  const raw = target(node, context)
+  const href = safeUrl(raw)
   if (href === null) {
-    // No destination, or one this renderer refuses. The words stay; the link does not.
-    inlineInto(node, context, into, labelFrom, labelTo)
+    into.append(unlinked(context.source.slice(node.from, node.to), raw))
     return
   }
 
@@ -639,6 +656,36 @@ function target(node: SyntaxNode, context: Context): string {
  * live pandan PAT in `sessionStorage` (KAN-555). `noreferrer` keeps the note's URL — which contains
  * a `NOTE-n` ref — out of the destination's referrer log.
  */
+/**
+ * A link or image this renderer will not make clickable, shown as **the markdown that was typed**.
+ *
+ * This is the same instinct as the raw-HTML block, and for the same reason: a refusal a reader can see
+ * beats a silent disappearance. The earlier version of this function did not exist — a refused link
+ * rendered its *label* as bare text, so `[REL](/notes/NOTE-1)` became the word `REL` with nothing to
+ * explain it. Somebody typed a link and got prose, which is the same class of problem as a folder tree
+ * quietly dropping a note with no path.
+ *
+ * Rendering the source rather than the label has a second benefit on the hostile path: a malicious
+ * `[click me](javascript:…)` shows its own payload instead of innocent words. And it is what CommonMark
+ * itself does with a reference link whose definition is missing, so `[bare]` needs no special case.
+ *
+ * The `title` is built from a **literal in this file** plus the raw target, which is only ever placed
+ * as an attribute *value* — same rule as `href` — and the target is already known not to be a URL this
+ * renderer will emit. Everything visible is a `Text` node, so the source cannot become markup.
+ */
+function unlinked(source: string, rawTarget: string): HTMLElement {
+  const el = element('span')
+  el.className = 'unlinked'
+  el.setAttribute(
+    'title',
+    rawTarget.trim() === ''
+      ? 'not linked: this link has no destination'
+      : 'not linked: only http, https and mailto destinations are rendered',
+  )
+  el.append(textNode(source))
+  return el
+}
+
 function anchor(href: string, content: Node[]): HTMLElement {
   const el = element('a')
   el.setAttribute('href', href)
@@ -650,10 +697,11 @@ function anchor(href: string, content: Node[]): HTMLElement {
 
 function imageInto(node: SyntaxNode, context: Context, into: ParentNode): void {
   const { source } = context
-  const src = safeUrl(target(node, context))
+  const raw = target(node, context)
+  const src = safeUrl(raw)
   if (src === null) {
-    // Including a `javascript:` or `data:` src: the source line shows instead, so nothing is hidden.
-    into.append(textNode(source.slice(node.from, node.to)))
+    // Same visible refusal as a link's — including for a `javascript:` or `data:` src.
+    into.append(unlinked(source.slice(node.from, node.to), raw))
     return
   }
   const marks = childrenOf(node).filter((child) => child.name === 'LinkMark')

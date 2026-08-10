@@ -62,6 +62,29 @@
   let previewing = $state(true)
 
   /**
+   * The document the editor is showing right now, out of `EditorPane`'s `ondocument` seam.
+   *
+   * **A rune of its own, deliberately not written back into `note`.** That separation is what keeps a
+   * keystroke from reaching the `$effect` that owns the `EditorView`: `note` is the editor's *input*,
+   * and only the fetch below and `discard()` ever assign it, so the identity guard and the
+   * `appliedBody` guard in `EditorPane.svelte` never see a content change they have to reason about.
+   * Writing the live document into `note.body` here is the plausible-looking mistake — it would not
+   * remount (`needsRemount` takes no body parameter, and it must keep taking none) but it would put a
+   * per-keystroke round trip through this file between CM6 and itself, with only the echo guard
+   * standing between that and PLAN §Open risks' update loop.
+   *
+   * `publishDocument` is a **named function declaration** rather than an inline arrow, so its identity
+   * is stable across every update this component makes. `EditorPane` reads the prop through `untrack`
+   * and therefore does not depend on that; handing a component a fresh closure per keystroke is still
+   * a bad habit whether or not the callee defends against it.
+   */
+  let liveDocument = $state('')
+
+  function publishDocument(document: string): void {
+    liveDocument = document
+  }
+
+  /**
    * `set` or `not set`, and this file does not get to spell either word.
    *
    * The value comes from the seam, which is the only thing allowed to describe a credential to a
@@ -218,14 +241,19 @@
       {:else}
         <!--
           The editor and its preview, side by side. `EditorPane` is **outside** the `{#if}` below on
-          purpose (see `previewing`), and the preview is its **sibling** rather than anything nested
-          in it — PLAN §S9: Svelte never renders inside CM6's subtree, and `lib/livedoc.ts` explains
-          why the document does not travel through this file either.
+          purpose (see `previewing`), and the preview is its **sibling** rather than anything nested in
+          it — PLAN §S9: Svelte never renders inside CM6's subtree. The document travels from one to
+          the other through `ondocument` and `liveDocument`, which is a published prop rather than a
+          reach into the editor's internals; see `liveDocument` on why it is not `note.body`.
         -->
         <div class="split" class:solo={!previewing}>
-          <EditorPane {note} error={failure === '' ? null : failure} />
+          <EditorPane
+            {note}
+            error={failure === '' ? null : failure}
+            ondocument={publishDocument}
+          />
           {#if previewing}
-            <PreviewPane {note} />
+            <PreviewPane {note} source={liveDocument} />
           {/if}
         </div>
       {/if}
