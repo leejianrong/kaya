@@ -11,9 +11,10 @@ npm test         # vitest, once
 ```
 
 KAN-531 got the toolchain and the dev proxy working; KAN-552 added the app skeleton the rest of V3
-is built inside, and KAN-553 put CodeMirror 6 in it. What is here is a browsable three-region app
-with a working markdown editor that saves under ADR 0009's precondition; what is not is a live
-preview, a folder tree, a landing state or the conflict banner (KAN-554/555/556).
+is built inside, KAN-553 put CodeMirror 6 in it, KAN-555 added the way in and KAN-556 the conflict
+banner. What is here is a browsable three-region app with a working markdown editor that saves under
+ADR 0009's precondition and offers keep mine / keep theirs / side by side when it is refused; what is
+not is a live preview or a folder tree (KAN-554).
 
 ## The layout, and who replaces what
 
@@ -29,7 +30,10 @@ src/
   lib/notes.ts               the five note calls
   lib/router.ts              / and /notes/:ref, hand-written, no dependency
   lib/types.ts               the wire shapes, mirroring backend/app/api/schemas.py
-  components/EditorPane.svelte CodeMirror 6, mounted once per note (KAN-553)
+  lib/conflict.ts            ADR 0009's resolution rule + the side-by-side comparison (KAN-556)
+  components/EditorPane.svelte CodeMirror 6, mounted once per note (KAN-553); owns the write path
+  components/ConflictBanner.svelte keep mine / keep theirs / side by side (KAN-556)
+  components/Landing.svelte    the no-credential state and the one-time PAT paste (KAN-555)
   components/Sidebar.svelte    → KAN-554 (folder tree, real list, preview)
 ```
 
@@ -127,9 +131,42 @@ backend's comparison is exact to the microsecond. The precondition is never *fet
 the note that was opened and then from each save's own response. Fetching it would look safer and
 would disable the guarantee.
 
-A `409` is shown with both timestamps and both whole notes held in state. That is deliberately **not**
-the banner — KAN-556 owns the side-by-side and keep-mine / keep-theirs, and `conflictVersions()` is
-where it reads `attempted` / `stored` from.
+A `409` is shown with both timestamps and both whole notes held in state; `conflictVersions()` reads
+`attempted` / `stored` out of `ApiError.details`.
+
+### The conflict banner (KAN-556)
+
+`ConflictBanner.svelte` is markup and two callbacks. Everything that can be wrong lives elsewhere on
+purpose:
+
+- **`lib/conflict.ts`** holds `keepMinePatch()` — `body` from `attempted`, `if_updated_at` from
+  **`stored`**, both verbatim. That crossing *is* the resolution mechanism, and it is a pure function
+  because it is the second place in this SPA a precondition is built; `tests/conflict.test.ts` asserts
+  the stamp is not `new Date(stamp).toISOString()`, which would round `.881903` to `.881` and refuse
+  every correct write.
+- **`EditorPane.svelte`** owns the write path, so both buttons come back to it. "Keep mine" is one
+  more `PATCH` through the same function the Save button uses. "Keep theirs" makes **no request** —
+  the stored version already is what the server holds — and puts the stored body in through
+  `syncDocument` as a transaction carrying `isolateHistory.of('full')`, because the discarded text's
+  only copy is CM6's undo and without the isolation CM6 merges the discard into the typing group it
+  interrupted, so one undo would throw the user's own text away as well.
+- **The banner is a sibling of the editor container, never a child** (PLAN §S9). Both S9 guards cover
+  it: the source-level one would name `<ConflictBanner />` as a template child, and
+  `tests/conflict-banner.test.ts` asserts the rendered banner is outside the container with the live
+  view's DOM node unchanged across both resolutions.
+
+The side-by-side is **a bound, not a diff**. `splitOnChange()` trims the lines the two bodies share at
+each end and marks the region between them; the unmarked parts are byte-identical strings, so no
+difference can hide there, and it aligns nothing so it cannot mis-align anything. An LCS line diff
+would mark less and would be the first thing here that can be *wrong* about what changed while looking
+authoritative — ADR 0009's own objection to auto-merging prose, one step down.
+
+It costs **786 B raw / 260 B gzip -9** across both assets (JS 368,294 → 368,984 raw and 121,309 →
+121,553 gzip; CSS 6,197 → 6,293 and 1,721 → 1,737), measured by building with the three segments
+collapsed back to one — `{split.mine.before}<mark>…` → `{versions.attempted.body}`, `splitOnChange`
+deleted — and diffing the assets. That is 0.2% of the entry chunk, and it is the whole of the
+"highlighting" this card does. Both bodies render whole and byte for byte either way, because the three
+segments are slices of the original.
 
 ### The bundle, which is the number ADR 0001 §2 asked for
 
@@ -150,7 +187,22 @@ KAN-553, measured that way (`vite build` reports gzip at a lower level, so it sa
 | CSS raw | 3,212 B | 3,611 B | +399 B (+12.4%) |
 | CSS gzip -9 | 1,175 B | 1,249 B | +74 B (+6.3%) |
 
-One JS chunk and one CSS file, so an editor page fetches **360,251 B raw / 118,422 B gzip -9** in
+KAN-555 and KAN-556 then added the landing state and the conflict banner. Measured the same way, on
+the same tree, against `origin/main` at `82f867f`:
+
+| | before (KAN-555) | after (KAN-556) | delta |
+|---|---|---|---|
+| JS raw | 363,513 B | 368,984 B | **+5,471 B (+1.5%)** |
+| JS gzip -9 | 119,796 B | 121,553 B | **+1,757 B (+1.5%)** |
+| CSS raw | 4,769 B | 6,293 B | +1,524 B (+32.0%) |
+| CSS gzip -9 | 1,466 B | 1,737 B | +271 B (+18.5%) |
+
+CSS moves proportionally more than JS because the banner is the first component with a real layout of
+its own (a two-column grid, two scrolling `<pre>`s, a highlight) and the baseline stylesheet is small —
+1.7 kB gzip is still less than 1.5% of what the page fetches. No new dependency: the comparison is
+about forty lines of stdlib string work, and CodeMirror is still the only runtime dependency.
+
+One JS chunk and one CSS file, so an editor page fetches **375,277 B raw / 123,290 B gzip -9** in
 total and there is no second request hiding behind the entry number. CSS barely moves because CM6
 injects its own styles through `style-mod` at runtime — the editor's theme is JavaScript, which is
 also why it can read `app.css`'s tokens.
