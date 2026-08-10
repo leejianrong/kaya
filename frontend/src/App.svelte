@@ -1,8 +1,9 @@
 <script lang="ts">
   import EditorPane from './components/EditorPane.svelte'
+  import Landing from './components/Landing.svelte'
   import Sidebar from './components/Sidebar.svelte'
   import { ApiError } from './lib/api'
-  import { credentialState } from './lib/auth'
+  import { clearToken, credentialState } from './lib/auth'
   import { getNote, listNotes } from './lib/notes'
   import { currentRoute, interceptClick, onNavigate, type Route } from './lib/router'
   import type { Note } from './lib/types'
@@ -11,9 +12,15 @@
    * The shell: three regions, the route, and the two reads the regions need. Nothing else.
    *
    * What this file is *not* allowed to become is the place the app's logic accumulates. Three cards
-   * run after this one and each replaces exactly one file — KAN-553 `EditorPane.svelte`, KAN-554
-   * `Sidebar.svelte`, KAN-555 the landing state — which only works if the regions own their own
+   * run after KAN-552 and each replaces exactly one file — KAN-553 `EditorPane.svelte`, KAN-554
+   * `Sidebar.svelte`, KAN-555 `Landing.svelte` — which only works if the regions own their own
    * behaviour and this file owns the layout and the route.
+   *
+   * KAN-555 kept to that with one exception it had to make here: the *credential lifecycle*. The
+   * landing state cannot own it, because acquiring a credential changes which region renders, and
+   * losing one is discovered by a `401` on a request the landing state never made. So `authed`,
+   * `accept()` and `discard()` live in this file, and `Landing.svelte` is still the only thing that
+   * ever holds a token — it calls `setToken` and then a callback, and hands nothing back.
    *
    * There is deliberately no build-status table here. KAN-723: the one this replaced hard-coded
    * `done: false` against `kaya-client` and `kaya-cli`, both of which shipped in V2a/V2b, and the
@@ -27,7 +34,33 @@
   let listing = $state(true)
   let failure: string | null = $state(null)
 
-  const authed = credentialState() === 'set'
+  /**
+   * Whether this tab has a credential — **reactive**, and KAN-555 is why.
+   *
+   * It was a `const` read once at mount, which was honest while there was no way to acquire a
+   * credential without reloading. Now there is: the paste form calls `accept()` below and the
+   * effects re-run off this rune, so a paste reaches the note list without a reload. It also runs
+   * backwards, which is the half that matters more — `discard()` puts the app back in the landing
+   * state the moment the API says the credential is no good.
+   */
+  let authed = $state(credentialState() === 'set')
+
+  /** The API's own words for why the last credential was refused. Shown by the landing state. */
+  let rejected: string | null = $state(null)
+
+  /**
+   * `set` or `not set`, and this file does not get to spell either word.
+   *
+   * The value comes from the seam, which is the only thing allowed to describe a credential to a
+   * person — never a prefix, a suffix, a length or a mask (`lib/auth.ts`, and pandan's
+   * `set (…c_DE)`). The `void authed` is what makes it re-read: the credential lives in
+   * `sessionStorage`, which is not reactive, so a header derived from the seam alone would still
+   * say `not set` after a successful paste.
+   */
+  const credential = $derived.by(() => {
+    void authed
+    return credentialState()
+  })
 
   $effect(() => onNavigate((next) => (route = next)))
 
@@ -36,10 +69,11 @@
       listing = false
       return
     }
+    listing = true
     const abort = new AbortController()
     listNotes({ signal: abort.signal })
       .then((found) => (notes = found))
-      .catch((error: unknown) => (failure = describe(error)))
+      .catch(absorb)
       .finally(() => (listing = false))
     return () => abort.abort()
   })
@@ -59,10 +93,60 @@
       .then((found) => (note = found))
       .catch((error: unknown) => {
         note = null
-        failure = describe(error)
+        absorb(error)
       })
     return () => abort.abort()
   })
+
+  /**
+   * A failure, sorted into "the credential is no good" and everything else.
+   *
+   * A `401` is the only status this app can *act* on, and the action is to stop pretending it has a
+   * credential. Keyed on the **status** rather than on the error code, for the reason
+   * `kaya-cli/failures.py` gives: the backend's code vocabulary grows without this client's
+   * knowledge, and `authentication_required` / `invalid_token` are already two codes for one
+   * meaning.
+   */
+  function absorb(error: unknown): void {
+    if (error instanceof ApiError && error.isUnauthenticated) {
+      discard(error.message)
+      return
+    }
+    failure = describe(error)
+  }
+
+  /**
+   * The token is stored (the landing state did it); proceed.
+   *
+   * The `authed` write is what re-runs the effects above, so the note list arrives without a
+   * reload. Nothing here touches the credential itself — this function never sees it.
+   */
+  function accept(): void {
+    rejected = null
+    failure = null
+    authed = true
+  }
+
+  /**
+   * Forget the credential and go back to the landing state.
+   *
+   * Reached two ways, and both are required: the API refusing it with a `401`, and the person
+   * clicking **Clear token**. The second exists because the first only covers one shape of being
+   * stuck — a valid token for the wrong account, or a `503` from a sleeping pandan, leaves a user
+   * looking at a failure with no way to change credentials. A state you can only leave through
+   * devtools is a bug, so the way out is a button rather than an instruction.
+   *
+   * `reason` is the API's message or `null` for a deliberate clear; there is nothing to explain
+   * when the user did it on purpose.
+   */
+  function discard(reason: string | null): void {
+    clearToken()
+    notes = []
+    note = null
+    failure = null
+    rejected = reason
+    authed = false
+  }
 
   /**
    * A refusal as one line of prose.
@@ -82,7 +166,7 @@
   }
 </script>
 
-<div class="shell">
+<div class="shell" class:unauthenticated={!authed}>
   <header class="topbar">
     <a class="brand" href="/" onclick={(event) => interceptClick(event, '/')}>kaya</a>
     <span class="tagline">markdown notes, API-first</span>
@@ -91,7 +175,13 @@
       `set (…c_DE)` and those four characters are a contiguous piece of a live credential in a
       surface documented as safe to share. A browser is worse — a screenshot is one keystroke away.
     -->
-    <span class="credential" data-testid="credential-state">token {credentialState()}</span>
+    <span class="credential" data-testid="credential-state">token {credential}</span>
+    {#if authed}
+      <!-- The way out, always available while a credential is held. See `discard()`. -->
+      <button class="clear" onclick={() => discard(null)} data-testid="clear-token">
+        Clear token
+      </button>
+    {/if}
   </header>
 
   {#if authed}
@@ -106,14 +196,9 @@
       {/if}
     </main>
   {:else}
-    <!-- One honest line, not a landing page. KAN-555 owns the landing state and the PAT paste form,
-         and it needs `lib/auth.ts`'s seam and nothing from this file. -->
-    <main class="unauthenticated">
-      <p class="notice">
-        No pandan token in this tab. kaya mints no credentials of its own (ADR 0002) — sign-in lands
-        in KAN-555.
-      </p>
-    </main>
+    <!-- KAN-555's landing state, which owns everything about the paste including the credential
+         itself: this file hands it `rejected` and gets back a callback, and never sees a token. -->
+    <Landing {rejected} onaccept={accept} />
   {/if}
 </div>
 
@@ -126,7 +211,9 @@
     height: 100dvh;
   }
 
-  .shell:has(.unauthenticated) {
+  /* No sidebar without a credential: there is nothing to list, and an empty rail beside a
+     sign-in page reads as a broken app rather than as a locked one. */
+  .shell.unauthenticated {
     grid-template-areas: 'topbar' 'main';
     grid-template-columns: 1fr;
   }
@@ -164,14 +251,27 @@
     grid-area: sidebar;
   }
 
+  /* Same door as `.sidebar` above: the child component owns its own element, so the parent places
+     it by class rather than by wrapping it in a div that exists only to be positioned. */
+  .shell > :global(.landing) {
+    grid-area: main;
+  }
+
   main {
     grid-area: main;
     min-width: 0;
     overflow-y: auto;
   }
 
-  .unauthenticated {
-    padding: 3rem 1.5rem;
+  .clear {
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--edge);
+    border-radius: 0.3rem;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.75rem;
   }
 
   .notice {
