@@ -1,14 +1,16 @@
 <script lang="ts">
-  import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
+  import { defaultKeymap, history, historyKeymap, isolateHistory } from '@codemirror/commands'
   import { markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown'
   import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
   import { EditorState } from '@codemirror/state'
   import { EditorView, keymap, placeholder } from '@codemirror/view'
 
   import { ApiError } from '../lib/api'
+  import { type ConflictVersions, keepMinePatch } from '../lib/conflict'
   import { conflictVersions, needsRemount, syncDocument } from '../lib/editor'
   import { updateNote } from '../lib/notes'
-  import type { Note } from '../lib/types'
+  import type { Note, NoteUpdate } from '../lib/types'
+  import ConflictBanner from './ConflictBanner.svelte'
 
   const { note, error }: { note: Note | null; error: string | null } = $props()
 
@@ -73,13 +75,32 @@
   /** A refusal that is not ADR 0009's, or one whose two versions did not parse. */
   let refusal: string | null = $state(null)
   /**
-   * ADR 0009's `409`, held whole.
+   * ADR 0009's `409`, held whole — and what `ConflictBanner` renders (KAN-556).
    *
-   * KAN-556 renders the side-by-side and keep-mine/keep-theirs out of exactly this. What this card
-   * owes it is that the conflict is **reachable and visible** rather than swallowed, with both
-   * records intact — so both bodies are here, and the markup below names both timestamps.
+   * Both notes arrive complete because a side-by-side of two prose bodies needs both bodies whole
+   * (`backend/app/api/concurrency.py`), and a client cannot reconstruct one from a patch it no longer
+   * holds. Cleared on a successful resolution and **replaced** by a fresh `409`, never cleared at the
+   * *start* of a write: the banner has to stay on the screen while the resolution it launched is in
+   * flight, or the buttons vanish under the cursor.
    */
-  let conflict: { attempted: Note; stored: Note } | null = $state(null)
+  let conflict: ConflictVersions | null = $state(null)
+  /**
+   * Whether the stored version moved *between* two refusals.
+   *
+   * The note can change again while the banner is open — that is the whole shape of this feature —
+   * and "keep mine" is guarded, so it can be refused a second time by a third writer. Comparing the
+   * two `stored` stamps is what tells a genuinely new conflict from the same one refused again (a
+   * plain Save after a `409` re-sends the same stale precondition and is refused identically, which
+   * is correct and is *not* news).
+   */
+  let movedAgain = $state(false)
+  /**
+   * What a resolution that made no request did, as one line. Cleared by the next edit.
+   *
+   * Separate from `saved` because "kept theirs" is emphatically not a save: nothing was written, and
+   * saying `saved` there would claim the server holds text it does not.
+   */
+  let resolution: string | null = $state(null)
 
   /**
    * Mount CodeMirror once per note, and hand it every later document as a transaction.
@@ -127,6 +148,8 @@
     saved = null
     refusal = null
     conflict = null
+    movedAgain = false
+    resolution = null
   })
 
   /**
@@ -190,6 +213,10 @@
             if (update.docChanged) {
               dirty = true
               saved = null
+              // Including the transaction `keepTheirs` dispatches — from CM6's side that is an edit
+              // like any other, which is why that function sets its own two runes *after* the
+              // dispatch rather than before it.
+              resolution = null
             }
           }),
           theme,
@@ -207,40 +234,123 @@
     return true
   }
 
-  async function save(): Promise<void> {
+  /** The Save button and `Mod-s`: the document as it stands, guarded on the version it was based on. */
+  function save(): Promise<void> {
+    const current = view
+    if (current === undefined) {
+      return Promise.resolve()
+    }
+    // `if_updated_at` present is the guarded write; **omitting it is the plain overwrite**, by
+    // specification (ADR 0009). There is no `--force` in the CLI and there is no override here, for
+    // the same reason: the unguarded write is spelled by not sending something.
+    const precondition = basedOn
+    return write({
+      body: current.state.doc.toString(),
+      ...(precondition === null ? {} : { if_updated_at: precondition }),
+    })
+  }
+
+  /**
+   * "Keep mine": the refused write again, aimed at the version that refused it.
+   *
+   * The crossing — `body` from `attempted`, `if_updated_at` from `stored` — is
+   * {@link keepMinePatch}, and it is a pure function in `lib/conflict.ts` rather than three lines
+   * here because it is the **second** place in this SPA a precondition is built. Both stamps stay
+   * opaque strings; a `Date` anywhere on either path refuses every correct write.
+   */
+  function keepMine(): Promise<void> {
+    const versions = conflict
+    return versions === null ? Promise.resolve() : write(keepMinePatch(versions))
+  }
+
+  /**
+   * "Keep theirs": **no request at all**, and the caller's text is replaced in place.
+   *
+   * Nothing needs writing, because the stored version already *is* what the server holds — the whole
+   * `409` was kaya refusing to overwrite it. So this is a discard, and three things make it one the
+   * user is not surprised by:
+   *
+   * - The stored body goes in through `syncDocument`, the same **transaction** every external update
+   *   uses (PLAN §S9: never a remount). So CM6's undo history survives, and the discarded text is one
+   *   ⌘/Ctrl-Z away for as long as the pane lives. The banner says so before the click, and
+   *   `resolution` says it again after. That is the only copy there is — ADR 0009 §Consequences:
+   *   there is no revision history, so "keep theirs" really does discard.
+   *   **`isolateHistory` is what makes "one undo" true**, and it was found by the test for it going
+   *   red rather than reasoned out: CM6 groups adjacent changes into one history event, so a discard
+   *   clicked within `newGroupDelay` (500 ms) of the last keystroke merged into the user's own typing
+   *   and a single undo threw *that* away as well — the promise on the button reversing itself into
+   *   the data loss ADR 0009 exists to prevent. `'full'` isolates on both sides, so a keystroke
+   *   afterwards cannot join the discard's event either.
+   * - `basedOn` becomes the stored stamp, so the *next* save is guarded against the version now in
+   *   the editor. Leaving it would refuse that save with the stale precondition it already refused.
+   * - `dirty` is cleared **after** the dispatch, because the update listener sets it: the document
+   *   now equals the stored body, so there is genuinely nothing unsaved.
+   *
+   * `appliedBody` is deliberately *not* touched. It means "the last body taken from the prop", and
+   * this body did not come from the prop — writing it here would make a later re-render carrying the
+   * (older) prop body look like an update and dispatch it straight over the version just chosen.
+   */
+  function keepTheirs(): void {
+    const versions = conflict
+    const current = view
+    if (versions === null || current === undefined || saving) {
+      return
+    }
+    syncDocument(current, versions.stored.body, [isolateHistory.of('full')])
+    basedOn = versions.stored.updated_at
+    dirty = false
+    conflict = null
+    movedAgain = false
+    refusal = null
+    saved = null
+    resolution = 'kept theirs · your text is one undo away (⌘/Ctrl-Z) until you edit again'
+  }
+
+  /**
+   * The one `PATCH` in this component, shared by the Save button and by "keep mine".
+   *
+   * One write path rather than two, so the precondition is forwarded the same way whichever button
+   * asked — and so a future card cannot fix a bug in one of them. What differs between the callers is
+   * only *which* body and *which* stamp go in, which is exactly what the parameter is.
+   *
+   * `conflict` is not cleared on the way in. The banner must survive its own resolution's round trip,
+   * and a fresh `409` replaces it below rather than flickering through empty.
+   */
+  async function write(update: NoteUpdate): Promise<void> {
     const opened = note
     const current = view
     if (opened === null || current === undefined || saving) {
       return
     }
-    const body = current.state.doc.toString()
-    const precondition = basedOn
 
     saving = true
     refusal = null
-    conflict = null
     saved = null
+    resolution = null
     try {
-      // `if_updated_at` present is the guarded write; **omitting it is the plain overwrite**, by
-      // specification (ADR 0009). There is no `--force` in the CLI and there is no override here, for
-      // the same reason: the unguarded write is spelled by not sending something.
-      const stored = await updateNote(opened.ref, {
-        body,
-        ...(precondition === null ? {} : { if_updated_at: precondition }),
-      })
+      const stored = await updateNote(opened.ref, update)
       // The next edit is based on the version the server just wrote. Straight off the response, still
       // an opaque string.
       basedOn = stored.updated_at
       // Against the body that was **sent**, not a flat `false`. A save is a round trip and you can
       // type during it; clearing the flag unconditionally would mark those keystrokes saved when the
-      // request that finished had never seen them, and the next `409` would be a mystery.
-      dirty = current.state.doc.toString() !== body
+      // request that finished had never seen them, and the next `409` would be a mystery. It is also
+      // what leaves the pane honest after a "keep mine" the user typed past.
+      dirty = current.state.doc.toString() !== update.body
       saved = `saved · now at ${stored.updated_at}`
+      conflict = null
+      movedAgain = false
     } catch (failure) {
       if (failure instanceof ApiError && failure.isConflict) {
-        conflict = conflictVersions(failure.details)
+        const versions = conflictVersions(failure.details)
+        // Two `stored` stamps apart, not "a second 409": a plain Save after a refusal re-sends the
+        // same stale precondition and is refused identically, which is correct and is not news. The
+        // note having moved *again* while the banner was open is.
+        const previous = conflict?.stored.updated_at ?? null
+        movedAgain = versions !== null && previous !== null && previous !== versions.stored.updated_at
+        conflict = versions
         // A `409` whose extras did not parse is still a `409`. Say so rather than showing nothing.
-        refusal = conflict === null ? failure.message : null
+        refusal = versions === null ? failure.message : null
       } else {
         refusal = failure instanceof Error ? failure.message : 'Could not save.'
       }
@@ -305,6 +415,10 @@
           unsaved changes
         {:else if saved}
           {saved}
+        {:else if resolution}
+          <!-- A resolution that wrote nothing. It cannot say `saved`, because the server does not
+               hold this text — see `keepTheirs`. -->
+          {resolution}
         {:else}
           no changes
         {/if}
@@ -316,19 +430,20 @@
 
   {#if conflict}
     <!--
-      ADR 0009's refusal, in the minimal honest form. **This is not the conflict banner** — KAN-556
-      owns the side-by-side and keep-mine/keep-theirs, and it is blocked on this card only for the
-      two records, which `conflictVersions` hands over whole. What this card owes it is that the
-      conflict is impossible to miss and nothing was quietly overwritten.
+      ADR 0009's affordance (KAN-556), and a **sibling** of the editor container below — never a
+      child of it. PLAN §S9: Svelte renders nothing inside CM6's subtree, and a banner that grew into
+      the editor's element would be the update loop with a friendly face.
+
+      The banner writes nothing. This component owns the write path, the precondition and the view, so
+      both buttons come back here: `keepMine` re-`PATCH`es and `keepTheirs` dispatches a transaction.
     -->
-    <p class="conflict" data-testid="conflict">
-      <strong>Not saved.</strong> This note changed since you opened it, so nothing was written. You
-      edited the version stamped
-      <code data-testid="conflict-attempted">{conflict.attempted.updated_at}</code>; the stored
-      version is <code data-testid="conflict-stored">{conflict.stored.updated_at}</code>. Both
-      versions are here in full — KAN-556 turns this line into a side-by-side with keep mine / keep
-      theirs.
-    </p>
+    <ConflictBanner
+      versions={conflict}
+      busy={saving}
+      {movedAgain}
+      onkeepmine={() => void keepMine()}
+      onkeeptheirs={keepTheirs}
+    />
   {/if}
 
   {#if refusal}

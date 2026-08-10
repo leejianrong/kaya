@@ -25,6 +25,7 @@
  * §2).
  */
 
+import type { Annotation } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 
 import type { Note } from './types'
@@ -78,14 +79,29 @@ export function needsDispatch(incoming: string, current: string): boolean {
  * means this only ever runs for a document the editor did not already have (an external update to a
  * note that is still open). The keystroke path never reaches here, which is the point.
  *
+ * `annotations` is KAN-556's addition and it is **passed in rather than chosen here**, because the
+ * only annotation anyone wants on this transaction is `isolateHistory` and that lives in
+ * `@codemirror/commands` — a *runtime* CodeMirror import, which this module deliberately has none of
+ * (see the header: it keeps the guards reachable from a plain `node` test). The `Annotation` types
+ * below are `import type`, so `verbatimModuleSyntax` erases them and nothing changes about what this
+ * file loads. "Keep theirs" is why: a discard has to be exactly **one** undo, and without isolation
+ * CM6 merges it into the typing group it interrupted, so undo would revert the user's own text too.
+ *
  * Typed against `EditorView` through an erased `import type`, so a test can hand it a stub and the
  * integration test can hand it the real thing.
  */
-export function syncDocument(view: EditorView, incoming: string): boolean {
+export function syncDocument(
+  view: EditorView,
+  incoming: string,
+  annotations: readonly Annotation<unknown>[] = [],
+): boolean {
   if (!needsDispatch(incoming, view.state.doc.toString())) {
     return false
   }
-  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: incoming } })
+  view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: incoming },
+    ...(annotations.length === 0 ? {} : { annotations: [...annotations] }),
+  })
   return true
 }
 
