@@ -121,12 +121,32 @@ function render<Props extends Record<string, unknown>>(
   return host
 }
 
-/** Wait for the effects and the promises they started to settle. */
+/**
+ * Let the effects run and the promises they started settle.
+ *
+ * **Macrotask turns, not microtask turns.** `Response.text()` resolves through the platform's stream
+ * machinery rather than on the microtask queue, so a loop of `await Promise.resolve()` is a guess
+ * about how many turns this machine needs — it passed locally and failed three tests on CI. Use
+ * {@link until} wherever there is a condition to wait *for*; this is for "give everything a chance
+ * to happen" where the assertion is a negative one.
+ */
 async function settle(): Promise<void> {
-  for (let turn = 0; turn < 10; turn += 1) {
-    await Promise.resolve()
+  for (let turn = 0; turn < 12; turn += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0))
     flushSync()
   }
+}
+
+/** Poll until `predicate` holds, flushing Svelte between attempts, and name it if it never does. */
+async function until(predicate: () => boolean, label: string): Promise<void> {
+  for (let turn = 0; turn < 400; turn += 1) {
+    flushSync()
+    if (predicate()) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  throw new Error(`timed out waiting for ${label}`)
 }
 
 function field(): HTMLInputElement {
@@ -197,7 +217,7 @@ describe('the landing state', () => {
 
   it('builds the link to mint a token from GET /api/v1/meta', async () => {
     render(Landing, { rejected: null, onaccept: () => {} })
-    await settle()
+    await until(() => host.querySelectorAll('a').length > 0, 'the pandan link')
 
     expect(calls.map((call) => call.url)).toContain('/api/v1/meta')
     const links = Array.from(host.querySelectorAll('a')).map((a) => a.getAttribute('href'))
@@ -207,7 +227,7 @@ describe('the landing state', () => {
 
   it('carries no hard-coded pandan origin, so a self-hosted one is reachable (ADR 0002)', async () => {
     render(Landing, { rejected: null, onaccept: () => {} })
-    await settle()
+    await until(() => host.querySelectorAll('a').length > 0, 'the pandan link')
 
     // The real deployment's origin must not appear anywhere in the rendered page: it comes from the
     // backend's `KAYA_PANDAN_URL`, and a literal here would send a self-hoster to somebody else's
@@ -221,7 +241,10 @@ describe('the landing state', () => {
     }) as unknown as typeof fetch
 
     render(Landing, { rejected: null, onaccept: () => {} })
-    await settle()
+    await until(
+      () => (host.textContent ?? '').includes('Open your pandan deployment'),
+      'the no-link fallback',
+    )
 
     expect(host.textContent).toContain('Open your pandan deployment')
     expect(host.querySelector('a')).toBeNull()
@@ -328,7 +351,7 @@ describe('pasting a token, end to end through the shell', () => {
 
     type(FAKE_TOKEN)
     submitForm()
-    await settle()
+    await until(() => (host.textContent ?? '').includes('Weekly review'), 'the note list')
 
     // The same mounted App instance now shows the list: no reload, no remount.
     expect(host.querySelector('nav')).not.toBeNull()
@@ -351,7 +374,10 @@ describe('pasting a token, end to end through the shell', () => {
     await settle()
     type(FAKE_TOKEN)
     submitForm()
-    await settle()
+    await until(
+      () => host.querySelector('[data-testid="rejected"]') !== null,
+      'the landing state to come back with the refusal',
+    )
 
     // Back on the landing state, with the credential gone from the tab rather than left there to
     // fail on every subsequent request.
@@ -374,7 +400,7 @@ describe('pasting a token, end to end through the shell', () => {
     notesAnswer = () => jsonResponse(200, { notes: [NOTE] })
     type(FAKE_TOKEN)
     submitForm()
-    await settle()
+    await until(() => (host.textContent ?? '').includes('Weekly review'), 'the note list')
 
     expect(host.textContent).toContain('Weekly review')
     sweep()
