@@ -15,8 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, apiRequest, MissingCredential, NetworkError } from '../src/lib/api'
 import * as auth from '../src/lib/auth'
-
-const FAKE_TOKEN = 'kanban_pat_9QxZ4mR7vT2LbWc8NsHdKfJgYpAeUiOn3XzVrQtE5w'
+import { FAKE_TOKEN } from './token'
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {

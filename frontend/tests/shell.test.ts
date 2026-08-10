@@ -21,8 +21,7 @@ import Sidebar from '../src/components/Sidebar.svelte'
 import * as auth from '../src/lib/auth'
 import type { Note } from '../src/lib/types'
 import { box } from './reactive.svelte'
-
-const FAKE_TOKEN = 'kanban_pat_9QxZ4mR7vT2LbWc8NsHdKfJgYpAeUiOn3XzVrQtE5w'
+import { FAKE_TOKEN } from './token'
 
 function note(overrides: Partial<Note> = {}): Note {
   return {

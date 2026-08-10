@@ -8,8 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as auth from '../src/lib/auth'
 import { deleteNote, listNotes, moveNote, notePath, updateNote } from '../src/lib/notes'
-
-const FAKE_TOKEN = 'kanban_pat_9QxZ4mR7vT2LbWc8NsHdKfJgYpAeUiOn3XzVrQtE5w'
+import { FAKE_TOKEN } from './token'
 
 function recorder(body: unknown, status = 200) {
   return vi.fn(async () => {

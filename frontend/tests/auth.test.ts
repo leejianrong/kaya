@@ -10,27 +10,14 @@
  * refused is a specific one — a mutation that leaked exactly four characters walked straight through
  * a six-character window.
  *
- * The fake token is high-entropy for the same reason kaya's redaction fixtures are: a readable fake
- * containing the word `token` collides with the module's own key names and the sweep starts finding
- * itself.
+ * The fake credential and the sweep both come from `tests/token.ts`, which explains why it is spelled
+ * the way the Python suites spell it.
  */
 
 import { afterEach, describe, expect, it } from 'vitest'
 
 import * as auth from '../src/lib/auth'
-
-const FAKE_TOKEN = 'kanban_pat_9QxZ4mR7vT2LbWc8NsHdKfJgYpAeUiOn3XzVrQtE5w'
-
-/** Every contiguous run of `size` or more characters in `token`. */
-function fragments(token: string, size = 4): string[] {
-  const found: string[] = []
-  for (let start = 0; start + size <= token.length; start += 1) {
-    for (let end = start + size; end <= token.length; end += 1) {
-      found.push(token.slice(start, end))
-    }
-  }
-  return found
-}
+import { FAKE_TOKEN, fragments } from './token'
 
 afterEach(() => {
   auth.clearToken()
