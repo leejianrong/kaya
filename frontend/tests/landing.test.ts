@@ -21,6 +21,20 @@
  * HTML snapshot and a bug report all carry. `holds the token only as a value property` asserts both
  * halves of that on purpose: if the sweep ever stopped being able to tell the difference, it would
  * be passing for the wrong reason.
+ *
+ * ## If you re-run this sweep by hand against a *live* PAT, read this first
+ *
+ * It will report hits, and they are not leaks. A real credential is prefixed `pandan_pat_` (or
+ * `kanban_pat_`, still accepted — pandan ADR 0018), and this page has to say the word **pandan**: it
+ * is the name of the product identity comes from. So a whole-token sweep finds `pand`, `anda` and
+ * `ndan` in the prose, by construction, on a page that leaks nothing. Measured against the live PAT
+ * on 2026-08-11: six hit ranges on the landing page and the same six mid-paste, **all confined to
+ * the 11-character published prefix**, and **zero** hits of the 43-character secret portion in
+ * either state — the useful sweep is the one over `PAT.slice(PAT.indexOf('_pat_') + 5)`.
+ *
+ * The fake credential in `tests/token.ts` has the `kanban_` spelling, so the sweep in this file can
+ * run over the *whole* token and does. That is also why `Landing.svelte`'s copy says "the board"
+ * rather than "the kanban board" — that collision is real too, and the comment there says so.
  */
 
 import { type Component, flushSync, mount, unmount } from 'svelte'

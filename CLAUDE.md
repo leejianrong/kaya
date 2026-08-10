@@ -240,6 +240,12 @@ input, so header injection is not reachable *through the field* and the seam's c
 refusal is a backstop there rather than the guard; and the fake token's real `kanban_pat_` prefix
 means the **word "kanban" is a four-character fragment**, so the landing copy says "the board" — a
 collision is the sweep working, and narrowing the sweep to dodge it would be the wrong repair.
+**A hand-run sweep with a live PAT will report hits and they are not leaks**: a real token is
+prefixed `pandan_pat_` and the page has to say the word *pandan*, so `pand`/`anda`/`ndan` appear by
+construction. Measured 2026-08-11 against the live credential: six hit ranges on the landing page and
+six mid-paste, **all inside the 11-character published prefix**, and **zero** over the 43-character
+secret portion, which is the slice worth sweeping by hand
+(`PAT.slice(PAT.indexOf('_pat_') + 5)`).
 
 **A visitor with no credential can be told exactly one thing** (KAN-555, `backend/app/api/meta.py`).
 `GET /api/v1/meta` returns `{"pandan_url": …}` and is the only unauthenticated route under

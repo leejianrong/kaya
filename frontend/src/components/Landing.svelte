@@ -146,7 +146,10 @@
     <!-- The API's own prose for a refusal it produced. The backend never puts a credential in a
          message, and nothing here builds one out of a request. -->
     <p class="refused" role="alert" data-testid="rejected">
-      {rejected} The credential has been cleared from this tab — paste another below.
+      <!-- An em dash between the two clauses rather than a full stop: kaya's refusal messages carry
+           no trailing punctuation (`pandan did not accept this token`), and appending one here would
+           double up the day a message arrives with its own. -->
+      {rejected} — the credential has been cleared from this tab. Paste another below.
     </p>
   {/if}
 
