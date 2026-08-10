@@ -14,7 +14,10 @@ export default [
     },
   },
   {
-    files: ['**/*.svelte'],
+    // `*.svelte.ts` is a rune module rather than a component, and eslint-plugin-svelte claims it
+    // too — so it needs the TS parser named here as well, or `interface` is a parse error inside a
+    // plain TypeScript file (KAN-552, `tests/reactive.svelte.ts`).
+    files: ['**/*.svelte', '**/*.svelte.ts', '**/*.svelte.js'],
     languageOptions: {
       parserOptions: { parser: ts.parser },
     },

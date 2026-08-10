@@ -5,8 +5,13 @@
   --edge: #e2ddd2;
   --accent: #2f6f4f;
 
+  /* The two stacks, named so a component can reach for one rather than repeat it. Same values
+     that were already inlined below; this card only gave them tokens. */
+  --sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Code', monospace;
+
   color-scheme: light dark;
-  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: var(--sans);
   line-height: 1.55;
   color: var(--ink);
   background: var(--paper);
@@ -34,6 +39,6 @@ body {
 }
 
 code {
-  font-family: ui-monospace, 'SF Mono', 'Cascadia Code', monospace;
+  font-family: var(--mono);
   font-size: 0.9em;
 }

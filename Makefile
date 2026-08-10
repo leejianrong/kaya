@@ -142,4 +142,4 @@ check: docs-links secret-scan image-pins version-bump lint test ## Everything th
 
 .PHONY: test-e2e
 test-e2e: ## (V3+) Boots the stack itself
-	@scripts/not-yet.sh test-e2e "KAN-552 (SPA shell)"
+	@scripts/not-yet.sh test-e2e "KAN-553 (the editor) and KAN-556 (the conflict banner) — KAN-552's shell is in"

@@ -14,7 +14,9 @@ updated notes, exit `0`; with no token, exit `1` and the structured `no_credenti
 `:8000` from the image, and `make k3d` applies `deploy/k8s/` to a throwaway cluster and then makes
 requests against it, because an `apply` that succeeds only proves the API server liked the YAML
 (ADR 0010). Pushing a `v*` tag cuts a public GitHub Release carrying one asset,
-`kaya-linux-x86_64` (KAN-545).
+`kaya-linux-x86_64` (KAN-545). **V3's skeleton is in too** (KAN-552): the SPA is a browsable
+three-region app — a router over `/` and `/notes/:ref`, a typed API layer and a credential seam —
+driven against a real stack with a real PAT, and still without an editor in it.
 
 **There is no hosted kaya, so `make up` is the only origin that exists** (ADR 0010, and KAN-722 is
 where the choice gets made). That matters less than it sounds for correctness work: `make up`
@@ -31,19 +33,26 @@ origin: TLS on the CLI hop, kaya's own cold start, and the manifests on non-k3d 
 | `kaya-client/` | KAN-540: `KayaClient` over httpx and the `render()` seam as four composable steps. KAN-551: the full CRUD set (`create_note`, `update_note`, `move_note`, `delete_note`) — `move_note` *is* `update_note` because ADR 0008 makes a move a `PATCH` to one column, and every ref-taking method shares one `_note_path` that percent-encodes the ref as a single segment. ADR 0009's `if_updated_at` is forwarded as an **opaque string**, so nothing here can lose a microsecond. Same card: the config *file* tier (JSON at `$XDG_CONFIG_HOME/kaya/config.json`, consulted per key after the environment) and the three `config` verbs as `Payload` builders — `settings_payload()`, `path_payload()`, `write_settings()`, which read-modify-writes so a hand-set `max_text_chars` survives a `config set --api-url`. `human`/`json`/`toon` user-facing, `data` adapter-only. KAN-548: `aggregates.py` is live — a collection gets `{"count": len(records)}` and an entity gets nothing, rendered as a blank-line-separated `2 notes` footer under `human` and as a `summary` key beside the envelope everywhere else, both out of the one mapping via `summary_line()`. KAN-547: `truncation.py` is live — `text_limit` cuts the fields `Payload.prose_fields` names and appends a hint carrying the **true** total **in-band**, so the total reaches `json`/`toon`/`data`; `0` disables, and `config.max_text_chars()` resolves `KAYA_MAX_TEXT_CHARS` (default 500, a non-number is a `UsageError`). KAN-546: `projection.py` is live — `fields` narrows `records` *and* `columns` uniformly for every format, via `Payload.narrowed_to()`, with the vocabulary read from `field_names()` before anything narrows. KAN-550: `hints.py` — ADR 0005 §contract 8's `help[]` templates, keyed on `(kind, noun)` and never on a verb name, placeholders left unfilled, and **human-only** (the reverse of KAN-547's hint, because a template is advice about the tool and a total is a fact about the payload). KAN-549: `overview.py` — the three banner lines a bare `kaya` prints, which take three `str`s and **no `Payload`** so they cannot format a result — plus `RECENT_NOTES` (5), `KayaClient.recent_notes()` and `Payload.limited_to()`, the rows-wise twin of `narrowed_to`. KAN-541: `toon.py`, a stdlib-only **encode-only** TOON encoder registered in `Format`, `_SERIALIZERS` and `_ERROR_SERIALIZERS`, plus `config.py` (PLAN §Config's `KAYA_API_URL`/`KAYA_TOKEN` and `open_client()`) and `MissingCredential`. KAN-543: `provenance.version_line()` and the `_build_stamp.COMMIT` a release rewrites. KAN-542: the failure half of the layer — `error_payload()` / `render_error()`, and a `code` on every exception class so a raise site names a meaning. KAN-716: `DEFAULT_TIMEOUT` split by phase (`DEFAULT_CONNECT_TIMEOUT` 5 s, `DEFAULT_READ_TIMEOUT` 40 s) so the client outlasts the backend's authentication budget |
 | `kaya-cli/` | The `kaya` console script, one entry point. KAN-541: `note list` and `note get <ref>` (`verbs.py`, a dispatch table), `--format {human,json,toon}` with `--json` as an alias and `--format` winning if both are given. KAN-551: the other seven verbs — four writes in `VERBS` and three `config` words in a second table, `LOCAL_VERBS`, because `config show` must answer with no credential at all. `parsing.resolve_body()` turns `--body`/`--body-file` into one string; there is **no `-`** for the standard input, so `tests/test_no_prompting.py` keeps proving ADR 0005 §contract 9 structurally. KAN-549: bare `kaya` is `verbs.BARE`, a row in the same dispatch table as every other verb, so `render` is still called in **exactly one place** in the package; the banner is `kaya_client.overview` joined on by `BLOCK_GAP`, and `executable_path()` — `argv[0]` resolved through `PATH`, or `sys.executable` when frozen — is this package's only new logic. KAN-547: `--full` on `output_flags()`, and `resolve_text_limit()` — a flag-beats-environment precedence and nothing else, since the number and the cut are both the client's. KAN-546: `--fields` on `output_flags()`, and `resolve_fields()` — one `split(",")`, which is the entire projection logic this package is allowed to contain. KAN-543: an argparse parser with `--version` and `--help` on it. KAN-542: that parser subclassed so it raises instead of exiting, plus `failures.py` (ADR 0005's exit table, and the only place a meaning becomes a number) and `parsing.py` (`usage:` on stderr *and* the structured row on stdout, from one event) |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
-| `frontend/` | Svelte 5 + Vite + TS, a shell page, the dev proxy for `/api`. KAN-704: TypeScript is pinned to **`^6.0.3`**, and the ceiling is upstream rather than taste (Q43) |
+| `frontend/` | Svelte 5 + Vite + TS, the dev proxy for `/api`, and — KAN-552 — the **app skeleton** the rest of V3 is built inside. `App.svelte` is three layout regions plus the route and the two reads the regions need, and nothing else. `lib/router.ts` is ~40 hand-written lines over `pathname`/`pushState`/`popstate` for `/` and `/notes/:ref`, with `parseRoute` a pure function so it tests without a DOM; no router library, because the shipped bundle still has **zero** runtime dependencies and CodeMirror is KAN-553's crossing to make. `lib/api.ts`'s `apiRequest` is the one place a request happens and the only reader of the credential seam; it turns `{"error": {code, message}}` into a typed `ApiError` carrying `status` **and** `code` apart. `lib/notes.ts` is the five calls (`moveNote` delegates to `updateNote`, same as `kaya-client`), `lib/types.ts` mirrors `backend/app/api/schemas.py` with `updated_at` as an **opaque string**, and `lib/auth.ts` is **the** credential seam. `components/EditorPane.svelte` holds PLAN §S9's container and `components/Sidebar.svelte` a flat nav list; KAN-553 and KAN-554 each replace exactly one of them. Component tests get a DOM **per file** (`// @vitest-environment jsdom`) over Svelte's own `mount`/`unmount`/`flushSync` and no testing library, so `tests/dev-proxy.test.ts` keeps evaluating `vite.config.ts` in node. KAN-723: the hard-coded package table is **deleted, not corrected**. KAN-704: TypeScript is pinned to **`^6.0.3`**, and the ceiling is upstream rather than taste (Q43) |
 | *root* | `Dockerfile` (bases pinned by digest), `docker-compose.yml`, `deploy/k8s/`. KAN-544: `scripts/check-version-bump.sh` (+ `lib/pyproject_diff.py`), `scripts/build-cli-artifact.sh`, `scripts/check-release-artifact.sh`, `.github/workflows/release.yml`'s `build` job. KAN-545: that workflow's `publish` job — the only `contents: write` in the repository, and it runs for a pushed `v*` tag and nothing else |
 
-Next: **V3, the editor** — `frontend/` is still a shell page, so nothing in this repository has a
-UI. After it, V4/V5 are `?q=` search (KAN-558/559) and `/links` / `/backlinks` (KAN-566), neither
-of which exists at any layer, and V6 is the MCP server: `mcp/` holds ADR 0006's frozen tool-name
-tuple and no server and no tools, and every one of those tools is meant to call the `render()` seam
-V2a and V2b just finished. PLAN §Config's **third** tier, the nearest `.mcp.json`, is deliberately
-not built and arrives with V6: choosing which server entry in an MCP host's file is kaya's is a
-guess until there is a server to name, and a host launching one usually exports the `env` block
-anyway, so tier one covers the common case (see `config.py`). Also unbuilt: `make test-e2e` is a
-stub (KAN-552), and ADR 0005 §Consequences defers ambient session context (pandan's V48)
-post-MVP.
+Now: **V3, the editor, is under way** — KAN-552 landed the skeleton, so `frontend/` is no longer a
+shell page: it is a browsable three-region app with a router, a typed API layer and a credential
+seam, driven against a real stack and a real PAT. What it does **not** have is an editor. The pane
+CodeMirror mounts into is an empty container, the sidebar is a flat list rather than a folder tree,
+there is no preview, no landing page and no conflict banner. Four cards finish the slice and each
+replaces **one file**: KAN-553 (CM6 in `EditorPane.svelte`), KAN-554 (folder tree, real list, live
+preview in `Sidebar.svelte`), KAN-555 (landing state and the PAT paste form), KAN-556 (the `409`
+banner). After V3, V4/V5 are `?q=` search (KAN-558/559) and `/links` / `/backlinks` (KAN-566),
+neither of which exists at any layer, and V6 is the MCP server: `mcp/` holds ADR 0006's frozen
+tool-name tuple and no server and no tools, and every one of those tools is meant to call the
+`render()` seam V2a and V2b just finished. PLAN §Config's **third** tier, the nearest `.mcp.json`, is
+deliberately not built and arrives with V6: choosing which server entry in an MCP host's file is
+kaya's is a guess until there is a server to name, and a host launching one usually exports the `env`
+block anyway, so tier one covers the common case (see `config.py`). Also unbuilt: `make test-e2e` is
+still a stub, and its blocker moved with KAN-552 — the shell exists, so what the target is waiting
+for is the behaviour SLICES §V3's demo describes (KAN-553's editor, KAN-556's banner). ADR 0005
+§Consequences defers ambient session context (pandan's V48) post-MVP.
 
 **Trust the code over the docs.** When this file and the repository disagree, the repository is
 right and this file is stale. Fix it in the same PR.
@@ -129,6 +138,42 @@ handler) swallow the API: `/api/v1/notes/NOTE-9999` comes back `200 text/html` a
 `404` is gone. `app/spa.py` refuses a fixed list of reserved namespaces instead. Note that every
 other API test passes with the fallback mounted wrong, because they stand the app up with no build
 directory and therefore no fallback at all.
+
+**Svelte owns the editor's container element and never its children** (PLAN §S9, ADR 0001 §2,
+`frontend/src/components/EditorPane.svelte`). This is PLAN §Open risks' only frontend unknown with
+teeth: bind a rune naively to the document while Svelte also emits DOM inside CM6's subtree and you
+get an update loop that reads as a performance problem and is a correctness one. KAN-552 fixed the
+shape before the editor existed, which is most of what makes KAN-553 safe — one `div`, no `{#if}`,
+no `{#each}`, no `{@html}` and no interpolation inside it, everything in there created imperatively
+by an `$effect` that returns a teardown. The placeholder `$effect` in that file is a rehearsal of
+`new EditorView({ parent })` / `view.destroy()`, same boundary and no library; replace its two
+statements rather than moving the boundary. `frontend/tests/shell.test.ts` asserts the note body
+renders *outside* the container and that the container empties on unmount.
+
+**The SPA is a direct consumer of complete records, and it may not shape one** (ADR 0004 §Decision,
+`frontend/src/lib/api.ts`'s header). The obvious reading — "the SPA is another adapter, so it goes
+through `render()`" — is wrong twice over: `kaya-client` is Python, and ADR 0004 already exempted
+this consumer in writing ("the API does not use `render` … a browser client that wants everything").
+So no `--fields`-style projection, no truncation-with-a-hint and no `{"count": n}` in `frontend/`;
+those are agent ergonomics, and a copy here is the second implementation ADR 0004 exists to prevent.
+The line that is easy to blur, stated so KAN-554 does not have to guess: **rendering markdown to
+HTML for preview is presentation, not payload shaping**, and belongs in the SPA. Shaping decides
+which bytes a caller receives; presentation decides what a person sees of bytes they already hold.
+
+**One module owns "the bearer for a request", and the browser never says more than `set`**
+(KAN-552, ADR 0002, Q7/Q41/Q42, `frontend/src/lib/auth.ts`). Every fetch takes its `Authorization`
+from `authorization()` there, so the day a cookie becomes possible it is one module and not every
+call site. The token lives in **`sessionStorage`** — not `localStorage`, not in memory — and the
+reasoning is specific: it is a *pandan* PAT, so exfiltration hands over the kanban board too, and
+KAN-554's live preview will render user markdown to HTML in this same origin. `sessionStorage` dies
+with the tab. There is deliberately no cookie scaffolding to grow into, because Q7 defers browser
+SSO on a hard fact (`fly.dev` is on the Public Suffix List, so two `*.fly.dev` origins cannot share
+a cookie at all). **The token never enters a URL, a log line, an error message, or the DOM**, and
+the only thing allowed to describe it is `credentialState()`, which returns `set` or `not set` —
+never a length, never a mask, since a mask is a fragment with asterisks in front of it. That is
+`kaya config show`'s lesson ported to a browser, where a screenshot is one keystroke away;
+`frontend/tests/auth.test.ts` sweeps every contiguous **four**-character fragment of a fake token,
+and `tests/shell.test.ts` sweeps the rendered `document.body`.
 
 **A `PATCH` is guarded only if it asks to be, and only over the body** (ADR 0009,
 `app/api/concurrency.py`). Send `if_updated_at` and a stale value is a `409` carrying `attempted` and
@@ -399,7 +444,19 @@ one runtime dependency and the encoder is stdlib-only (SLICES §V2a).
 `make measure-auth` is a measurement rather than a gate, and the only target that reads a
 credential: it takes the PAT from `KAYA_MEASURE_PAT` or `~/.config/pandan/config.toml`, never prints
 it, and exits 0 having done nothing when there is none, so CI never needs a secret.
-`make test-e2e` is still a stub (KAN-552).
+`make test-e2e` is still a stub, now blocked on KAN-553/556 rather than on the shell.
+
+**The fastest loop for frontend work is the dev server against a stack you already have up.**
+`vite.config.ts` exports both knobs for exactly this, so a worktree does not have to own :8000 or
+:5173:
+
+```bash
+cd frontend && KAYA_BACKEND_ORIGIN=http://localhost:8010 KAYA_SPA_PORT=5180 npm run dev
+```
+
+The SPA needs a credential in `sessionStorage` under `kaya.token` (KAN-552; KAN-555 adds the paste
+form). Set it from the browser console or from a driver, **never** from a shell command that echoes
+it — it is a live pandan PAT.
 
 To run the single-origin layout from a checkout without building the image:
 
