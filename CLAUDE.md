@@ -33,25 +33,26 @@ origin: TLS on the CLI hop, kaya's own cold start, and the manifests on non-k3d 
 | `kaya-client/` | KAN-540: `KayaClient` over httpx and the `render()` seam as four composable steps. KAN-551: the full CRUD set (`create_note`, `update_note`, `move_note`, `delete_note`) — `move_note` *is* `update_note` because ADR 0008 makes a move a `PATCH` to one column, and every ref-taking method shares one `_note_path` that percent-encodes the ref as a single segment. ADR 0009's `if_updated_at` is forwarded as an **opaque string**, so nothing here can lose a microsecond. Same card: the config *file* tier (JSON at `$XDG_CONFIG_HOME/kaya/config.json`, consulted per key after the environment) and the three `config` verbs as `Payload` builders — `settings_payload()`, `path_payload()`, `write_settings()`, which read-modify-writes so a hand-set `max_text_chars` survives a `config set --api-url`. `human`/`json`/`toon` user-facing, `data` adapter-only. KAN-548: `aggregates.py` is live — a collection gets `{"count": len(records)}` and an entity gets nothing, rendered as a blank-line-separated `2 notes` footer under `human` and as a `summary` key beside the envelope everywhere else, both out of the one mapping via `summary_line()`. KAN-547: `truncation.py` is live — `text_limit` cuts the fields `Payload.prose_fields` names and appends a hint carrying the **true** total **in-band**, so the total reaches `json`/`toon`/`data`; `0` disables, and `config.max_text_chars()` resolves `KAYA_MAX_TEXT_CHARS` (default 500, a non-number is a `UsageError`). KAN-546: `projection.py` is live — `fields` narrows `records` *and* `columns` uniformly for every format, via `Payload.narrowed_to()`, with the vocabulary read from `field_names()` before anything narrows. KAN-550: `hints.py` — ADR 0005 §contract 8's `help[]` templates, keyed on `(kind, noun)` and never on a verb name, placeholders left unfilled, and **human-only** (the reverse of KAN-547's hint, because a template is advice about the tool and a total is a fact about the payload). KAN-549: `overview.py` — the three banner lines a bare `kaya` prints, which take three `str`s and **no `Payload`** so they cannot format a result — plus `RECENT_NOTES` (5), `KayaClient.recent_notes()` and `Payload.limited_to()`, the rows-wise twin of `narrowed_to`. KAN-541: `toon.py`, a stdlib-only **encode-only** TOON encoder registered in `Format`, `_SERIALIZERS` and `_ERROR_SERIALIZERS`, plus `config.py` (PLAN §Config's `KAYA_API_URL`/`KAYA_TOKEN` and `open_client()`) and `MissingCredential`. KAN-543: `provenance.version_line()` and the `_build_stamp.COMMIT` a release rewrites. KAN-542: the failure half of the layer — `error_payload()` / `render_error()`, and a `code` on every exception class so a raise site names a meaning. KAN-716: `DEFAULT_TIMEOUT` split by phase (`DEFAULT_CONNECT_TIMEOUT` 5 s, `DEFAULT_READ_TIMEOUT` 40 s) so the client outlasts the backend's authentication budget |
 | `kaya-cli/` | The `kaya` console script, one entry point. KAN-541: `note list` and `note get <ref>` (`verbs.py`, a dispatch table), `--format {human,json,toon}` with `--json` as an alias and `--format` winning if both are given. KAN-551: the other seven verbs — four writes in `VERBS` and three `config` words in a second table, `LOCAL_VERBS`, because `config show` must answer with no credential at all. `parsing.resolve_body()` turns `--body`/`--body-file` into one string; there is **no `-`** for the standard input, so `tests/test_no_prompting.py` keeps proving ADR 0005 §contract 9 structurally. KAN-549: bare `kaya` is `verbs.BARE`, a row in the same dispatch table as every other verb, so `render` is still called in **exactly one place** in the package; the banner is `kaya_client.overview` joined on by `BLOCK_GAP`, and `executable_path()` — `argv[0]` resolved through `PATH`, or `sys.executable` when frozen — is this package's only new logic. KAN-547: `--full` on `output_flags()`, and `resolve_text_limit()` — a flag-beats-environment precedence and nothing else, since the number and the cut are both the client's. KAN-546: `--fields` on `output_flags()`, and `resolve_fields()` — one `split(",")`, which is the entire projection logic this package is allowed to contain. KAN-543: an argparse parser with `--version` and `--help` on it. KAN-542: that parser subclassed so it raises instead of exiting, plus `failures.py` (ADR 0005's exit table, and the only place a meaning becomes a number) and `parsing.py` (`usage:` on stderr *and* the structured row on stdout, from one event) |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
-| `frontend/` | Svelte 5 + Vite + TS, the dev proxy for `/api`, and — KAN-552 — the **app skeleton** the rest of V3 is built inside. `App.svelte` is three layout regions plus the route and the two reads the regions need, and nothing else. `lib/router.ts` is ~40 hand-written lines over `pathname`/`pushState`/`popstate` for `/` and `/notes/:ref`, with `parseRoute` a pure function so it tests without a DOM; no router library, because the shipped bundle still has **zero** runtime dependencies and CodeMirror is KAN-553's crossing to make. `lib/api.ts`'s `apiRequest` is the one place a request happens and the only reader of the credential seam; it turns `{"error": {code, message}}` into a typed `ApiError` carrying `status` **and** `code` apart. `lib/notes.ts` is the five calls (`moveNote` delegates to `updateNote`, same as `kaya-client`), `lib/types.ts` mirrors `backend/app/api/schemas.py` with `updated_at` as an **opaque string**, and `lib/auth.ts` is **the** credential seam. `components/EditorPane.svelte` holds PLAN §S9's container and `components/Sidebar.svelte` a flat nav list; KAN-553 and KAN-554 each replace exactly one of them. KAN-555: `components/Landing.svelte` is the no-credential state and the **one-time PAT paste** — `lib/meta.ts` reads `GET /api/v1/meta` through `api.ts`'s new `publicRequest` (the one request that sends **no** `Authorization`, even when a token is in the tab) and `pandanHref()` refuses anything but `http(s)`; the link goes to pandan's **origin** with no path, because pandan's SPA keeps its Tokens tab in component state and gives it no URL to deep-link to. `App.svelte` owns the credential *lifecycle* (`authed` is a rune, so a paste reaches the list with no reload; a `401` calls `discard()`, which clears the token and returns to the landing state; a **Clear token** button in the header is the way out of a `503` or a wrong-account token). The input is `type="password"`, `autocomplete="off"`, `spellcheck="false"` and — the strongest guard, because it needs no handler to run — carries **no `name`**, so a form submission that escaped `preventDefault()` would serialize nothing; the form is `method="post"` for the same reason and the field is cleared on **every** path out of submit. `tests/landing.test.ts` sweeps four-character fragments over the **rendered DOM**, every `href` and every request URL, on all four states. Component tests get a DOM **per file** (`// @vitest-environment jsdom`) over Svelte's own `mount`/`unmount`/`flushSync` and no testing library, so `tests/dev-proxy.test.ts` keeps evaluating `vite.config.ts` in node. KAN-723: the hard-coded package table is **deleted, not corrected**. KAN-704: TypeScript is pinned to **`^6.0.3`**, and the ceiling is upstream rather than taste (Q43) |
+| `frontend/` | Svelte 5 + Vite + TS, the dev proxy for `/api`, and — KAN-552 — the **app skeleton** the rest of V3 is built inside. `App.svelte` is three layout regions plus the route and the two reads the regions need, and nothing else. `lib/router.ts` is ~40 hand-written lines over `pathname`/`pushState`/`popstate` for `/` and `/notes/:ref`, with `parseRoute` a pure function so it tests without a DOM; no router library, because CodeMirror is the **only** runtime dependency this project has ever taken and the bar for the second one is that high (KAN-553). `lib/api.ts`'s `apiRequest` is the one place a request happens and the only reader of the credential seam; it turns `{"error": {code, message}}` into a typed `ApiError` carrying `status` **and** `code` apart. `lib/notes.ts` is the five calls (`moveNote` delegates to `updateNote`, same as `kaya-client`), `lib/types.ts` mirrors `backend/app/api/schemas.py` with `updated_at` as an **opaque string**, and `lib/auth.ts` is **the** credential seam. KAN-553: `components/EditorPane.svelte` is **CodeMirror 6**, mounted once per note in the `$effect` KAN-552 rehearsed, with `lib/editor.ts` holding the two guards as pure predicates — `needsRemount` (the *identity* guard, in) and `needsDispatch`/`syncDocument` (the *echo* guard, back in) — plus `conflictVersions()`, where KAN-556 reads ADR 0009's two whole notes. It saves with `if_updated_at` and surfaces a `409` rather than swallowing it. Five MIT runtime dependencies (`@codemirror/state`, `view`, `commands`, `language`, `lang-markdown`) cost **+313,729 B raw / +100,506 B gzip -9** on one chunk — measured, per ADR 0001 §2's obligation, with the table in `frontend/README.md`. `components/Sidebar.svelte` is still a flat nav list; KAN-554 replaces it. KAN-555: `components/Landing.svelte` is the no-credential state and the **one-time PAT paste** — `lib/meta.ts` reads `GET /api/v1/meta` through `api.ts`'s new `publicRequest` (the one request that sends **no** `Authorization`, even when a token is in the tab) and `pandanHref()` refuses anything but `http(s)`; the link goes to pandan's **origin** with no path, because pandan's SPA keeps its Tokens tab in component state and gives it no URL to deep-link to. `App.svelte` owns the credential *lifecycle* (`authed` is a rune, so a paste reaches the list with no reload; a `401` calls `discard()`, which clears the token and returns to the landing state; a **Clear token** button in the header is the way out of a `503` or a wrong-account token). The input is `type="password"`, `autocomplete="off"`, `spellcheck="false"` and — the strongest guard, because it needs no handler to run — carries **no `name`**, so a form submission that escaped `preventDefault()` would serialize nothing; the form is `method="post"` for the same reason and the field is cleared on **every** path out of submit. `tests/landing.test.ts` sweeps four-character fragments over the **rendered DOM**, every `href` and every request URL, on all four states. Component tests get a DOM **per file** (`// @vitest-environment jsdom`) over Svelte's own `mount`/`unmount`/`flushSync` and no testing library, so `tests/dev-proxy.test.ts` keeps evaluating `vite.config.ts` in node. KAN-723: the hard-coded package table is **deleted, not corrected**. KAN-704: TypeScript is pinned to **`^6.0.3`**, and the ceiling is upstream rather than taste (Q43) |
 | *root* | `Dockerfile` (bases pinned by digest), `docker-compose.yml`, `deploy/k8s/`. KAN-544: `scripts/check-version-bump.sh` (+ `lib/pyproject_diff.py`), `scripts/build-cli-artifact.sh`, `scripts/check-release-artifact.sh`, `.github/workflows/release.yml`'s `build` job. KAN-545: that workflow's `publish` job — the only `contents: write` in the repository, and it runs for a pushed `v*` tag and nothing else |
 
-Now: **V3, the editor, is under way** — KAN-552 landed the skeleton, so `frontend/` is no longer a
-shell page: it is a browsable three-region app with a router, a typed API layer and a credential
-seam, driven against a real stack and a real PAT. What it does **not** have is an editor. The pane
-CodeMirror mounts into is an empty container, the sidebar is a flat list rather than a folder tree,
-and there is no preview and no conflict banner. **KAN-555 is in**: a visitor with no credential gets
-a real landing page and pastes a pandan PAT into it, and a `401` is walked out of rather than
-reloaded through. Three cards finish the slice: KAN-553 (CM6 in `EditorPane.svelte`), KAN-554 (folder
-tree, real list, live preview in `Sidebar.svelte`), KAN-556 (the `409` banner). After V3, V4/V5 are `?q=` search (KAN-558/559) and `/links` / `/backlinks` (KAN-566),
-neither of which exists at any layer, and V6 is the MCP server: `mcp/` holds ADR 0006's frozen
-tool-name tuple and no server and no tools, and every one of those tools is meant to call the
-`render()` seam V2a and V2b just finished. PLAN §Config's **third** tier, the nearest `.mcp.json`, is
-deliberately not built and arrives with V6: choosing which server entry in an MCP host's file is
-kaya's is a guess until there is a server to name, and a host launching one usually exports the `env`
-block anyway, so tier one covers the common case (see `config.py`). Also unbuilt: `make test-e2e` is
-still a stub, and its blocker moved with KAN-552 — the shell exists, so what the target is waiting
-for is the behaviour SLICES §V3's demo describes (KAN-553's editor, KAN-556's banner). ADR 0005
+Now: **V3, the editor, is under way** — KAN-552 landed the skeleton, KAN-553 the editor and KAN-555
+the way in, so `frontend/` is a browsable three-region app with a router, a typed API layer, a
+credential seam, a real landing page that takes a **one-time PAT paste** (and walks a `401` out
+rather than reloading through it), and a CodeMirror 6 pane that opens a note, edits it and saves it
+under ADR 0009's precondition — driven against a real stack and a real PAT. What it does **not**
+have: the sidebar is a flat list rather than a folder tree, there is no preview, and a `409` is one
+honest line rather than a banner. Two cards finish the slice and each replaces **one file**: KAN-554
+(folder tree, real list, live preview in `Sidebar.svelte`) and KAN-556 (the `409` banner). After V3,
+V4/V5 are `?q=` search (KAN-558/559) and `/links` / `/backlinks` (KAN-566), neither of which exists
+at any layer, and V6 is the MCP server: `mcp/` holds ADR 0006's frozen tool-name tuple and no server
+and no tools, and every one of those tools is meant to call the `render()` seam V2a and V2b just
+finished. PLAN §Config's **third** tier, the nearest `.mcp.json`, is deliberately not built and
+arrives with V6: choosing which server entry in an MCP host's file is kaya's is a guess until there
+is a server to name, and a host launching one usually exports the `env` block anyway, so tier one
+covers the common case (see `config.py`). Also unbuilt: `make test-e2e` is still a stub, and its
+blocker moved with KAN-552 — the shell exists, so what the target is waiting for is the behaviour
+SLICES §V3's demo describes — KAN-553's editor is in, so what is left is KAN-556's banner. ADR 0005
 §Consequences defers ambient session context (pandan's V48) post-MVP.
 
 **Trust the code over the docs.** When this file and the repository disagree, the repository is
@@ -143,12 +144,36 @@ directory and therefore no fallback at all.
 `frontend/src/components/EditorPane.svelte`). This is PLAN §Open risks' only frontend unknown with
 teeth: bind a rune naively to the document while Svelte also emits DOM inside CM6's subtree and you
 get an update loop that reads as a performance problem and is a correctness one. KAN-552 fixed the
-shape before the editor existed, which is most of what makes KAN-553 safe — one `div`, no `{#if}`,
-no `{#each}`, no `{@html}` and no interpolation inside it, everything in there created imperatively
-by an `$effect` that returns a teardown. The placeholder `$effect` in that file is a rehearsal of
-`new EditorView({ parent })` / `view.destroy()`, same boundary and no library; replace its two
-statements rather than moving the boundary. `frontend/tests/shell.test.ts` asserts the note body
-renders *outside* the container and that the container empties on unmount.
+shape before the editor existed, which is most of what made KAN-553 safe — one `div`, no `{#if}`,
+no `{#each}`, no `{@html}` and no interpolation inside it, everything in there created imperatively.
+`frontend/tests/editor-container.test.ts` parses the component and asserts the container has **zero**
+template children; `tests/shell.test.ts` asserts over `childNodes` that every node in it was made by
+the `$effect`. Even the "No note open." zero state is CM6's own `placeholder()` extension rather than a
+Svelte node, which is why the container needs no children to say it. KAN-553 changed exactly one line
+of the DOM guard, the selector, and inverted exactly one assertion: "the note body renders *outside*
+the container" was true of a `<pre>` beside a placeholder and is precisely false of an editor holding
+the document, so that test now says the body reached CM6's document and appears nowhere else. That
+inversion is the card landing, and `shell.test.ts` records why — a pin quietly edited is a pin
+destroyed.
+
+**KAN-553's two guards are not interchangeable, and the teardown is not where KAN-552 rehearsed it.**
+The **identity guard** (`needsRemount`) is on the way in: reading the `note` prop registers it, so a
+parent handing down a new object per keystroke re-runs the effect *whichever field you read* —
+`note.ref` and `note.body` are one signal — so "depend on identity" means **compare** the incoming ref
+against the ref the view was built for, and a new document for the same note goes in as a
+**transaction**. The **echo guard** (`needsDispatch`, applied by `syncDocument`) is on the way back in:
+CM6's `updateListener` fires for every transaction including the ones our own code dispatched, so
+`updateListener → set rune → effect → dispatch → updateListener` cycles unless the incoming string is
+compared against `view.state.doc.toString()` first — un-guarded it is a `RangeError: Maximum call stack
+size exceeded`, not a slow render. Both live in `frontend/src/lib/editor.ts` as **pure predicates**, so
+they are tested in vitest's `node` environment where jsdom's missing measurement APIs cannot obscure
+them, and again against a real `EditorView`. Beside them sits one piece of bookkeeping that is not a
+guard: the incoming body is only offered to the echo guard when the *prop* moved, because a parent
+re-rendering an unchanged note while you type produces a body that differs from the document and the
+echo guard would let it through. And `view.destroy()` is **not** in that effect's cleanup: Svelte runs
+a cleanup before every re-run, so it would destroy the view on exactly the content change the identity
+guard exists to survive. The per-note destroy is in the effect body; the per-component destroy is a
+second effect that reads nothing.
 
 **The SPA is a direct consumer of complete records, and it may not shape one** (ADR 0004 §Decision,
 `frontend/src/lib/api.ts`'s header). The obvious reading — "the SPA is another adapter, so it goes
@@ -478,6 +503,17 @@ cd kaya-client && uv run --with tiktoken python scripts/measure_toon_delta.py --
 
 `tiktoken` is supplied for the run only and must not become a dependency: `kaya-client` has exactly
 one runtime dependency and the encoder is stdlib-only (SLICES §V2a).
+
+So is the SPA bundle, and that is ADR 0001 §2's standing obligation rather than a one-off for
+KAN-553 — re-measure whenever a CodeMirror package is added, and put the number in the PR:
+
+```bash
+cd frontend && npm run build
+for f in dist/assets/*; do echo "$f $(stat -c%s "$f") $(gzip -9 -c "$f" | wc -c)"; done
+```
+
+`vite build` prints gzip at a lower level than `gzip -9`, so the two disagree by ~1.5%. Quote either
+and say which. The current numbers and their breakdown are the table in `frontend/README.md`.
 
 `make measure-auth` is a measurement rather than a gate, and the only target that reads a
 credential: it takes the PAT from `KAYA_MEASURE_PAT` or `~/.config/pandan/config.toml`, never prints

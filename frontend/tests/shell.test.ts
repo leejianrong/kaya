@@ -87,11 +87,13 @@ describe('the component harness', () => {
 /**
  * The nodes `EditorPane`'s `$effect` creates — the *only* nodes allowed inside S9's container.
  *
- * **KAN-553 changes this one line** and nothing else in this file: when the placeholder becomes
- * `new EditorView({ parent })`, the selector becomes `:scope > .cm-editor`. The assertions below
- * are written against "whatever the effect made", so they keep holding across that swap.
+ * **KAN-553 changed this one line** and nothing else in the container guard: the placeholder became
+ * `new EditorView({ parent })`, so the selector became `:scope > .cm-editor`. The assertions below
+ * are written against "whatever the effect made", so they held across the swap unchanged — including
+ * the zero state, because CM6's own `placeholder()` extension renders "No note open." *inside* the
+ * view rather than as a Svelte node beside it.
  */
-const IMPERATIVE = ':scope > p.editor-placeholder'
+const IMPERATIVE = ':scope > .cm-editor'
 
 /** A node named for a failure message: `text "loading"`, `comment ""`, `<span>`. */
 function describeNode(node: Node): string {
@@ -201,11 +203,34 @@ describe("PLAN §S9's editor container", () => {
     expect(host.querySelector('.editor-host')).toBeNull()
   })
 
-  it('renders the note body outside the container, never inside it', () => {
+  /**
+   * **This assertion inverted in KAN-553, and the inversion is the card landing rather than a pin
+   * being edited away.**
+   *
+   * KAN-552 asserted the body renders *outside* the container, because the body was a
+   * `<pre>` beside a placeholder and anything in the container was by definition Svelte's. Under a
+   * real editor the body *is* the document, and the document lives inside CM6's subtree — so "the
+   * body is never inside the container" is now precisely false, and a version of this test that
+   * still passed would mean the editor was not holding the note.
+   *
+   * What S9 actually protects survives the inversion intact, and it is checked in two places that
+   * did **not** move: the identity check over `childNodes` above, which says every node in there was
+   * made by the `$effect`, and `tests/editor-container.test.ts`, which parses this component and says
+   * the container has zero template children. Between them, "the body is inside the container but no
+   * Svelte node put it there" is asserted from both directions. So this test's job changed from
+   * "the body is outside" to "the body reached the editor and appears nowhere else", which is what
+   * the read-only `<pre>` being deleted actually means.
+   */
+  it("puts the note body in CM6's document and nowhere else in the pane", () => {
     const target = render(EditorPane, { note: note({ body: 'MARKER-BODY' }), error: null })
+    const container = target.querySelector('.editor-host')!
 
-    expect(target.textContent).toContain('MARKER-BODY')
-    expect(target.querySelector('.editor-host')!.textContent).not.toContain('MARKER-BODY')
+    expect(container.querySelector('.cm-content')!.textContent).toContain('MARKER-BODY')
+
+    // Exactly once in the whole pane: the deleted `<pre class="body">` was a second copy of the
+    // document sitting next to a live editor of it, which is a rendering of the payload rather than
+    // a view of it.
+    expect(target.textContent!.split('MARKER-BODY')).toHaveLength(2)
   })
 })
 
