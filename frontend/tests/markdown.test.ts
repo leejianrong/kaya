@@ -277,13 +277,30 @@ describe('safeUrl', () => {
     }
   })
 
-  it('refuses a scheme smuggled past a parser by a control character', () => {
-    // `new URL()` strips tab, newline and carriage return per the URL spec, so these *would* parse as
-    // `javascript:`. Refusing the bytes before parsing means the allow-list never has to reason about
-    // what the parser silently removed.
+  it('refuses a scheme smuggled past a filter by a control character', () => {
+    // `new URL()` strips tab, newline and carriage return per the URL spec, so each of these arrives
+    // at the allow-list normalised to `javascript:` and is refused on the *parsed* protocol. That is
+    // the whole defence, and it is why a `startswith` check on the raw string has no place here.
     for (const raw of ['java\tscript:alert(1)', 'java\nscript:alert(1)', 'java\rscript:alert(1)']) {
       expect(safeUrl(raw)).toBeNull()
     }
+  })
+
+  it('refuses a space, a C0 control or DEL anywhere in the URL', () => {
+    // The character scan's own test, and it needs one: removing the scan reddens **nothing** in the
+    // payload battery, because `new URL()` refuses or normalises every shape the markdown grammar can
+    // hand it. Its unique reach is a URL the parser happily accepts — `/a b` comes back as `/a%20b` —
+    // and `safeUrl` is exported, so its contract is wider than its one caller's inputs.
+    for (const raw of [
+      'https://example.com/a b',
+      'https://example.com/a\u0007b',
+      'https://example.com/a\u007fb',
+      'https://exam ple.com/',
+    ]) {
+      expect(safeUrl(raw)).toBeNull()
+    }
+    // …and the same URL without the offending character is fine, so this is not refusing everything.
+    expect(safeUrl('https://example.com/ab')).toBe('https://example.com/ab')
   })
 
   it('refuses a relative or fragment-only target rather than inventing a base', () => {

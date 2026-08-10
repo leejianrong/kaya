@@ -164,11 +164,20 @@ const NAMED_ENTITIES: Record<string, string> = {
  * preview until there is a resolver for it (wikilinks are KAN-567), so it comes back `null` and the
  * caller renders the source as text instead of inventing a destination.
  *
- * The control-character rejection happens *before* parsing and is the load-bearing part. `new URL()`
- * strips tab, newline and carriage return from its input per the URL spec, so `java&#9;script:x`
- * parses as `javascript:x` — a scheme the allow-list would then judge correctly, but only by
- * accident of ordering. Rejecting the bytes outright means the sanitiser never has to reason about
- * what a parser silently removed.
+ * **What defeats a scheme smuggled past a filter is the allow-list reading `parsed.protocol`**, and
+ * this paragraph is a correction: an earlier draft claimed the control-character scan below was the
+ * load-bearing part of that, and the mutation proving it removed the scan and **nothing went red**.
+ * `new URL()` strips tab, newline and carriage return per the URL spec, so `java&#9;script:x` arrives
+ * at the allow-list already normalised to `javascript:` and is refused on its merits. Deciding on the
+ * *parsed* protocol rather than on a prefix of the raw string is the whole defence, and it is the
+ * reason a `startswith`-style check has no place here.
+ *
+ * The character scan is a separate and weaker rule: no space, C0 control or DEL anywhere in a URL.
+ * Its only unique reach is content the parser tolerates rather than rejects — `https://x.example/a b`
+ * comes back from `new URL()` as a valid `https:` URL with a `%20` in it. Nothing the markdown grammar
+ * can produce gets that far (a `URL` node stops at whitespace), but `safeUrl` is exported and its
+ * contract is wider than its one caller, so the conservative rule stays and
+ * `tests/markdown.test.ts` pins it directly rather than through a payload.
  *
  * Returns `parsed.href`, not the input. Whatever reaches the attribute is the exact string the
  * allow-list judged, so there is no gap between the decision and the value.
