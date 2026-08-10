@@ -552,6 +552,17 @@ already red on `Frontend (lint + unit + build)`, so nothing can drift in on a gr
 becomes mergeable when TS 7.1 ships the API *and* both tools widen their peer ranges. Do not reach
 for the `--tsgo` dual-install escape hatch `svelte-check` suggests to force it early.
 
+**There is a second, nearer wall at TS 6.1, and it is the same situation one minor earlier.** Every
+`@typescript-eslint/*` package at 8.66.0 — `typescript-eslint`, `parser`, `eslint-plugin` and
+`typescript-estree` — declares `typescript: >=4.8.4 <6.1.0`, which is *tighter* than
+`svelte-check`'s `^5.0.0 || ^6.0.0`. `frontend/package.json` says `^6.0.3` and that caret is
+deliberate, so **the lockfile is the only thing keeping CI on 6.0.3**; `npm ci` pins it and `npm
+install` would not. When TypeScript 6.1 ships (it has not yet), Dependabot will open a PR that goes
+red on `Frontend (lint + unit + build)` against that peer range until typescript-eslint cuts a
+release. That is expected and already diagnosed — held, not declined, exactly like the 7.x row — so
+it is not a new investigation. Do not force it with `--legacy-peer-deps`, and do not narrow the
+caret to `~6.0.3` to hide the PR: the bot PR going red *is* the notification.
+
 **Measurements go in the PR body.** Several slices need a number rather than an assertion:
 introspection latency (V1), the `toon` delta (V2a), the CodeMirror bundle size (V3), the MCP
 per-read payload cost (V6). "It's fast" is not an acceptance criterion; a number is.
