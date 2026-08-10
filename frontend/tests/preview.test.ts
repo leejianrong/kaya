@@ -93,6 +93,14 @@ function mountPair(opened: Box<Note | null>): HTMLDivElement {
   return split
 }
 
+/** Let the effects run, the observers fire and the promises they started settle. */
+async function settle(): Promise<void> {
+  for (let turn = 0; turn < 12; turn += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    flushSync()
+  }
+}
+
 function editor(scope: ParentNode): EditorView {
   const dom = scope.querySelector<HTMLElement>('.cm-editor')
   expect(dom).not.toBeNull()
@@ -178,6 +186,37 @@ describe('the preview follows the document', () => {
 
     expect(preview(split).querySelector('h1')?.textContent).toBe('Second')
     expect(editor(split).state.doc.toString()).toBe('# Second')
+  })
+
+  it('finds the editor even when the preview mounts first', async () => {
+    // **`trackEditor`'s `MutationObserver` is the only thing that makes this pass, and this test
+    // exists because a mutation proved it was otherwise dead code.** Removing the observer reddened
+    // nothing: `App.svelte` puts `EditorPane` earlier in its markup, so its effect is always created
+    // and flushed first and the synchronous lookup always succeeds. That ordering is a property of a
+    // *third* file, and "someone swaps two lines and the preview silently stops following the
+    // document" is exactly the failure the observer is for — so it needs a test that does not depend
+    // on the ordering it is insuring against.
+    const split = document.createElement('div')
+    host.append(split)
+    const opened = box<Note | null>(note({ body: '# Seeded from the prop' }))
+    const props = {
+      get note() {
+        return opened.value
+      },
+      error: null,
+    }
+
+    // Preview first. There is no view for it to find at this point.
+    mounted.push(mount(PreviewPane, { target: split, props }))
+    flushSync()
+    mounted.push(mount(EditorPane, { target: split, props }))
+    await settle()
+
+    typeInto(editor(split), '# Typed after the editor arrived')
+    await settle()
+
+    // The seed would still be on screen if nothing had re-attached.
+    expect(preview(split).querySelector('h1')?.textContent).toBe('Typed after the editor arrived')
   })
 
   it('shows the editor’s document rather than the stale prop after an unsaved edit', () => {
@@ -294,13 +333,6 @@ describe('the preview toggle', () => {
       })
     }) as unknown as typeof fetch
   })
-
-  async function settle(): Promise<void> {
-    for (let turn = 0; turn < 12; turn += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 0))
-      flushSync()
-    }
-  }
 
   function click(testid: string): void {
     host.querySelector<HTMLButtonElement>(`[data-testid="${testid}"]`)!.click()
