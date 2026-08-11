@@ -130,14 +130,14 @@ def test_a_stale_precondition_prints_a_conflict_a_caller_can_act_on(capsys, answ
     """The `409` carries two whole notes and they survive to stdout unflattened, so "keep mine /
     keep theirs" is a decision the caller can make from one command's output.
 
-    Exit `1`: `409` has no row in ADR 0005 §contract 4's table and the unmapped default is
-    "something failed and no more specific meaning applies", which is true — the write can succeed
-    after a re-read, unlike a `400`. Adding a number for it would be publishing a seventh exit code,
-    which is an ADR amendment rather than a line in this card.
+    Exit `6` since KAN-724, where it used to be the unmapped `1` this test asserted and ADR 0005
+    §contract 4 gained a row for `409`. The number is what makes the two notes reachable: a script
+    reading `1` has to treat the command as "kaya failed", so it either abandons a conflict it could
+    have merged from this very output or retries the same stale precondition forever.
     """
     answering(409, CONFLICT)
 
-    assert main(["note", "edit", "NOTE-12", "--body", "mine", "--if-updated-at", PRECISE]) == 1
+    assert main(["note", "edit", "NOTE-12", "--body", "mine", "--if-updated-at", PRECISE]) == 6
     row = capsys.readouterr().out
     assert row.startswith("error\tnote_conflict\t")
 

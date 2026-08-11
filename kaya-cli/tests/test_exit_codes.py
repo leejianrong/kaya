@@ -15,6 +15,7 @@ import pytest
 from kaya_client import ApiError, KayaError, TransportError, UnknownFormat, UsageError
 
 from kaya_cli.failures import (
+    EXIT_CONFLICT,
     EXIT_FOR_CODE,
     EXIT_FOR_STATUS,
     EXIT_FORBIDDEN,
@@ -26,7 +27,7 @@ from kaya_cli.failures import (
     exit_code_for,
 )
 
-# ------------------------------------------------------------ the six numbers
+# ---------------------------------------------------------- the seven numbers
 
 
 def test_ok_is_zero() -> None:
@@ -54,8 +55,19 @@ def test_not_found_is_five() -> None:
     assert EXIT_NOT_FOUND == 5
 
 
-def test_the_six_meanings_are_six_distinct_numbers() -> None:
-    """Two meanings sharing a number is the same bug as a renumber, arriving from the other side."""
+def test_conflict_is_six() -> None:
+    """KAN-724, and the first number this repository chose rather than inherited. `6` because it is
+    the next one, and it exists because ADR 0009's `409` is the one refusal where the caller did
+    nothing wrong, kaya did not fail, and re-read-and-retry is the correct action."""
+    assert EXIT_CONFLICT == 6
+
+
+def test_the_seven_meanings_are_seven_distinct_numbers() -> None:
+    """Two meanings sharing a number is the same bug as a renumber, arriving from the other side.
+
+    Seven since KAN-724. The six below `6` are in the order and at the values V2a published them,
+    which is the add-only rule read off one list: a meaning arrived at the end and nothing moved.
+    """
     numbers = [
         EXIT_OK,
         EXIT_RUNTIME,
@@ -63,10 +75,11 @@ def test_the_six_meanings_are_six_distinct_numbers() -> None:
         EXIT_UNAUTHENTICATED,
         EXIT_FORBIDDEN,
         EXIT_NOT_FOUND,
+        EXIT_CONFLICT,
     ]
 
-    assert numbers == [0, 1, 2, 3, 4, 5]
-    assert len(set(numbers)) == 6
+    assert numbers == [0, 1, 2, 3, 4, 5, 6]
+    assert len(set(numbers)) == 7
 
 
 # ---------------------------------------------------------- the named-code table
@@ -96,13 +109,18 @@ def test_the_table_is_add_only_not_replace_only() -> None:
 
 
 def test_no_row_maps_outside_the_published_range() -> None:
-    """A new row still has to name one of the six meanings. `7` is not a meaning anybody has.
+    """A row still has to name one of the *published* meanings. `8` is not a meaning anybody has.
 
     Both tables, because KAN-718 established that ``EXIT_FOR_STATUS`` grows too — a row added there
-    is a status acquiring one of the six published meanings, never a seventh being invented.
+    is a status acquiring a published meaning, never a number invented at the table.
+
+    KAN-724 widened this set to include `6`, and that is the one edit here that is not free: a new
+    number is published by `failures.py` naming it and by ADR 0005 §contract 4's table carrying it,
+    so widening this literal is the second half of that and belongs in the same diff as the first.
+    A row pointing at `7` is still red, because `7` names nothing.
     """
-    assert set(EXIT_FOR_CODE.values()) <= {0, 1, 2, 3, 4, 5}
-    assert set(EXIT_FOR_STATUS.values()) <= {0, 1, 2, 3, 4, 5}
+    assert set(EXIT_FOR_CODE.values()) <= {0, 1, 2, 3, 4, 5, 6}
+    assert set(EXIT_FOR_STATUS.values()) <= {0, 1, 2, 3, 4, 5, 6}
 
 
 def test_the_table_cannot_be_mutated_at_runtime() -> None:
@@ -137,12 +155,14 @@ def test_the_four_status_rows_map_to_their_documented_numbers() -> None:
     assert EXIT_FOR_STATUS[401] == 3
     assert EXIT_FOR_STATUS[403] == 4
     assert EXIT_FOR_STATUS[404] == 5
+    assert EXIT_FOR_STATUS[409] == 6
 
 
 def test_the_status_table_is_add_only_too() -> None:
     """A superset, for the same reason ``EXIT_FOR_CODE``'s is one: KAN-718 adds a row and reddens
-    nothing, while moving `404` off `5` reddens exactly the row that moved."""
-    assert {400: 2, 401: 3, 403: 4, 404: 5}.items() <= dict(EXIT_FOR_STATUS).items()
+    nothing, while moving `404` off `5` reddens exactly the row that moved. KAN-724's `409` is in
+    the literal below now, so it is pinned as tightly as the four rows above it."""
+    assert {400: 2, 401: 3, 403: 4, 404: 5, 409: 6}.items() <= dict(EXIT_FOR_STATUS).items()
 
 
 @pytest.mark.parametrize(
@@ -155,6 +175,8 @@ def test_the_status_table_is_add_only_too() -> None:
         (403, "note_forbidden", 4),
         (404, "note_not_found", 5),
         (404, "not_found", 5),
+        (409, "note_conflict", 6),
+        (409, "a_409_code_this_package_has_never_heard_of", 6),
     ],
 )
 def test_a_refusal_is_keyed_on_its_status_not_on_the_apis_code_string(
@@ -168,15 +190,18 @@ def test_a_refusal_is_keyed_on_its_status_not_on_the_apis_code_string(
     assert exit_code_for(failure) == expected
 
 
-@pytest.mark.parametrize("status", [409, 422, 500, 503])
+@pytest.mark.parametrize("status", [422, 500, 503])
 def test_a_refusal_with_no_row_is_runtime_not_usage(status: int) -> None:
     """`1`, not `2`. A failure the table has no row for is not evidence that argv was wrong, and
     reporting "usage" for a server-side `422` sends a caller to re-read the manual over a refusal
     that had nothing to do with what they typed.
 
-    `400` used to be in this list and is now a row of its own (KAN-718). The rule it was proving is
-    untouched: the default is still `1`, and `400` left the list by *acquiring a meaning*, not by
-    the default being widened to cover statuses nobody has decided about.
+    `400` used to be in this list and is now a row of its own (KAN-718); `409` left it the same way
+    with KAN-724. The rule they were proving is untouched: the default is still `1`, and both left
+    by *acquiring a meaning*, not by the default being widened to cover statuses nobody decided
+    about. `422` in particular stays here on purpose — a body the API validated and rejected has no
+    action a number could name that its code string does not already, which is the test `409` passed
+    and it does not.
     """
     failure = ApiError(status, {"error": {"code": "something_new", "message": "no"}})
 
@@ -219,6 +244,7 @@ def test_a_malformed_ref_is_the_callers_error_not_a_runtime_failure() -> None:
         (ApiError(401, {"error": {"code": "invalid_token", "message": "no"}}), 3),
         (ApiError(403, {"error": {"code": "note_forbidden", "message": "no"}}), 4),
         (ApiError(404, {"error": {"code": "note_not_found", "message": "no"}}), 5),
+        (ApiError(409, {"error": {"code": "note_conflict", "message": "no"}}), 6),
     ],
 )
 def test_each_failure_class_reaches_its_number(failure: BaseException, expected: int) -> None:

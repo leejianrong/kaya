@@ -1,11 +1,14 @@
 """SLICES §V2a's failure classes, end to end, each asserting **stream, shape and exit code**.
 
     unknown flag (2) · invalid enum (2) · missing token (1) · 400 (2) · 404 (5) · 401 (3) · 403 (4)
+    · 409 (6)
 
-Seven, not the six SLICES planned. KAN-718 added the `400`: ADR 0008 makes a malformed ref a
+Eight, not the six SLICES planned. KAN-718 added the `400`: ADR 0008 makes a malformed ref a
 *designed* outcome of the central ref resolver, so `kaya note get '#NOTE-12'` is a refusal the CLI
 meets routinely, and it was reporting as exit `1` — "something went wrong on kaya's side" — for a
-mistake the caller made and can fix.
+mistake the caller made and can fix. KAN-724 added the `409` for the mirror-image reason: nobody
+made a mistake at all, and `1` was equally wrong because it told a script the *command* had failed
+when what had happened was that the note moved and a retry after a re-read would succeed.
 
 KAN-542 built the error contract with no verbs to produce it, so it could only prove these at the
 unit seam — `kaya-client/tests/test_error_contract.py` owns the shape and
@@ -30,9 +33,17 @@ import sys
 
 import httpx
 import pytest
-from conftest import NOTES
+from conftest import GROCERIES, NOTES
 
 from kaya_cli.__main__ import main
+
+PRECISE = "2026-08-09T11:02:33.123456+00:00"
+"""The `updated_at` `conftest.GROCERIES` carries, to the microsecond. ADR 0009 compares exactly."""
+
+EDIT = ["note", "edit", "NOTE-12", "--body", "mine", "--if-updated-at", PRECISE]
+"""The guarded write, spelled the way a caller spells it. The `409` is only reachable through a
+verb that *sends* a precondition, so the two rows below are the only ones in this table whose argv
+had to be the real command rather than any command that makes a request."""
 
 REFUSALS = [
     (404, "note_not_found", 5, ["note", "get", "NOTE-9999"]),
@@ -42,6 +53,8 @@ REFUSALS = [
     (401, "authentication_required", 3, ["note", "list"]),
     (400, "invalid_note_ref", 2, ["note", "get", "#NOTE-12"]),
     (400, "a_400_code_this_package_has_never_heard_of", 2, ["note", "get", "NOTE-12"]),
+    (409, "note_conflict", 6, EDIT),
+    (409, "a_409_code_this_package_has_never_heard_of", 6, EDIT),
 ]
 
 
@@ -95,6 +108,57 @@ def test_a_malformed_ref_reports_its_shape_stream_and_number(capsys, answering) 
         "not a note reference: '#NOTE-12'. Use NOTE-12, note-12 or 12.\t#NOTE-12\n"
     )
     assert captured.err == ""
+
+
+def test_a_stale_precondition_reports_its_shape_stream_and_number(capsys, answering) -> None:
+    """Class 8 (KAN-724), with the body `backend/app/api/concurrency.py` actually builds.
+
+    The number is the whole card, and it is the two notes that earn it. `6` and not `1`: the caller
+    typed nothing wrong and kaya did not fail — the precondition was *correct when it was read* — so
+    the action is to re-read, merge ``attempted`` against ``stored`` and retry, and that action is
+    unreachable from a number a script must interpret as "the command failed". Not `2` either, which
+    would send the caller back to their own command line over a race they could not have avoided.
+
+    Note the `arg` slot: **empty**, and correctly so. Contract 3's fourth column is the first
+    *scalar* extra a refusal carries, and this refusal's extras are two objects, so there is nothing
+    scalar to put there — the objects reach stdout under a structured format, where a caller
+    diffs them. Four fields regardless: fixed arity does not depend on having something to say in
+    every one.
+    """
+    answering(
+        409,
+        {
+            "error": {
+                "code": "note_conflict",
+                "message": "NOTE-12 has changed since you read it. Nothing was written.",
+                "attempted": {**GROCERIES, "body": "mine"},
+                "stored": {**GROCERIES, "body": "theirs"},
+            }
+        },
+    )
+
+    result = main(EDIT)
+    captured = capsys.readouterr()
+
+    assert result == 6
+    assert captured.out == (
+        "error\tnote_conflict\tNOTE-12 has changed since you read it. Nothing was written.\t\n"
+    )
+    assert captured.err == ""
+
+
+def test_a_conflict_and_a_missing_note_are_different_numbers(capsys, answering) -> None:
+    """`5` is "there is nothing to write to"; `6` is "there is, and it moved". A script's next move
+    differs completely — abandon against re-read-and-retry — and before KAN-724 the second one was
+    `1`, sharing a number with an unreachable API and a malformed config file."""
+    answering(404, {"error": {"code": "note_not_found", "message": "no such note"}})
+    missing = main(["note", "edit", "NOTE-9999", "--body", "mine", "--if-updated-at", PRECISE])
+
+    answering(409, {"error": {"code": "note_conflict", "message": "it moved"}})
+    conflicted = main(EDIT)
+
+    assert (missing, conflicted) == (5, 6)
+    assert capsys.readouterr().err == ""
 
 
 def test_a_malformed_ref_and_a_missing_note_are_different_numbers(capsys, answering) -> None:
