@@ -45,12 +45,19 @@ Three rules that are decisions rather than layout, each argued in the file that 
   Rendering markdown to HTML for preview *is* the SPA's job — that is presentation, not shaping.
 - **The token is `sessionStorage`, and the UI says `set` or `not set` and never a fragment.** It is a
   pandan PAT, so exfiltrating it hands over the kanban board too (ADR 0002), and KAN-554's preview
-  will render user markdown to HTML in this origin. `lib/auth.ts` has the full argument.
-- **Five runtime dependencies, and they are all CodeMirror.** `@codemirror/state`, `view`,
-  `commands`, `language` and `lang-markdown` (all MIT) are the **first** runtime dependencies this
-  project has ever taken; KAN-553 made that crossing with the bundle delta in its PR, as ADR 0001 §2
-  obliges. Everything else in `package.json` is still a devDependency. The next addition is a
-  decision of the same size, so measure it the same way (`npm run build`, then `gzip -9`).
+  now renders user markdown to HTML in this origin. `lib/auth.ts` has the full argument, and
+  `lib/markdown.ts` is the other half: it builds DOM nodes and never an HTML string, so there is no
+  `{@html}` anywhere in `src/` and `tests/no-html-injection.test.ts` asserts that over parsed ASTs.
+- **Seven runtime dependencies, and they are all CodeMirror or already inside it.**
+  `@codemirror/state`, `view`, `commands`, `language` and `lang-markdown` (all MIT) are the **first**
+  runtime dependencies this project has ever taken; KAN-553 made that crossing with the bundle delta
+  in its PR, as ADR 0001 §2 obliges. KAN-554 added `@lezer/markdown` and `@lezer/common`, and those
+  two are a **declaration rather than an addition**: `lang-markdown` already imports the markdown
+  parser from them to build `markdownLanguage`, so `package-lock.json` gained no package and the
+  bundle gained no byte (measured below). They are declared because importing a transitive dependency
+  directly is how a version constraint goes missing. Everything else in `package.json` is still a
+  devDependency, and the next addition that actually costs bytes is a decision of the same size as
+  KAN-553's — measure it the same way (`npm run build`, then `gzip -9`).
 
 ### Testing
 
@@ -197,12 +204,54 @@ the same tree, against `origin/main` at `82f867f`:
 | CSS raw | 4,769 B | 6,293 B | +1,524 B (+32.0%) |
 | CSS gzip -9 | 1,466 B | 1,737 B | +271 B (+18.5%) |
 
+KAN-554 then added the folder tree, the note list and live preview. Measured the same way, against
+`origin/main` at `8f0dc9c` (KAN-556's tip, which is also this branch's baseline once merged):
+
+| | before (KAN-556) | after (KAN-554) | delta |
+|---|---|---|---|
+| JS raw | 368,984 B | 381,926 B | **+12,942 B (+3.5%)** |
+| JS gzip -9 | 121,553 B | 125,862 B | **+4,309 B (+3.5%)** |
+| CSS raw | 6,293 B | 10,590 B | +4,297 B (+68.3%) |
+| CSS gzip -9 | 1,737 B | 2,421 B | +684 B (+39.4%) |
+
+Those are the figures **after** review, and the JS number went *down* by 376 B raw / 188 B gzip when
+`lib/livedoc.ts` was replaced by `EditorPane`'s `ondocument` prop: a published callback costs less than
+a `MutationObserver`, a `WeakMap` and a `StateEffect.appendConfig` attach. The better seam was also the
+cheaper one, which is not always how that goes and is worth writing down when it is.
+
+**The markdown parser is free, and that is measured rather than argued.** `lib/markdown.ts` walks
+`@lezer/markdown`'s syntax tree, which `@codemirror/lang-markdown` already imports to build
+`markdownLanguage` — the extension `EditorPane.svelte` mounts. Two proofs: `package-lock.json`'s diff
+adds **zero packages**, and a measurement build with the import deleted and the parse call stubbed out
+comes back **376,851 B raw / 124,331 B gzip -9** against **376,838 / 124,319** with it — thirteen bytes
+*larger*, i.e. noise from the stub. (Both measured pre-merge, against `82f867f`; the *difference* is
+what the claim rests on and it does not move.) What that reuse is worth, and what the alternatives cost (esbuild,
+minified, `gzip -9`):
+
+| Option | raw | gzip -9 | Note |
+|---|---|---|---|
+| `@lezer/markdown` reused | **0** | **0** | already shipped for the editor |
+| `@lezer/markdown`, were it not already there | 60,092 B | 19,913 B | what the reuse is worth |
+| `marked` alone | 42,796 B | 12,982 B | emits an HTML **string**; no sanitiser |
+| `marked` + `DOMPurify` | 72,171 B | 24,069 B | the honest comparison |
+| `markdown-it` + `DOMPurify` | 142,747 B | 59,002 B | |
+
+A sanitiser is not optional for any of the three, because each hands you HTML as a *string* built from
+note content. `lib/markdown.ts` returns a `DocumentFragment` instead — `createElement` with literal tag
+names, `createTextNode` for every byte of source — so there is no string to sanitise and no escaping
+function to get wrong. Cheaper *and* one fewer class of bug.
+
+So the whole JS delta is this repo's own code: the renderer, `lib/tree.ts`, two components,
+`EditorPane`'s `ondocument` seam and `svelte/reactivity`'s `SvelteSet`. CSS moves proportionally more again, for the same
+reason the banner's did — the preview needs a typographic stylesheet for markup Svelte did not create,
+so every rule in it is `:global` under a scoped `.rendered`.
+
 CSS moves proportionally more than JS because the banner is the first component with a real layout of
 its own (a two-column grid, two scrolling `<pre>`s, a highlight) and the baseline stylesheet is small —
 1.7 kB gzip is still less than 1.5% of what the page fetches. No new dependency: the comparison is
 about forty lines of stdlib string work, and CodeMirror is still the only runtime dependency.
 
-One JS chunk and one CSS file, so an editor page fetches **375,277 B raw / 123,290 B gzip -9** in
+One JS chunk and one CSS file, so an editor page fetches **392,516 B raw / 128,283 B gzip -9** in
 total and there is no second request hiding behind the entry number. CSS barely moves because CM6
 injects its own styles through `style-mod` at runtime — the editor's theme is JavaScript, which is
 also why it can read `app.css`'s tokens.

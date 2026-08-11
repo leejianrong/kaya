@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
+
   import { defaultKeymap, history, historyKeymap, isolateHistory } from '@codemirror/commands'
   import { markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown'
   import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
@@ -12,7 +14,50 @@
   import type { Note, NoteUpdate } from '../lib/types'
   import ConflictBanner from './ConflictBanner.svelte'
 
-  const { note, error }: { note: Note | null; error: string | null } = $props()
+  const {
+    note,
+    error,
+    ondocument,
+  }: {
+    note: Note | null
+    error: string | null
+    /**
+     * **The document seam: what the editor is showing right now, whenever that changes.**
+     *
+     * Named for the thing rather than for its first consumer. KAN-554's live preview is one reader;
+     * V5's wikilink pills and backlinks panel (KAN-567/568) need the same value, and none of them
+     * should have to reach for it. It publishes the **view's** `state.doc`, not the note's `body`,
+     * because the two differ the moment you type and every consumer wants what is on screen.
+     *
+     * Fired once per mounted note with the initial document, then on every `docChanged` transaction —
+     * including the ones this component dispatches itself (`syncDocument`, and KAN-556's
+     * `keepTheirs`), because from a reader's point of view those are the document changing.
+     *
+     * ## Two rules this seam must not break, and how it doesn't
+     *
+     * **It must not re-run the `$effect` below.** The callback is read through {@link untrack} in
+     * {@link publish}, so a parent that hands down a new closure per render — the ordinary case, since
+     * the parent's own state changes on every keystroke it receives — cannot make this component's
+     * mount effect a dependency of its own output. That matters most because `syncDocument` dispatches
+     * *from inside* that effect: without `untrack`, the prop would be read while the effect was
+     * collecting dependencies, and a per-keystroke effect re-run would be one closure identity away.
+     * `needsRemount` still takes no body parameter, so even a re-run could not remount.
+     *
+     * **It must not put a Svelte node in CM6's subtree** (PLAN §S9). It cannot: it hands a `string`
+     * out and takes nothing back, so a consumer renders into its own element or nowhere.
+     */
+    ondocument?: (document: string) => void
+  } = $props()
+
+  /**
+   * Hand the current document to {@link ondocument}, if anyone asked for it.
+   *
+   * `untrack` is the load-bearing word — see the prop's docstring. It is *reading the prop* that has
+   * to be untracked, not calling it, which is why the read is inside the callback rather than hoisted.
+   */
+  function publish(document: string): void {
+    untrack(() => ondocument)?.(document)
+  }
 
   /**
    * The element CodeMirror owns.
@@ -150,6 +195,10 @@
     conflict = null
     movedAgain = false
     resolution = null
+    // A newly built view has a document nobody has been told about — no transaction happened, so the
+    // update listener never fired. Read it off the view rather than from `incomingBody`, so the seam's
+    // one promise ("what the editor is showing") is true even if those two ever diverge.
+    publish(view.state.doc.toString())
   })
 
   /**
@@ -217,6 +266,9 @@
               // like any other, which is why that function sets its own two runes *after* the
               // dispatch rather than before it.
               resolution = null
+              // The document seam. `update.state.doc` and not the note's `body`: this is the value on
+              // screen, which is the only one a preview or a link panel can honestly render.
+              publish(update.state.doc.toString())
             }
           }),
           theme,

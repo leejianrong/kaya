@@ -1,6 +1,7 @@
 <script lang="ts">
   import EditorPane from './components/EditorPane.svelte'
   import Landing from './components/Landing.svelte'
+  import PreviewPane from './components/PreviewPane.svelte'
   import Sidebar from './components/Sidebar.svelte'
   import { ApiError } from './lib/api'
   import { clearToken, credentialState } from './lib/auth'
@@ -47,6 +48,41 @@
 
   /** The API's own words for why the last credential was refused. Shown by the landing state. */
   let rejected: string | null = $state(null)
+
+  /**
+   * Whether the preview is on the screen. KAN-554.
+   *
+   * **`EditorPane` is deliberately outside the `{#if}` this controls, and that placement is the whole
+   * of the toggle's correctness.** Inside it, the editor would be a *different component instance*
+   * every time the preview appeared or disappeared — `$effect` cleanup, `view.destroy()`, a fresh
+   * `EditorState` — so toggling the preview would throw away your unsaved edit and your undo history
+   * on a command that is about the pane beside it. `tests/preview.test.ts` types, toggles twice and
+   * asserts the same `EditorView` object is still there holding the same text.
+   */
+  let previewing = $state(true)
+
+  /**
+   * The document the editor is showing right now, out of `EditorPane`'s `ondocument` seam.
+   *
+   * **A rune of its own, deliberately not written back into `note`.** That separation is what keeps a
+   * keystroke from reaching the `$effect` that owns the `EditorView`: `note` is the editor's *input*,
+   * and only the fetch below and `discard()` ever assign it, so the identity guard and the
+   * `appliedBody` guard in `EditorPane.svelte` never see a content change they have to reason about.
+   * Writing the live document into `note.body` here is the plausible-looking mistake — it would not
+   * remount (`needsRemount` takes no body parameter, and it must keep taking none) but it would put a
+   * per-keystroke round trip through this file between CM6 and itself, with only the echo guard
+   * standing between that and PLAN §Open risks' update loop.
+   *
+   * `publishDocument` is a **named function declaration** rather than an inline arrow, so its identity
+   * is stable across every update this component makes. `EditorPane` reads the prop through `untrack`
+   * and therefore does not depend on that; handing a component a fresh closure per keystroke is still
+   * a bad habit whether or not the callee defends against it.
+   */
+  let liveDocument = $state('')
+
+  function publishDocument(document: string): void {
+    liveDocument = document
+  }
 
   /**
    * `set` or `not set`, and this file does not get to spell either word.
@@ -170,6 +206,17 @@
   <header class="topbar">
     <a class="brand" href="/" onclick={(event) => interceptClick(event, '/')}>kaya</a>
     <span class="tagline">markdown notes, API-first</span>
+    {#if authed}
+      <button
+        class="toggle"
+        class:on={previewing}
+        aria-pressed={previewing}
+        onclick={() => (previewing = !previewing)}
+        data-testid="toggle-preview"
+      >
+        Preview
+      </button>
+    {/if}
     <!--
       `set` or `not set`, and never a fragment. `kaya config show` is the reference: pandan printed
       `set (…c_DE)` and those four characters are a contiguous piece of a live credential in a
@@ -192,7 +239,23 @@
           Nothing lives at <code>{route.path}</code>. Pick a note from the sidebar.
         </p>
       {:else}
-        <EditorPane {note} error={failure === '' ? null : failure} />
+        <!--
+          The editor and its preview, side by side. `EditorPane` is **outside** the `{#if}` below on
+          purpose (see `previewing`), and the preview is its **sibling** rather than anything nested in
+          it — PLAN §S9: Svelte never renders inside CM6's subtree. The document travels from one to
+          the other through `ondocument` and `liveDocument`, which is a published prop rather than a
+          reach into the editor's internals; see `liveDocument` on why it is not `note.body`.
+        -->
+        <div class="split" class:solo={!previewing}>
+          <EditorPane
+            {note}
+            error={failure === '' ? null : failure}
+            ondocument={publishDocument}
+          />
+          {#if previewing}
+            <PreviewPane {note} source={liveDocument} />
+          {/if}
+        </div>
       {/if}
     </main>
   {:else}
@@ -261,6 +324,44 @@
     grid-area: main;
     min-width: 0;
     overflow-y: auto;
+  }
+
+  .split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    height: 100%;
+  }
+
+  /* `minmax(0, …)` on both tracks, not `1fr 1fr`: a `1fr` track has an `auto` minimum, so one long
+     unbroken line in a fenced code block would widen the editor and push the preview off the pane. */
+  .split.solo {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Under about a laptop's width two columns are two cramped columns. Stacking keeps both usable, and
+     the editor stays first so the thing you type in is the thing you see. */
+  @media (max-width: 60rem) {
+    .split {
+      grid-template-columns: minmax(0, 1fr);
+      height: auto;
+    }
+  }
+
+  .toggle {
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--edge);
+    border-radius: 0.3rem;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.75rem;
+  }
+
+  .toggle.on {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--edge));
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent);
   }
 
   .clear {
