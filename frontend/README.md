@@ -10,8 +10,67 @@ npm run lint     # eslint + svelte-check
 npm test         # vitest, once
 ```
 
-Shell only for now: KAN-531 gets the toolchain and the dev proxy working. The editor
-(CodeMirror 6), the folder tree and the backlinks panel arrive in V3.
+KAN-531 got the toolchain and the dev proxy working; KAN-552 added the app skeleton the rest of V3
+is built inside, KAN-553 put CodeMirror 6 in it, KAN-555 added the way in and KAN-556 the conflict
+banner. What is here is a browsable three-region app with a working markdown editor that saves under
+ADR 0009's precondition and offers keep mine / keep theirs / side by side when it is refused; what is
+not is a live preview or a folder tree (KAN-554).
+
+## The layout, and who replaces what
+
+Each remaining V3 card replaces **one file**, which is the whole reason the layout is written down:
+
+```
+src/
+  App.svelte                 the shell: layout regions, the route, the two reads they need
+  app.css                    design tokens (--ink, --paper, --muted, --edge, --accent, --sans, --mono)
+  lib/api.ts                 apiPath + apiRequest — the one place a request happens
+  lib/auth.ts                the credential seam: the only module that knows what a bearer is
+  lib/editor.ts              the editor's two guards + ADR 0009's two versions, as pure functions
+  lib/notes.ts               the five note calls
+  lib/router.ts              / and /notes/:ref, hand-written, no dependency
+  lib/types.ts               the wire shapes, mirroring backend/app/api/schemas.py
+  lib/conflict.ts            ADR 0009's resolution rule + the side-by-side comparison (KAN-556)
+  components/EditorPane.svelte CodeMirror 6, mounted once per note (KAN-553); owns the write path
+  components/ConflictBanner.svelte keep mine / keep theirs / side by side (KAN-556)
+  components/Landing.svelte    the no-credential state and the one-time PAT paste (KAN-555)
+  components/Sidebar.svelte    → KAN-554 (folder tree, real list, preview)
+```
+
+Three rules that are decisions rather than layout, each argued in the file that holds it:
+
+- **No shaping in the SPA.** No `--fields`-style projection, no truncation hint, no `{"count": n}`.
+  The API returns complete records to a browser on purpose (ADR 0004 §Decision); those three are
+  agent ergonomics living in `kaya-client`, and a copy here is the bug ADR 0004 exists to prevent.
+  Rendering markdown to HTML for preview *is* the SPA's job — that is presentation, not shaping.
+- **The token is `sessionStorage`, and the UI says `set` or `not set` and never a fragment.** It is a
+  pandan PAT, so exfiltrating it hands over the kanban board too (ADR 0002), and KAN-554's preview
+  now renders user markdown to HTML in this origin. `lib/auth.ts` has the full argument, and
+  `lib/markdown.ts` is the other half: it builds DOM nodes and never an HTML string, so there is no
+  `{@html}` anywhere in `src/` and `tests/no-html-injection.test.ts` asserts that over parsed ASTs.
+- **Seven runtime dependencies, and they are all CodeMirror or already inside it.**
+  `@codemirror/state`, `view`, `commands`, `language` and `lang-markdown` (all MIT) are the **first**
+  runtime dependencies this project has ever taken; KAN-553 made that crossing with the bundle delta
+  in its PR, as ADR 0001 §2 obliges. KAN-554 added `@lezer/markdown` and `@lezer/common`, and those
+  two are a **declaration rather than an addition**: `lang-markdown` already imports the markdown
+  parser from them to build `markdownLanguage`, so `package-lock.json` gained no package and the
+  bundle gained no byte (measured below). They are declared because importing a transitive dependency
+  directly is how a version constraint goes missing. Everything else in `package.json` is still a
+  devDependency, and the next addition that actually costs bytes is a decision of the same size as
+  KAN-553's — measure it the same way (`npm run build`, then `gzip -9`).
+
+### Testing
+
+`vitest`, with `node` as the default environment. A test that needs a DOM asks for one per file:
+
+```ts
+// @vitest-environment jsdom
+```
+
+Component tests use Svelte's own `mount` / `unmount` / `flushSync` — there is no testing library, on
+the same "each dependency is a decision" grounds as the rest. `tests/dev-proxy.test.ts` imports
+`vite.config.ts` and stays in `node`, because a config module evaluated inside a fake DOM is one
+whose environment checks can lie.
 
 ## The proxy, and why the SPA never writes an absolute URL
 
@@ -35,9 +94,170 @@ KAYA_SPA_PORT=5273 KAYA_BACKEND_ORIGIN=http://localhost:8001 npm run dev
 `strictPort` is on, so an occupied port is an error rather than a silent move to 5174 that leaves
 your browser pointed at whatever else is on 5173.
 
-## When CodeMirror lands
+## CodeMirror, and the two guards that are the whole point
 
-CodeMirror owns its DOM subtree. Mount it once in an `$effect` against an element ref, put changes
-in as transactions, take them out through an update listener, and never render Svelte inside that
-subtree. A rune bound naively to the document and written back creates an update loop — the
-write-back needs a guard comparing against the editor's current document (ADR 0001 §2).
+CodeMirror owns its DOM subtree: `<div class="editor-host">` in `EditorPane.svelte` is Svelte's, and
+**everything inside it is CM6's**. Nothing in the markup may put a node in there — no `{#if}`, no
+interpolated text, not one word — because from that moment CM6's transactions and Svelte's rerenders
+are editing one subtree. `tests/editor-container.test.ts` parses the component and asserts the
+container has zero template children; `tests/shell.test.ts` asserts over `childNodes` that every node
+in it was made by the `$effect`. Even the "No note open." zero state is CM6's own `placeholder()`
+extension rather than a Svelte node, which is why the container needs no children to say it.
+
+Two guards keep the rune binding from looping, they guard **opposite directions**, and they are not
+interchangeable. Both live in `lib/editor.ts` as pure predicates so they can be tested in `node`:
+
+- **The identity guard** (`needsRemount`), on the way *in*. Reading the `note` prop registers it, so a
+  parent handing down a new object per keystroke re-runs the effect **whichever field you read** —
+  `note.ref` and `note.body` are the same signal. So "depend on identity" means *compare* the incoming
+  `note.ref` against the ref the view was built for and return early when they match. A new document
+  for the same note goes in as a transaction; only a different ref rebuilds.
+- **The echo guard** (`needsDispatch`, applied by `syncDocument`), on the way *back in*. CM6's
+  `updateListener` fires for every transaction including our own, so
+  `updateListener → set rune → effect → dispatch → updateListener` is a live cycle unless the incoming
+  value is compared against `view.state.doc.toString()` first. Un-guarded, this is not subtle: in
+  jsdom it recurses to `RangeError: Maximum call stack size exceeded`.
+
+There is a third check beside them, and it is bookkeeping rather than a guard: the incoming document is
+only offered to the echo guard when the **prop** moved (`appliedBody`). The two catch disjoint cases. A
+parent re-rendering with a new object whose content is unchanged, while you are typing, produces a body
+that differs from the editor's document — so the echo guard would let it through and your edit would
+vanish on a re-render that changed nothing.
+
+One consequence worth knowing before you edit the effect: **the teardown is not in that effect's
+cleanup.** Svelte runs an effect's cleanup before every re-run, and the re-run is unavoidable, so a
+`return () => view.destroy()` there would destroy the view on exactly the content change the identity
+guard exists to survive. The per-note destroy sits in the effect body beside the construction it
+replaces; the per-component destroy is a second effect that reads nothing.
+
+### Saving
+
+`Save` (or `Mod-s`) `PATCH`es the body with `if_updated_at` set to the `updated_at` this edit was based
+on — ADR 0009's precondition, carried as an **opaque string** and never near a `Date`, because the
+backend's comparison is exact to the microsecond. The precondition is never *fetched*: it comes from
+the note that was opened and then from each save's own response. Fetching it would look safer and
+would disable the guarantee.
+
+A `409` is shown with both timestamps and both whole notes held in state; `conflictVersions()` reads
+`attempted` / `stored` out of `ApiError.details`.
+
+### The conflict banner (KAN-556)
+
+`ConflictBanner.svelte` is markup and two callbacks. Everything that can be wrong lives elsewhere on
+purpose:
+
+- **`lib/conflict.ts`** holds `keepMinePatch()` — `body` from `attempted`, `if_updated_at` from
+  **`stored`**, both verbatim. That crossing *is* the resolution mechanism, and it is a pure function
+  because it is the second place in this SPA a precondition is built; `tests/conflict.test.ts` asserts
+  the stamp is not `new Date(stamp).toISOString()`, which would round `.881903` to `.881` and refuse
+  every correct write.
+- **`EditorPane.svelte`** owns the write path, so both buttons come back to it. "Keep mine" is one
+  more `PATCH` through the same function the Save button uses. "Keep theirs" makes **no request** —
+  the stored version already is what the server holds — and puts the stored body in through
+  `syncDocument` as a transaction carrying `isolateHistory.of('full')`, because the discarded text's
+  only copy is CM6's undo and without the isolation CM6 merges the discard into the typing group it
+  interrupted, so one undo would throw the user's own text away as well.
+- **The banner is a sibling of the editor container, never a child** (PLAN §S9). Both S9 guards cover
+  it: the source-level one would name `<ConflictBanner />` as a template child, and
+  `tests/conflict-banner.test.ts` asserts the rendered banner is outside the container with the live
+  view's DOM node unchanged across both resolutions.
+
+The side-by-side is **a bound, not a diff**. `splitOnChange()` trims the lines the two bodies share at
+each end and marks the region between them; the unmarked parts are byte-identical strings, so no
+difference can hide there, and it aligns nothing so it cannot mis-align anything. An LCS line diff
+would mark less and would be the first thing here that can be *wrong* about what changed while looking
+authoritative — ADR 0009's own objection to auto-merging prose, one step down.
+
+It costs **786 B raw / 260 B gzip -9** across both assets (JS 368,294 → 368,984 raw and 121,309 →
+121,553 gzip; CSS 6,197 → 6,293 and 1,721 → 1,737), measured by building with the three segments
+collapsed back to one — `{split.mine.before}<mark>…` → `{versions.attempted.body}`, `splitOnChange`
+deleted — and diffing the assets. That is 0.2% of the entry chunk, and it is the whole of the
+"highlighting" this card does. Both bodies render whole and byte for byte either way, because the three
+segments are slices of the original.
+
+### The bundle, which is the number ADR 0001 §2 asked for
+
+Re-measurable in two commands, and worth re-measuring whenever a CodeMirror package is added:
+
+```bash
+npm run build
+for f in dist/assets/*; do echo "$f $(stat -c%s "$f") $(gzip -9 -c "$f" | wc -c)"; done
+```
+
+KAN-553, measured that way (`vite build` reports gzip at a lower level, so it says `118.98 kB` where
+`gzip -9` says `117,173 B` — quote whichever, but say which):
+
+| | before (KAN-552) | after (KAN-553) | delta |
+|---|---|---|---|
+| JS raw | 42,911 B | 356,640 B | **+313,729 B (+731%)** |
+| JS gzip -9 | 16,667 B | 117,173 B | **+100,506 B (+603%)** |
+| CSS raw | 3,212 B | 3,611 B | +399 B (+12.4%) |
+| CSS gzip -9 | 1,175 B | 1,249 B | +74 B (+6.3%) |
+
+KAN-555 and KAN-556 then added the landing state and the conflict banner. Measured the same way, on
+the same tree, against `origin/main` at `82f867f`:
+
+| | before (KAN-555) | after (KAN-556) | delta |
+|---|---|---|---|
+| JS raw | 363,513 B | 368,984 B | **+5,471 B (+1.5%)** |
+| JS gzip -9 | 119,796 B | 121,553 B | **+1,757 B (+1.5%)** |
+| CSS raw | 4,769 B | 6,293 B | +1,524 B (+32.0%) |
+| CSS gzip -9 | 1,466 B | 1,737 B | +271 B (+18.5%) |
+
+KAN-554 then added the folder tree, the note list and live preview. Measured the same way, against
+`origin/main` at `8f0dc9c` (KAN-556's tip, which is also this branch's baseline once merged):
+
+| | before (KAN-556) | after (KAN-554) | delta |
+|---|---|---|---|
+| JS raw | 368,984 B | 381,926 B | **+12,942 B (+3.5%)** |
+| JS gzip -9 | 121,553 B | 125,862 B | **+4,309 B (+3.5%)** |
+| CSS raw | 6,293 B | 10,590 B | +4,297 B (+68.3%) |
+| CSS gzip -9 | 1,737 B | 2,421 B | +684 B (+39.4%) |
+
+Those are the figures **after** review, and the JS number went *down* by 376 B raw / 188 B gzip when
+`lib/livedoc.ts` was replaced by `EditorPane`'s `ondocument` prop: a published callback costs less than
+a `MutationObserver`, a `WeakMap` and a `StateEffect.appendConfig` attach. The better seam was also the
+cheaper one, which is not always how that goes and is worth writing down when it is.
+
+**The markdown parser is free, and that is measured rather than argued.** `lib/markdown.ts` walks
+`@lezer/markdown`'s syntax tree, which `@codemirror/lang-markdown` already imports to build
+`markdownLanguage` — the extension `EditorPane.svelte` mounts. Two proofs: `package-lock.json`'s diff
+adds **zero packages**, and a measurement build with the import deleted and the parse call stubbed out
+comes back **376,851 B raw / 124,331 B gzip -9** against **376,838 / 124,319** with it — thirteen bytes
+*larger*, i.e. noise from the stub. (Both measured pre-merge, against `82f867f`; the *difference* is
+what the claim rests on and it does not move.) What that reuse is worth, and what the alternatives cost (esbuild,
+minified, `gzip -9`):
+
+| Option | raw | gzip -9 | Note |
+|---|---|---|---|
+| `@lezer/markdown` reused | **0** | **0** | already shipped for the editor |
+| `@lezer/markdown`, were it not already there | 60,092 B | 19,913 B | what the reuse is worth |
+| `marked` alone | 42,796 B | 12,982 B | emits an HTML **string**; no sanitiser |
+| `marked` + `DOMPurify` | 72,171 B | 24,069 B | the honest comparison |
+| `markdown-it` + `DOMPurify` | 142,747 B | 59,002 B | |
+
+A sanitiser is not optional for any of the three, because each hands you HTML as a *string* built from
+note content. `lib/markdown.ts` returns a `DocumentFragment` instead — `createElement` with literal tag
+names, `createTextNode` for every byte of source — so there is no string to sanitise and no escaping
+function to get wrong. Cheaper *and* one fewer class of bug.
+
+So the whole JS delta is this repo's own code: the renderer, `lib/tree.ts`, two components,
+`EditorPane`'s `ondocument` seam and `svelte/reactivity`'s `SvelteSet`. CSS moves proportionally more again, for the same
+reason the banner's did — the preview needs a typographic stylesheet for markup Svelte did not create,
+so every rule in it is `:global` under a scoped `.rendered`.
+
+CSS moves proportionally more than JS because the banner is the first component with a real layout of
+its own (a two-column grid, two scrolling `<pre>`s, a highlight) and the baseline stylesheet is small —
+1.7 kB gzip is still less than 1.5% of what the page fetches. No new dependency: the comparison is
+about forty lines of stdlib string work, and CodeMirror is still the only runtime dependency.
+
+One JS chunk and one CSS file, so an editor page fetches **392,516 B raw / 128,283 B gzip -9** in
+total and there is no second request hiding behind the entry number. CSS barely moves because CM6
+injects its own styles through `style-mod` at runtime — the editor's theme is JavaScript, which is
+also why it can read `app.css`'s tokens.
+
+`markdownLanguage.extension` is installed rather than `markdown()`, and that is where 187,820 B raw /
+69,497 B gzip went **un**spent: `markdown()` wires `@codemirror/lang-html` in for raw-HTML blocks, and
+that drags `lang-javascript` and `lang-css` behind it. The component's comment carries the measurement.
+The remaining cost is CodeMirror's core (state + view + commands ≈ 268 kB raw on its own) and the
+markdown grammar, and there is no version of a real editor that does not pay it.
