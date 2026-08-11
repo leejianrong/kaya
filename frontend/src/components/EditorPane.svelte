@@ -255,10 +255,14 @@
    * right place for KAN-767's `import()`. One run means one load, which is the property the mount
    * effect above leans on when it treats `kit` as a value that only ever arrives.
    *
-   * The two live together because they share `live`, and that flag is the only cancellation this
-   * design needs: a component unmounted while the chunk is in flight must not come back and assign a
-   * rune afterwards. Splitting them into two effects would put the flag and the destroy in different
-   * closures, and the next person would have to notice they are the same lifetime.
+   * The two live together because they share `live`, which stops a component unmounted mid-flight from
+   * coming back and assigning a rune afterwards. **Measured honesty about that flag:** deleting it does
+   * *not* redden `tests/editor-lazy-mount.test.ts`, because Svelte 5 does not re-run a destroyed
+   * component's effects — the write lands on a rune nobody reads and no view is built either way. It is
+   * kept because it is two lines, because it means the design does not *depend* on that detail of
+   * Svelte's scheduler, and because the version without it reads as though nobody considered the case.
+   * But what actually holds the property is the shape above, and the test pins the outcome rather than
+   * the flag: do not cite `live` as the guard.
    *
    * SLICES §V3 asks for "mounts once per note and tears down cleanly on navigation (no leaked
    * listeners)". Navigation is the effect above; this is the pane going away.

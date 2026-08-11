@@ -27,6 +27,20 @@
  * anywhere; `lib/editor.ts` legitimately has two, which is what lets its guards be tested in vitest's
  * `node` environment where `@codemirror/view`'s module-level browser sniffing would not load.
  *
+ * **This is a deliberate over-approximation, and the measurement is worth recording** — the guard was
+ * proven by mutation and the first attempt did *not* cost a byte. Every `@codemirror/*` package
+ * declares `sideEffects: false`, so an import whose binding is never used is tree-shaken away:
+ * `import { EditorView } from '@codemirror/view'` plus a bare `void EditorView` in `lib/tree.ts`
+ * reddens this file while the built landing page stays at 50,002 B gzip. Adding one *use* of the
+ * binding inside a function the app calls takes the entry chunk from 134,770 to **337,908 B raw**
+ * and 47,581 to **112,256 B gzip** — the whole editor back where it started.
+ *
+ * So the guard is *stricter* than the bundler, and that is the right direction: it is red on the
+ * import that costs 65 kB and also on the dead one that costs nothing, and a dead CodeMirror import is
+ * not something to leave in a file anyway. Do not "fix" the false positive by teaching this file
+ * reachability analysis — the CLAUDE.md failure mode to fear is a check that stays *green* on the
+ * defect (`strings | grep GLIBC_`), and this one has no such state.
+ *
  * If this goes red, the fix is not an allow-list entry. Put the value behind
  * `lib/codemirror.ts` and reach it through the loader, or — if the design genuinely changed —
  * re-measure the bundle, update `frontend/README.md`'s table, and replace this file with the guard

@@ -22,10 +22,19 @@
  * cancel.
  *
  * The tempting alternative is to `await import()` at the top of the mount effect. It reads better and
- * it is wrong: Svelte runs an effect's cleanup **before every re-run**, so a cleanup that fires while
- * run A is still awaiting sees `view === undefined`, destroys nothing, and then A resolves and builds
- * into a host run B is also building into. `tests/editor-lazy-mount.test.ts` was written by making
- * that change and watching the first test below go red — see the mutation log in KAN-767's PR.
+ * it is wrong, and **which of the tests below catches it was measured rather than assumed** — worth
+ * writing down, because the answer is not the one the reasoning above suggests.
+ *
+ * Building the naive version and running this file: the **orphan** test goes red, decisively — an
+ * `EditorView` holding `first note body` sits in the detached container after unmount, with a live
+ * update listener nothing will ever destroy. The two navigation tests stay **green**, and the reason is
+ * specific: in the naive form every run awaits the *same* pending module promise, so the runs resolve
+ * in queue order and each one's `view?.destroy()` in the effect body happens to tidy up the one before
+ * it. Two views in one container needs a `view` captured across the `await`, which that shape does not
+ * do. So the navigation tests are not the discriminator here; they are the coverage for a state PLAN
+ * §S9's other guards never see (an unsettled container), and their positive control — the container
+ * being empty before the chunk lands — did catch a Svelte interpolation put inside `.editor-host`
+ * during this card's mutation run.
  */
 
 import { EditorView } from '@codemirror/view'
