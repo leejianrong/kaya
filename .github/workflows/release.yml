@@ -208,7 +208,7 @@ jobs:
       # bytes a downloader actually gets.
       - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: kaya-linux-x86_64
           path: dist
