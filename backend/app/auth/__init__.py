@@ -24,6 +24,7 @@ from app.auth.authorization import (
     authorize_note,
     note_addressed_as_id,
     note_addressed_as_ref,
+    notes_matching,
     notes_owned_by,
 )
 from app.auth.cache import PrincipalCache, digest
@@ -57,6 +58,7 @@ __all__ = [
     "get_resolver",
     "note_addressed_as_id",
     "note_addressed_as_ref",
+    "notes_matching",
     "notes_owned_by",
     "principal_from_bearer",
     "reset_auth",

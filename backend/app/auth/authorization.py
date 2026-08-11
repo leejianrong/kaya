@@ -15,7 +15,9 @@ statement, so another user's note is never loaded in the first place. SLICES §V
 scoped query", and a post-filter over rows Postgres already returned reaches the same JSON by
 accident rather than by construction — it would still page wrongly (ten rows fetched, three of them
 someone else's, seven returned for a page of ten) and it would still have pulled the prose across
-the wire.
+the wire. ``notes_matching`` (KAN-558) is the first thing to take that composition up — a search is
+where an unscoped list query looks most convincing, and it is in this module rather than in
+``app/api/`` so that "another user's matching note never appears" is that same ``WHERE``.
 
 ``note_addressed_as_ref`` / ``note_addressed_as_id`` decide about **neither**. They are the two
 unscoped single-row fetches ADR 0008 needs, one per spelling of a note's name, and they are as
@@ -37,7 +39,7 @@ the whole HTTP contract below is then assertable by the no-infrastructure test l
 """
 
 from fastapi import HTTPException, status
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 
 from app.auth.principal import Principal
 from app.auth.resolver import error_body
@@ -118,3 +120,75 @@ def notes_owned_by(principal: Principal) -> Select[tuple[Note]]:
     fails the suite rather than depending on a reviewer noticing.
     """
     return select(Note).where(Note.owner_id == principal.id)
+
+
+SEARCH_CONFIG = "english"
+"""The text-search configuration the *query* is parsed with, and it has to be the one the **stored**
+vector was built with (``app/models/note.py``'s ``SEARCH_VECTOR_EXPRESSION``, migration ``0002``).
+
+A mismatch is the quietest failure in this whole card: parse the query as ``simple`` against an
+``english`` vector and every exact word still matches, so a search box looks like it works, while
+stemming is silently gone — ``runbooks`` stops finding ``runbook`` and nothing raises. So the two
+literals are held together by ``tests/unit/test_note_search_query.py``, which asserts this string
+appears in the model's expression rather than trusting two files to be edited together.
+
+Left as a **bound parameter** rather than an inlined ``'english'`` literal, which was measured
+rather than assumed: ``regconfig`` has no implicit cast from ``text``, so the obvious worry is that
+the driver sends a typed string and Postgres cannot resolve the overload. Against Postgres 17 with
+psycopg 3, both spellings return ``'foo' & 'bar'`` for ``foo bar`` (KAN-558's experiment). It is a
+constant in this file either way, so nothing user-supplied is ever near the position."""
+
+
+def notes_matching(principal: Principal, term: str) -> Select[tuple[Note]]:
+    """The caller's notes matching ``term``, best match first, in a **deterministic** order.
+
+    KAN-558, SLICES §V4. Composed onto ``notes_owned_by``, so "another user's matching note must
+    never appear" is the ``WHERE owner_id = :caller`` that is already on the statement — a clause
+    cannot be composed away, and there is no point at which a row of somebody else's prose is
+    fetched and then dropped.
+
+    **``websearch_to_tsquery`` rather than the other two, because the input is a human's.** Measured
+    against Postgres 17 on this card: ``to_tsquery('english', '&|!()')`` and ``to_tsquery('english',
+    'foo &')`` both **raise** ``SyntaxError``, which reaches a caller as a `500` — a search box
+    cannot use a parser that fails on the characters people type. ``plainto_tsquery`` never raises
+    but AND-s bare words and nothing else, so ``"reading list"`` as a phrase and ``reading -list``
+    as an exclusion are both unsayable. ``websearch_to_tsquery`` raised on none of the eleven
+    hostile inputs tried (empty, whitespace, a stopword, ``&|!()``, ``foo &``, an unbalanced quote,
+    5,000 characters, ``%``/``_``, a quoted phrase, a negation) and supports the two grammars a
+    person expects. Where it has nothing to work with it returns the empty tsquery, and ``anything
+    @@ ''::tsquery`` is false — so a stopword-only or punctuation-only search is *zero notes* rather
+    than an error or, worse, the whole corpus.
+
+    **The term is a bound parameter, never rendered into SQL.** That is what makes ``&|!()``, ``%``,
+    ``_`` and a quote character inert: they reach Postgres as data, and the only thing that assigns
+    them meaning is the tsquery grammar. ``%`` and ``_`` in particular matter because a ``LIKE``
+    implementation of this feature would have made them wildcards, so a test pins that they are not
+    (``tests/unit/test_note_search_query.py``).
+
+    **``.bool_op("@@")`` rather than ``.match()``**, which the postgresql dialect renders as
+    ``plainto_tsquery`` with no way to reach the tsquery it built. This needs the *same* tsquery in
+    two places — the predicate and the rank — and building it once here is what keeps them from
+    drifting into a query that ranks by something other than what it filtered on.
+
+    **The tie-break is ``note.id``, and it is inside this expression on purpose.** ``ts_rank`` reads
+    the A/B weights out of the stored vector (KAN-557), so a title hit outranks a body hit for free
+    — but equal ranks are *common* rather than exotic: on kaya's own ten-note corpus,
+    ``plainto_tsquery('english','reading list')`` scores "A reading list" and "Reading list" at
+    0.9910 each. Without a second key Postgres may return those two in either order on identical
+    queries, which is exactly what SLICES §V4's "deterministic order" forbids. ``updated_at`` cannot
+    serve: ``now()`` is transaction start time (``app/models/note.py``), so two notes written in one
+    transaction share a stamp and the tie merely moves. ``id`` is unique, immutable and never reused
+    (ADR 0008), so it is the only column that can promise it. It sits in the same ``order_by`` as
+    the rank so nobody can add relevance ranking without the tie-break travelling with it.
+
+    ``DESC`` on the tie-break, where pandan's equivalent uses ascending ``id``: kaya's unfiltered
+    list is ``updated_at DESC, id DESC`` and pandan's is ``updated_at, id`` ascending, so copying
+    its *direction* rather than its *consistency* would leave this repository with two houses.
+    Newest first, at every level, in both orders.
+    """
+    tsquery = func.websearch_to_tsquery(SEARCH_CONFIG, term)
+    return (
+        notes_owned_by(principal)
+        .where(Note.search_vector.bool_op("@@")(tsquery))
+        .order_by(func.ts_rank(Note.search_vector, tsquery).desc(), Note.id.desc())
+    )
