@@ -29,7 +29,7 @@ origin: TLS on the CLI hop, kaya's own cold start, and the manifests on non-k3d 
 
 | Package | What's in it |
 |---|---|
-| `backend/` | The whole of V1: migration `0001`, `app/auth/` (principal resolver, `authorize_note`), `app/api/` (`/api/v1/notes` CRUD, the central ref resolver, ADR 0009's `409`), `app/spa.py`, `app/observability/`. Plus KAN-555's `app/api/meta.py`: `GET /api/v1/meta`, the **one unauthenticated route** under `/api/v1`, returning **one key** — `pandan_url` from `KAYA_PANDAN_URL`. Unauthenticated by necessity (its whole caller is a visitor with no token), and one key on purpose: `tests/unit/test_meta.py` fails on a second one, because a meta endpoint that accumulates keys is a config dump with a friendly name |
+| `backend/` | The whole of V1: migration `0001`, `app/auth/` (principal resolver, `authorize_note`), `app/api/` (`/api/v1/notes` CRUD, the central ref resolver, ADR 0009's `409`), `app/spa.py`, `app/observability/`. Plus KAN-555's `app/api/meta.py`: `GET /api/v1/meta`, the **one unauthenticated route** under `/api/v1`, returning **one key** — `pandan_url` from `KAYA_PANDAN_URL`. Unauthenticated by necessity (its whole caller is a visitor with no token), and one key on purpose: `tests/unit/test_meta.py` fails on a second one, because a meta endpoint that accumulates keys is a config dump with a friendly name. Plus KAN-557's migration `0002`: `note.search_vector`, a `tsvector` `GENERATED ALWAYS AS (...) STORED` over `title` + `body` with weights `A`/`B`, and `ix_note_search_vector` over it in GIN. Declared in `app/models/note.py` as `Computed(..., persisted=True)` and `deferred`, and **absent from `NoteRead`** — see §"Rules the code already enforces". Storage only; the `?q=` route is KAN-558 |
 | `kaya-client/` | KAN-540: `KayaClient` over httpx and the `render()` seam as four composable steps. KAN-551: the full CRUD set (`create_note`, `update_note`, `move_note`, `delete_note`) — `move_note` *is* `update_note` because ADR 0008 makes a move a `PATCH` to one column, and every ref-taking method shares one `_note_path` that percent-encodes the ref as a single segment. ADR 0009's `if_updated_at` is forwarded as an **opaque string**, so nothing here can lose a microsecond. Same card: the config *file* tier (JSON at `$XDG_CONFIG_HOME/kaya/config.json`, consulted per key after the environment) and the three `config` verbs as `Payload` builders — `settings_payload()`, `path_payload()`, `write_settings()`, which read-modify-writes so a hand-set `max_text_chars` survives a `config set --api-url`. `human`/`json`/`toon` user-facing, `data` adapter-only. KAN-548: `aggregates.py` is live — a collection gets `{"count": len(records)}` and an entity gets nothing, rendered as a blank-line-separated `2 notes` footer under `human` and as a `summary` key beside the envelope everywhere else, both out of the one mapping via `summary_line()`. KAN-547: `truncation.py` is live — `text_limit` cuts the fields `Payload.prose_fields` names and appends a hint carrying the **true** total **in-band**, so the total reaches `json`/`toon`/`data`; `0` disables, and `config.max_text_chars()` resolves `KAYA_MAX_TEXT_CHARS` (default 500, a non-number is a `UsageError`). KAN-546: `projection.py` is live — `fields` narrows `records` *and* `columns` uniformly for every format, via `Payload.narrowed_to()`, with the vocabulary read from `field_names()` before anything narrows. KAN-550: `hints.py` — ADR 0005 §contract 8's `help[]` templates, keyed on `(kind, noun)` and never on a verb name, placeholders left unfilled, and **human-only** (the reverse of KAN-547's hint, because a template is advice about the tool and a total is a fact about the payload). KAN-549: `overview.py` — the three banner lines a bare `kaya` prints, which take three `str`s and **no `Payload`** so they cannot format a result — plus `RECENT_NOTES` (5), `KayaClient.recent_notes()` and `Payload.limited_to()`, the rows-wise twin of `narrowed_to`. KAN-541: `toon.py`, a stdlib-only **encode-only** TOON encoder registered in `Format`, `_SERIALIZERS` and `_ERROR_SERIALIZERS`, plus `config.py` (PLAN §Config's `KAYA_API_URL`/`KAYA_TOKEN` and `open_client()`) and `MissingCredential`. KAN-543: `provenance.version_line()` and the `_build_stamp.COMMIT` a release rewrites. KAN-542: the failure half of the layer — `error_payload()` / `render_error()`, and a `code` on every exception class so a raise site names a meaning. KAN-716: `DEFAULT_TIMEOUT` split by phase (`DEFAULT_CONNECT_TIMEOUT` 5 s, `DEFAULT_READ_TIMEOUT` 40 s) so the client outlasts the backend's authentication budget |
 | `kaya-cli/` | The `kaya` console script, one entry point. KAN-541: `note list` and `note get <ref>` (`verbs.py`, a dispatch table), `--format {human,json,toon}` with `--json` as an alias and `--format` winning if both are given. KAN-551: the other seven verbs — four writes in `VERBS` and three `config` words in a second table, `LOCAL_VERBS`, because `config show` must answer with no credential at all. `parsing.resolve_body()` turns `--body`/`--body-file` into one string; there is **no `-`** for the standard input, so `tests/test_no_prompting.py` keeps proving ADR 0005 §contract 9 structurally. KAN-549: bare `kaya` is `verbs.BARE`, a row in the same dispatch table as every other verb, so `render` is still called in **exactly one place** in the package; the banner is `kaya_client.overview` joined on by `BLOCK_GAP`, and `executable_path()` — `argv[0]` resolved through `PATH`, or `sys.executable` when frozen — is this package's only new logic. KAN-547: `--full` on `output_flags()`, and `resolve_text_limit()` — a flag-beats-environment precedence and nothing else, since the number and the cut are both the client's. KAN-546: `--fields` on `output_flags()`, and `resolve_fields()` — one `split(",")`, which is the entire projection logic this package is allowed to contain. KAN-543: an argparse parser with `--version` and `--help` on it. KAN-542: that parser subclassed so it raises instead of exiting, plus `failures.py` (ADR 0005's exit table, and the only place a meaning becomes a number) and `parsing.py` (`usage:` on stderr *and* the structured row on stdout, from one event) |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
@@ -43,9 +43,11 @@ browsable app with a router, a typed API layer, a credential seam, a real landin
 that opens a note, edits it, saves it under ADR 0009's precondition and offers **keep mine / keep
 theirs / side by side** when that precondition fails, a **folder tree over the `path` column** beside
 the flat list, and a **live preview** that follows the document without the editor's `$effect`
-re-running — all driven against a real stack and a real PAT. After V3,
-V4/V5 are `?q=` search (KAN-558/559) and `/links` / `/backlinks` (KAN-566), neither of which exists
-at any layer, and V6 is the MCP server: `mcp/` holds ADR 0006's frozen tool-name tuple and no server
+re-running — all driven against a real stack and a real PAT. **V4 has started at the bottom**
+(KAN-557): `note.search_vector` is a stored generated `tsvector` over `title` + `body` with a GIN
+index, so full-text search has storage before it has a query. `?q=` (KAN-558) and `--q` + the search
+box (KAN-559) do not exist at any layer, and neither does `/links` / `/backlinks` (KAN-566, V5).
+V6 is the MCP server: `mcp/` holds ADR 0006's frozen tool-name tuple and no server
 and no tools, and every one of those tools is meant to call the `render()` seam V2a and V2b just
 finished. PLAN §Config's **third** tier, the nearest `.mcp.json`, is deliberately not built and
 arrives with V6: choosing which server entry in an MCP host's file is kaya's is a guess until there
@@ -125,6 +127,40 @@ one place, so a missing note is the same `404` byte for byte whichever spelling 
 `authorize_note` cannot answer `403` for someone else's note if the fetch never found it, which is
 why `note_addressed_as_ref` and `note_addressed_as_id` also live in `app/auth/authorization.py`. Put
 new queries in that module; never widen the allow-list.
+
+**Postgres maintains `note.search_vector`, and nothing else may** (KAN-557, migration `0002`,
+`app/models/note.py`). `GENERATED ALWAYS AS (setweight(to_tsvector('english', coalesce(title,'')),
+'A') || setweight(to_tsvector('english', coalesce(body,'')), 'B')) STORED` — recomputed inside every
+INSERT and every UPDATE touching a source column, so SLICES §V4's "no application-level reindex step"
+is structural rather than remembered, and `app/api/notes.py` neither mentions the column nor can.
+Four things about it the next person would otherwise get wrong. **The regconfig is a literal because
+it has to be**: bare `to_tsvector(text)` is STABLE, not IMMUTABLE, and Postgres refuses it in a stored
+generated column, so a per-note language is impossible *inside this mechanism* rather than merely
+unbuilt. **The weights are in already, and that was KAN-558's decision to inherit rather than make**:
+`ts_rank` reads them out of the stored vector, so weighting is a storage choice — KAN-558 owns only
+the tie-break (`note.id`, since equal ranks must order deterministically). **`path` is deliberately
+not in the vector**: ADR 0008 makes it mutable metadata, and matching a folder name would make it a
+search key. And **`coalesce` is a no-op today, kept because `tsvector || NULL` is `NULL`** — a later
+`DROP NOT NULL` on `body` would null the *whole* vector and the note would vanish from search, title
+and all. The measured surprise: `Computed` does **not** make SQLAlchemy drop an explicit write.
+Assigning the attribute on a persistent `Note` puts it in the UPDATE and Postgres answers
+`psycopg.errors.GeneratedAlways`, which is the better outcome — there is no layer here where
+maintaining the column by hand looks like it worked.
+
+**`search_vector` must never reach the wire, and that guard is a unit test on purpose** (KAN-557,
+`backend/tests/unit/test_note_payload_keys.py`). `NoteRead` is `from_attributes=True`, so a model
+column not leaking is a property of pydantic's explicitness rather than of a decision anybody here
+made — which is exactly the kind of thing that stops being true quietly. The payload's key list is
+pinned, in order, and a second test serializes a `Note` that is *carrying* a vector so the pin cannot
+pass for want of anything to leak. Three costs if it ever lands there: storage internals in a
+published contract, in a shape (`'runbook':1A 'step':2B`) nothing outside Postgres can act on;
+roughly the size of the note again on **every** read by **every** consumer, which is what ADR 0004's
+projection and truncation exist to stop paying; and `--fields search_vector` becoming a thing a user
+can type, because `kaya_client`'s `field_names()` builds its vocabulary from the keys the API
+returned. A third test pins the *difference* between the table and the payload (`owner_id`,
+`search_vector`), so the next column added to `note` has to be decided about rather than skipped. The
+column is also `deferred` in the model, which is a second, independent reason it stays out: every
+list read is `select(Note)`.
 
 **Never log a header, a request object, or anything built from a bearer** (Q41/Q42,
 `app/observability/`). The access line carries `ACCESS_FIELDS` and nothing else, and redaction sits
