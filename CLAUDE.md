@@ -147,6 +147,24 @@ Assigning the attribute on a persistent `Note` puts it in the UPDATE and Postgre
 `psycopg.errors.GeneratedAlways`, which is the better outcome — there is no layer here where
 maintaining the column by hand looks like it worked.
 
+**`alembic revision --autogenerate` does not compare a generated column's expression, so the second
+inherited trap only covers half of this one** (KAN-557,
+`backend/tests/unit/test_search_vector_declaration.py`). Both halves were watched. Delete the
+`search_vector` **column** from `app/models/note.py` and autogenerate emits `op.drop_index` +
+`op.drop_column` — the trap works as written. Delete only the `Computed(...)`, leaving the column
+declared, and autogenerate emits **`pass`**: Alembic diffs columns, types, nullability and indexes and
+not the generation expression, so a model that has forgotten the column is generated is
+indistinguishable from one that has not, and `test_autogenerate_would_not_drop_anything` stays green.
+So does the whole integration suite, because the *database* is still right — and the database being
+right is exactly the trap, since the model is what the application acts on. Without `Computed`
+SQLAlchemy believes it may write the column, and the only thing left between that and a corrupt index
+is Postgres refusing at runtime: a `500` on somebody's save instead of a red build. The guard is
+therefore its own unit test, reading migration `0002`'s expression literal out of the file's **AST**
+(a revision is a script with an identity, so it is never imported for a constant) and comparing it
+with the model's, plus asserting the `Computed` construct exists, is `persisted`, and carries that
+same string. Same technique as `test_client_deadline_outlasts_auth.py`: put the alarm where the
+breaking change gets made.
+
 **`search_vector` must never reach the wire, and that guard is a unit test on purpose** (KAN-557,
 `backend/tests/unit/test_note_payload_keys.py`). `NoteRead` is `from_attributes=True`, so a model
 column not leaking is a property of pydantic's explicitness rather than of a decision anybody here
@@ -617,7 +635,11 @@ Both cost the sibling project real time. Neither is hypothetical.
   `DATABASE_URL`, so the engines bind to the wrong database. It passes locally against a dev Postgres
   and fails in CI. This is pandan's "PR #17 trap".
 - **Alembic autogenerate needs models imported in `env.py`**, or it will cheerfully generate a
-  migration that drops your tables.
+  migration that drops your tables. It is also **narrower than it looks**: it diffs columns, types,
+  nullability and indexes, and *not* a generated column's expression — see §"Rules the code already
+  enforces" on `search_vector`, where a `Computed(...)` deleted from the model produced an
+  autogenerate diff of `pass`. Do not treat "autogenerate is quiet" as "the model matches the
+  database".
 
 ## Conventions
 
