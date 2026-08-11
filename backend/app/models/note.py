@@ -74,10 +74,13 @@ NOTE_REF_SERVER_DEFAULT = text(f"'{NOTE_REF_PREFIX}' || nextval('{NOTE_REF_SEQUE
 
 # KAN-557. The generating expression for `search_vector`, byte for byte the string migration `0002`
 # writes. Duplicated rather than shared, because a migration may not import the models: it describes
-# the schema at one moment in history and has to keep working after this file has moved on. The two
-# copies are held together by `tests/integration/test_alembic.py`
-# ::`test_autogenerate_would_not_drop_anything`, which diffs this metadata against a migrated
-# database — a divergence *is* schema drift, so it reddens there rather than going unnoticed.
+# the schema at one moment in history and has to keep working after this file has moved on.
+#
+# What holds the two copies together is `tests/unit/test_search_vector_declaration.py`, and it has
+# to be a test of its own: `alembic revision --autogenerate` does **not** compare a generated
+# column's expression, so a divergence here — or a `Computed(...)` deleted outright — produces an
+# autogenerate diff of `pass` and a green integration suite, because the *database* is still right.
+# That was measured on this card rather than assumed.
 #
 # Every decision inside the string — the explicit `'english'` regconfig (bare `to_tsvector` is not
 # IMMUTABLE and Postgres refuses it in a stored generated column), the `coalesce` that is a no-op
