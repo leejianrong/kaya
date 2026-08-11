@@ -14,14 +14,22 @@ name             mutable?  purpose
 ``path`` being *just metadata* is the whole point of the decision: moving a note is a ``PATCH`` to
 one column, with no link rewriting and nothing to break. That is the Obsidian wart this schema is
 shaped to avoid, so nothing may grow a dependency on ``path`` being stable or unique.
+
+There is a fifth column that is not a name and not user input: ``search_vector`` (KAN-557), a
+``tsvector`` Postgres maintains itself. The DDL and the whole argument for its shape live in
+``alembic/versions/0002_note_search_vector_and_its_gin_index.py``; what lives *here* is the
+declaration that keeps the next ``alembic revision --autogenerate`` from proposing to drop it, and
+that is the only reason the expression appears twice in the repository. See the column.
 """
 
 import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Computed,
     DateTime,
     ForeignKey,
+    Index,
     Sequence,
     String,
     Text,
@@ -29,6 +37,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -63,11 +72,36 @@ NOTE_REF_SEQUENCE = Sequence(NOTE_REF_SEQUENCE_NAME, start=1, metadata=Base.meta
 # up both properties for nothing.
 NOTE_REF_SERVER_DEFAULT = text(f"'{NOTE_REF_PREFIX}' || nextval('{NOTE_REF_SEQUENCE_NAME}')")
 
+# KAN-557. The generating expression for `search_vector`, byte for byte the string migration `0002`
+# writes. Duplicated rather than shared, because a migration may not import the models: it describes
+# the schema at one moment in history and has to keep working after this file has moved on.
+#
+# What holds the two copies together is `tests/unit/test_search_vector_declaration.py`, and it has
+# to be a test of its own: `alembic revision --autogenerate` does **not** compare a generated
+# column's expression, so a divergence here — or a `Computed(...)` deleted outright — produces an
+# autogenerate diff of `pass` and a green integration suite, because the *database* is still right.
+# That was measured on this card rather than assumed.
+#
+# Every decision inside the string — the explicit `'english'` regconfig (bare `to_tsvector` is not
+# IMMUTABLE and Postgres refuses it in a stored generated column), the `coalesce` that is a no-op
+# today, the A/B weights and the deliberate absence of `path` — is argued in `0002`'s docstring.
+SEARCH_VECTOR_EXPRESSION = (
+    "setweight(to_tsvector('english', coalesce(title, '')), 'A') || "
+    "setweight(to_tsvector('english', coalesce(body, '')), 'B')"
+)
+
 
 class Note(Base):
     """One markdown note, owned by exactly one user."""
 
     __tablename__ = "note"
+
+    __table_args__ = (
+        # The GIN index over `search_vector`. Declared with the name migration `0002` gives it,
+        # because autogenerate compares indexes by name and an unnamed one here would read as a
+        # missing index plus a stray one. `postgresql_using` has to match too, for the same reason.
+        Index("ix_note_search_vector", "search_vector", postgresql_using="gin"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     """Internal surrogate key. Accepted on the wire as an alternative spelling of the ref (ADR
@@ -139,4 +173,35 @@ class Note(Base):
     day that endpoint is written the assumption is a failing test in front of its author rather
     than a comment they never read. `clock_timestamp()` is the escape hatch then — and it is a
     migration, since the default is `server_default`.
+    """
+
+    search_vector: Mapped[str] = mapped_column(
+        TSVECTOR,
+        Computed(SEARCH_VECTOR_EXPRESSION, persisted=True),
+        nullable=False,
+        # `deferred`, and it is load-bearing rather than tidy. Every list read in the product is
+        # `notes_owned_by(principal)`, i.e. `select(Note)`, so without this the tsvector for every
+        # note on the page crosses the wire from Postgres on every read — roughly body-sized, for
+        # a value no reader of a note has any use for. It also means the search path (KAN-558) can
+        # name the column in a `WHERE`/`ts_rank` and still never load it into a row.
+        deferred=True,
+    )
+    """Postgres' full-text index of `title` + `body`, maintained by Postgres (KAN-557).
+
+    `Computed(..., persisted=True)` is `GENERATED ALWAYS AS (...) STORED`, which is what makes
+    SLICES §V4's "no application-level reindex step" structural instead of a habit: the value is
+    recomputed inside every INSERT and every UPDATE touching `title` or `body`, so
+    `app/api/notes.py` cannot forget to maintain it, and Postgres **refuses** a direct write to
+    it, so nothing can maintain it wrongly either. `Computed` is also what tells SQLAlchemy to
+    leave the column out of INSERT and UPDATE entirely.
+
+    **This column must never reach the wire.** It is absent from `NoteRead` (`app/api/schemas.py`)
+    and has to stay absent: it is storage internals, it is the size of the note again, and —
+    because `kaya_client`'s `field_names()` reads its vocabulary out of the records the API
+    returns — `--fields search_vector` would become a thing a user could type and a column
+    `--fields ref` was supposed to avoid paying for. `tests/unit/test_note_payload_keys.py` pins
+    the payload's key list so adding it here can never quietly add it there.
+
+    Do not derive anything else from it. It is not a summary, not a word count and not a diffable
+    value; it is an index, and its text form (`'runbook':1A 'step':2B`) is Postgres' business.
     """
