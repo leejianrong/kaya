@@ -5,20 +5,23 @@ Every decision with teeth in it lives one module away: identity in ``refs.py``, 
 is left here is genuinely just wiring, which is the point — a route that is four lines long has
 nowhere to hide a fifth spelling of a rule.
 
-Three things to notice, because all three are load-bearing:
+Four things to notice, because all four are load-bearing:
 
 - **No route parses an identifier.** ``NoteFromRef`` resolves it, checks it and hands back a
   ``Note``. That is ADR 0008's "resolve centrally, not per call site" made unavoidable rather than
   merely recommended: there is no identifier in scope to get wrong.
 - **No route builds a note query.** A list composes onto ``notes_owned_by``, which already carries
   ``WHERE owner_id = :caller``; ``tests/unit/test_no_unscoped_note_query.py`` fails the build if
-  this file ever names ``Note`` inside a ``select()``.
+  this file ever names ``Note`` inside a ``select()``. Search (KAN-558) is ``notes_matching``, which
+  is that same statement with two clauses added, so it is one ``WHERE`` and not two.
 - **No route decides a conflict.** ADR 0009's precondition is one call to ``enforce_precondition``,
   so a second write endpoint gets the guarantee by making the same call rather than by
   reimplementing a comparison.
+- **No route decides what an empty ``?q=`` means.** ``app/api/search.py`` does, before this module
+  is reached, and hands the list route ``None`` or a term that is known to be non-blank.
 
-Deliberately absent, with the card that owns each: ``?q=`` search (KAN-558/559), and `/links` +
-`/backlinks` (KAN-566, which will depend on ``NoteFromRef`` and inherit ADR 0008 for free).
+Deliberately absent, with the card that owns each: `/links` + `/backlinks` (KAN-566, which will
+depend on ``NoteFromRef`` and inherit ADR 0008 for free), and paging of any shape.
 """
 
 from typing import Annotated
@@ -29,7 +32,8 @@ from sqlalchemy.orm import Session
 from app.api.concurrency import enforce_precondition
 from app.api.refs import NoteFromRef
 from app.api.schemas import NoteCreate, NoteList, NoteRead, NoteUpdate
-from app.auth import Principal, get_principal, notes_owned_by
+from app.api.search import SearchTerm
+from app.auth import Principal, get_principal, notes_matching, notes_owned_by
 from app.db import get_session
 from app.models import Note
 
@@ -69,24 +73,44 @@ def create_note(
     return NoteRead.of(note)
 
 
-@router.get("/notes", summary="List the caller's notes")
-def list_notes(principal: CurrentPrincipal, session: DbSession) -> NoteList:
-    """Every note the caller owns, newest first.
+@router.get("/notes", summary="List the caller's notes, or search them with ?q=")
+def list_notes(principal: CurrentPrincipal, session: DbSession, term: SearchTerm) -> NoteList:
+    """Every note the caller owns, newest first — or, with ``?q=``, the ones that match it.
 
     Scoped in SQL by ``notes_owned_by``, not filtered afterwards: SLICES §V1 asks for another user's
     note to be *omitted* rather than fetched and hidden, and only the ``WHERE`` can say which
-    happened. Composing here cannot lose that clause (KAN-535).
+    happened. Composing here cannot lose that clause (KAN-535), and ``notes_matching`` composes onto
+    the very same statement, so KAN-558's "another user's matching note must never appear" is that
+    one clause rather than a second implementation of it.
 
-    ``updated_at DESC, id DESC`` — the second column is not decoration. Two notes written inside one
-    transaction share an ``updated_at`` (``now()`` is transaction start time, per the model's own
-    comment), so without a tie-break the order of a page would be whatever Postgres felt like, and
-    V4's "identical queries return results in a deterministic order" would already be false here.
+    **Two orders, because they answer two different questions, and each one is deterministic.**
+
+    - No ``q``: ``updated_at DESC, id DESC``. The second column is not decoration — two notes
+      written inside one transaction share an ``updated_at`` (``now()`` is transaction start time,
+      per the model's own comment), so without a tie-break the order would be whatever Postgres felt
+      like, and V4's "identical queries return results in a deterministic order" would already be
+      false here. ``KayaClient.list_notes``' docstring depends on this order.
+    - With ``q``: ``ts_rank DESC, id DESC``. Relevance is the only useful order for a search and a
+      meaningless one for a list, so this is one order per request rather than one rule bent twice.
+      The tie-break is the same column for the same reason; see ``notes_matching``, which owns both
+      halves of the search order so they cannot be applied separately.
+
+    The branch below chooses a **statement** and stops — the shape ``app/api/refs.py``'s
+    ``resolve_note`` uses, for the same reason: one ``session.scalars``, one ``NoteList``, so there
+    is no second code path in which projection, scoping or the envelope could differ. What ``?q=``
+    means when it is empty is decided in ``app/api/search.py`` and has already happened by the time
+    this function runs.
 
     No paging parameter: no card has asked for one, and ``next_cursor`` is additive to this envelope
-    when one does. No ``?q=``: that is KAN-558/559.
+    when one does. It is deliberately not added *with* search either — a `limit` would need a
+    documented interaction with ranking, and that is a second undiscussed contract.
     """
-    newest_first = notes_owned_by(principal).order_by(Note.updated_at.desc(), Note.id.desc())
-    return NoteList(notes=[NoteRead.of(note) for note in session.scalars(newest_first)])
+    statement = (
+        notes_owned_by(principal).order_by(Note.updated_at.desc(), Note.id.desc())
+        if term is None
+        else notes_matching(principal, term)
+    )
+    return NoteList(notes=[NoteRead.of(note) for note in session.scalars(statement)])
 
 
 @router.get("/notes/{ref}", summary="Read one note by NOTE-n or by id")

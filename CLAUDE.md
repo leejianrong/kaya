@@ -29,7 +29,7 @@ origin: TLS on the CLI hop, kaya's own cold start, and the manifests on non-k3d 
 
 | Package | What's in it |
 |---|---|
-| `backend/` | The whole of V1: migration `0001`, `app/auth/` (principal resolver, `authorize_note`), `app/api/` (`/api/v1/notes` CRUD, the central ref resolver, ADR 0009's `409`), `app/spa.py`, `app/observability/`. Plus KAN-555's `app/api/meta.py`: `GET /api/v1/meta`, the **one unauthenticated route** under `/api/v1`, returning **one key** — `pandan_url` from `KAYA_PANDAN_URL`. Unauthenticated by necessity (its whole caller is a visitor with no token), and one key on purpose: `tests/unit/test_meta.py` fails on a second one, because a meta endpoint that accumulates keys is a config dump with a friendly name. Plus KAN-557's migration `0002`: `note.search_vector`, a `tsvector` `GENERATED ALWAYS AS (...) STORED` over `title` + `body` with weights `A`/`B`, and `ix_note_search_vector` over it in GIN. Declared in `app/models/note.py` as `Computed(..., persisted=True)` and `deferred`, and **absent from `NoteRead`** — see §"Rules the code already enforces". Storage only; the `?q=` route is KAN-558 |
+| `backend/` | The whole of V1: migration `0001`, `app/auth/` (principal resolver, `authorize_note`), `app/api/` (`/api/v1/notes` CRUD, the central ref resolver, ADR 0009's `409`), `app/spa.py`, `app/observability/`. Plus KAN-555's `app/api/meta.py`: `GET /api/v1/meta`, the **one unauthenticated route** under `/api/v1`, returning **one key** — `pandan_url` from `KAYA_PANDAN_URL`. Unauthenticated by necessity (its whole caller is a visitor with no token), and one key on purpose: `tests/unit/test_meta.py` fails on a second one, because a meta endpoint that accumulates keys is a config dump with a friendly name. Plus KAN-557's migration `0002`: `note.search_vector`, a `tsvector` `GENERATED ALWAYS AS (...) STORED` over `title` + `body` with weights `A`/`B`, and `ix_note_search_vector` over it in GIN. Declared in `app/models/note.py` as `Computed(..., persisted=True)` and `deferred`, and **absent from `NoteRead`** — see §"Rules the code already enforces". Plus KAN-558's query over it: `notes_matching` in `app/auth/authorization.py` — the only module `Note` may reach a `select()` from — which composes `websearch_to_tsquery` and `ts_rank DESC, id DESC` onto `notes_owned_by`'s `WHERE owner_id = :caller`, and `app/api/search.py`, which owns the one decision `?q=` needed: an absent `q` is not a search, a present-but-blank one is a `400 empty_search_query`. `GET /api/v1/notes?q=` returns the same `NoteList` and gains **no** `rank` key |
 | `kaya-client/` | KAN-540: `KayaClient` over httpx and the `render()` seam as four composable steps. KAN-551: the full CRUD set (`create_note`, `update_note`, `move_note`, `delete_note`) — `move_note` *is* `update_note` because ADR 0008 makes a move a `PATCH` to one column, and every ref-taking method shares one `_note_path` that percent-encodes the ref as a single segment. ADR 0009's `if_updated_at` is forwarded as an **opaque string**, so nothing here can lose a microsecond. Same card: the config *file* tier (JSON at `$XDG_CONFIG_HOME/kaya/config.json`, consulted per key after the environment) and the three `config` verbs as `Payload` builders — `settings_payload()`, `path_payload()`, `write_settings()`, which read-modify-writes so a hand-set `max_text_chars` survives a `config set --api-url`. `human`/`json`/`toon` user-facing, `data` adapter-only. KAN-548: `aggregates.py` is live — a collection gets `{"count": len(records)}` and an entity gets nothing, rendered as a blank-line-separated `2 notes` footer under `human` and as a `summary` key beside the envelope everywhere else, both out of the one mapping via `summary_line()`. KAN-547: `truncation.py` is live — `text_limit` cuts the fields `Payload.prose_fields` names and appends a hint carrying the **true** total **in-band**, so the total reaches `json`/`toon`/`data`; `0` disables, and `config.max_text_chars()` resolves `KAYA_MAX_TEXT_CHARS` (default 500, a non-number is a `UsageError`). KAN-546: `projection.py` is live — `fields` narrows `records` *and* `columns` uniformly for every format, via `Payload.narrowed_to()`, with the vocabulary read from `field_names()` before anything narrows. KAN-550: `hints.py` — ADR 0005 §contract 8's `help[]` templates, keyed on `(kind, noun)` and never on a verb name, placeholders left unfilled, and **human-only** (the reverse of KAN-547's hint, because a template is advice about the tool and a total is a fact about the payload). KAN-549: `overview.py` — the three banner lines a bare `kaya` prints, which take three `str`s and **no `Payload`** so they cannot format a result — plus `RECENT_NOTES` (5), `KayaClient.recent_notes()` and `Payload.limited_to()`, the rows-wise twin of `narrowed_to`. KAN-541: `toon.py`, a stdlib-only **encode-only** TOON encoder registered in `Format`, `_SERIALIZERS` and `_ERROR_SERIALIZERS`, plus `config.py` (PLAN §Config's `KAYA_API_URL`/`KAYA_TOKEN` and `open_client()`) and `MissingCredential`. KAN-543: `provenance.version_line()` and the `_build_stamp.COMMIT` a release rewrites. KAN-542: the failure half of the layer — `error_payload()` / `render_error()`, and a `code` on every exception class so a raise site names a meaning. KAN-716: `DEFAULT_TIMEOUT` split by phase (`DEFAULT_CONNECT_TIMEOUT` 5 s, `DEFAULT_READ_TIMEOUT` 40 s) so the client outlasts the backend's authentication budget |
 | `kaya-cli/` | The `kaya` console script, one entry point. KAN-541: `note list` and `note get <ref>` (`verbs.py`, a dispatch table), `--format {human,json,toon}` with `--json` as an alias and `--format` winning if both are given. KAN-551: the other seven verbs — four writes in `VERBS` and three `config` words in a second table, `LOCAL_VERBS`, because `config show` must answer with no credential at all. `parsing.resolve_body()` turns `--body`/`--body-file` into one string; there is **no `-`** for the standard input, so `tests/test_no_prompting.py` keeps proving ADR 0005 §contract 9 structurally. KAN-549: bare `kaya` is `verbs.BARE`, a row in the same dispatch table as every other verb, so `render` is still called in **exactly one place** in the package; the banner is `kaya_client.overview` joined on by `BLOCK_GAP`, and `executable_path()` — `argv[0]` resolved through `PATH`, or `sys.executable` when frozen — is this package's only new logic. KAN-547: `--full` on `output_flags()`, and `resolve_text_limit()` — a flag-beats-environment precedence and nothing else, since the number and the cut are both the client's. KAN-546: `--fields` on `output_flags()`, and `resolve_fields()` — one `split(",")`, which is the entire projection logic this package is allowed to contain. KAN-543: an argparse parser with `--version` and `--help` on it. KAN-542: that parser subclassed so it raises instead of exiting, plus `failures.py` (ADR 0005's exit table, and the only place a meaning becomes a number) and `parsing.py` (`usage:` on stderr *and* the structured row on stdout, from one event). KAN-724: `EXIT_CONFLICT = 6` and a `409` row in `EXIT_FOR_STATUS`, so ADR 0009's refusal stops reporting as a runtime failure — the whole card is that number and the ADR 0005 amendment arguing for it |
 | `mcp/` | A package and ADR 0006's frozen tool-name tuple. No server, no tools |
@@ -45,10 +45,12 @@ offers **keep mine / keep theirs / side by side** when that precondition fails, 
 the `path` column** beside the flat list, and a **live preview** that follows the document without
 the editor's `$effect` re-running — all driven against a real stack and a real PAT. KAN-767 closed
 the slice by moving the editor's ~80 kB gzip onto **its own chunk**, so the visitor who has not
-signed in yet no longer downloads one. **V4 has started at the bottom** (KAN-557):
-`note.search_vector` is a stored generated `tsvector` over `title` + `body` with a GIN index, so
-full-text search has storage before it has a query. `?q=` (KAN-558) and `--q` + the search box
-(KAN-559) do not exist at any layer, and neither does `/links` / `/backlinks` (KAN-566, V5). V6 is
+signed in yet no longer downloads one. **V4 is two thirds in** (KAN-557, KAN-558):
+`note.search_vector` is a stored generated `tsvector` over `title` + `body` with a GIN index, and
+`GET /api/v1/notes?q=` is the query over it — owner-scoped in SQL, ranked by `ts_rank` with `id` as
+the documented tie-break, and refusing a present-but-blank `q`. What is left of the slice is **`--q`
+and the search box** (KAN-559), which are one flag and one input because the API returns the same
+`NoteList` a plain list does. `/links` / `/backlinks` (KAN-566, V5) does not exist at any layer. V6 is
 the MCP server: `mcp/` holds ADR 0006's frozen tool-name tuple and no server and no tools, and every
 one of those tools is meant to call the `render()` seam V2a and V2b just finished. PLAN §Config's
 **third** tier, the nearest `.mcp.json`, is deliberately not built and arrives with V6: choosing
@@ -180,7 +182,47 @@ can type, because `kaya_client`'s `field_names()` builds its vocabulary from the
 returned. A third test pins the *difference* between the table and the payload (`owner_id`,
 `search_vector`), so the next column added to `note` has to be decided about rather than skipped. The
 column is also `deferred` in the model, which is a second, independent reason it stays out: every
-list read is `select(Note)`.
+list read is `select(Note)`. KAN-558 is the card that names the column twice — in a `WHERE` and
+inside `ts_rank` — and it stays unloaded through both: `tests/unit/test_note_search_query.py` asserts
+over the **columns clause** rather than the SQL (the column is in the statement by construction), and
+the integration twin asserts `inspect(note).unloaded` on a real row, because a `DISTINCT` or a union
+added later *would* pull an order-by expression into the select list.
+
+**A search result's order is `ts_rank DESC, note.id DESC`, and the tie-break is not optional**
+(KAN-558, `app/auth/authorization.py`::`notes_matching`). Equal ranks are common rather than exotic:
+on the live ten-note corpus `plainto_tsquery('english','reading list')` scores "A reading list" and
+"Reading list" at **0.9910 each**, so a ten-note corpus ties on a two-word query and without a second
+key Postgres may return those two in either order — exactly what SLICES §V4's "identical queries
+return results in a deterministic order" forbids. `updated_at` **cannot serve**: `now()` is
+transaction start time, so two notes written in one transaction share a stamp and the tie merely
+moves. `id` is unique, immutable and never reused (ADR 0008). It lives in the same `order_by` as the
+rank so relevance cannot be added without the tie-break travelling with it, and the fixture that
+proves it (`tests/integration/test_note_search_api.py`::`a_genuine_rank_tie`) **asserts the two ranks
+are equal before pinning the order** — a tie-break asserted against data that never ties is not
+asserted. `DESC` rather than pandan's ascending `id`, because kaya's unfiltered list is `updated_at
+DESC, id DESC`: matching a sibling's direction while breaking your own consistency is the worse trade.
+The two orders **differ on purpose** and `app/api/notes.py` says so — relevance is the only useful
+order for a search and a meaningless one for a list, and `KayaClient.list_notes`' docstring depends on
+the other one.
+
+**`websearch_to_tsquery`, because the input is a human's — and `?q=` present-but-blank is a `400`**
+(KAN-558, `app/api/search.py`). Measured against Postgres 17 on that card: `to_tsquery('english',
+'&|!()')` and `to_tsquery('english', 'foo &')` both **raise**, which reaches a caller as a `500`, so
+the strict parser is unusable on a search box; `plainto_tsquery` never raises but cannot express a
+quoted phrase or a `-exclusion`. `websearch_to_tsquery` raised on none of eleven hostile inputs, and
+where it has nothing to work with it returns the *empty* tsquery — `anything @@ ''::tsquery` is false,
+so a stopword-only or punctuation-only search is **zero notes**, not an error and not the whole
+corpus. The term is a **bound parameter**, which is what makes `%` and `_` inert; if they ever behave
+like wildcards the implementation has stopped being full-text search, and there is a test whose only
+job is to say so. Separately: an absent `q` lists everything, a present `q` with no non-whitespace
+character is a `400 empty_search_query`. Pandan makes that a no-op and is right to, because its `q`
+arrived on a shipped endpoint with clients that always send it; kaya has no such client yet, and
+`kaya note list --q "$TERM"` with `TERM` unset returning the whole corpus is a wrong answer that looks
+like a right one. ADR 0005's table maps `400` → exit `2` and `invalid_note_ref` is deliberately not
+keyed on its code string, so the refusal inherits the number with nothing in `kaya-cli` changing. The
+refusal is on the **input**, never on the parse: refusing an empty *tsquery* would make the status
+code a function of the dictionary, so `the` would be a `400` under `english` and a hit under a
+configuration with no stopword list.
 
 **Never log a header, a request object, or anything built from a bearer** (Q41/Q42,
 `app/observability/`). The access line carries `ACCESS_FIELDS` and nothing else, and redaction sits
