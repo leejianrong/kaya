@@ -20,6 +20,7 @@ import EditorPane from '../src/components/EditorPane.svelte'
 import Sidebar from '../src/components/Sidebar.svelte'
 import * as auth from '../src/lib/auth'
 import type { Note } from '../src/lib/types'
+import { editorArrived } from './editor-arrival'
 import { box } from './reactive.svelte'
 import { FAKE_TOKEN } from './token'
 
@@ -123,7 +124,7 @@ function foreignNodes(container: Element): string[] {
 }
 
 describe("PLAN §S9's editor container", () => {
-  it('holds exactly the nodes its own $effect created, and nothing Svelte made', () => {
+  it('holds exactly the nodes its own $effect created, and nothing Svelte made', async () => {
     // An **identity** check, not a property check. The earlier version of this test asked whether
     // each child element carried a Svelte scoping class, which was blind three ways over: a
     // scoping class only exists when a scoped style rule matches the element, `children` never
@@ -141,7 +142,7 @@ describe("PLAN §S9's editor container", () => {
         },
       }),
     )
-    flushSync()
+    await editorArrived(host)
 
     const container = host.querySelector('.editor-host')!
 
@@ -161,7 +162,7 @@ describe("PLAN §S9's editor container", () => {
     }
   })
 
-  it('tears the old contents down when the note changes, rather than stacking them up', () => {
+  it('tears the old contents down when the note changes, rather than stacking them up', async () => {
     // SLICES §V3: "the editor mounts once per note and tears down cleanly on navigation (no leaked
     // listeners)". The `$effect`'s return value is what makes that true, and this is the assertion
     // that notices when it stops being returned — an `EditorView` per visited note, all of them
@@ -178,7 +179,7 @@ describe("PLAN §S9's editor container", () => {
         },
       }),
     )
-    flushSync()
+    await editorArrived(host)
 
     const container = host.querySelector('.editor-host')!
     expect(container.childElementCount).toBe(1)
@@ -193,9 +194,9 @@ describe("PLAN §S9's editor container", () => {
     expect(container.textContent).toContain('No note open')
   })
 
-  it('removes the container itself on unmount', () => {
+  it('removes the container itself on unmount', async () => {
     const instance = mount(EditorPane, { target: host, props: { note: note(), error: null } })
-    flushSync()
+    await editorArrived(host)
     expect(host.querySelector('.editor-host')).not.toBeNull()
 
     unmount(instance)
@@ -221,8 +222,9 @@ describe("PLAN §S9's editor container", () => {
    * "the body is outside" to "the body reached the editor and appears nowhere else", which is what
    * the read-only `<pre>` being deleted actually means.
    */
-  it("puts the note body in CM6's document and nowhere else in the pane", () => {
+  it("puts the note body in CM6's document and nowhere else in the pane", async () => {
     const target = render(EditorPane, { note: note({ body: 'MARKER-BODY' }), error: null })
+    await editorArrived(target)
     const container = target.querySelector('.editor-host')!
 
     expect(container.querySelector('.cm-content')!.textContent).toContain('MARKER-BODY')

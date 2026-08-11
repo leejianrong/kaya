@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import EditorPane from '../src/components/EditorPane.svelte'
 import * as auth from '../src/lib/auth'
 import type { Note } from '../src/lib/types'
+import { editorArrived } from './editor-arrival'
 import { box, type Box } from './reactive.svelte'
 import { FAKE_TOKEN } from './token'
 
@@ -52,8 +53,16 @@ function note(overrides: Partial<Note> = {}): Note {
 let host: HTMLDivElement
 const mounted: unknown[] = []
 
-/** Mount the pane with a *reactive* note, so a test can hand down a new object and watch. */
-function open(initial: Note | null): { opened: Box<Note | null>; container: HTMLElement } {
+/**
+ * Mount the pane with a *reactive* note, so a test can hand down a new object and watch.
+ *
+ * `async` since KAN-767: CodeMirror is behind a dynamic `import()`, so `flushSync()` alone leaves the
+ * container empty and every assertion about a view has to await the chunk. See `editor-arrival.ts`.
+ */
+async function open(initial: Note | null): Promise<{
+  opened: Box<Note | null>
+  container: HTMLElement
+}> {
   const opened = box<Note | null>(initial)
   mounted.push(
     mount(EditorPane, {
@@ -67,6 +76,7 @@ function open(initial: Note | null): { opened: Box<Note | null>; container: HTML
     }),
   )
   flushSync()
+  await editorArrived(host)
   return { opened, container: host.querySelector('.editor-host')! }
 }
 
@@ -123,12 +133,12 @@ afterEach(() => {
 })
 
 describe('the identity guard, through Svelte', () => {
-  it('does not rebuild the view when the parent hands down a new object for the same note', () => {
+  it('does not rebuild the view when the parent hands down a new object for the same note', async () => {
     // The card. The parent replaces the whole `Note` — which is what a parent bound to a keystroke
     // does — and the effect re-runs, because reading the prop at all registers it. What must not
     // happen is a second `EditorView`.
     const destroy = vi.spyOn(EditorView.prototype, 'destroy')
-    const { opened, container } = open(note())
+    const { opened, container } = await open(note())
     const first = container.firstElementChild
 
     for (let n = 0; n < 20; n += 1) {
@@ -141,9 +151,9 @@ describe('the identity guard, through Svelte', () => {
     expect(destroy).not.toHaveBeenCalled()
   })
 
-  it('keeps the caret and the undo history across those re-renders', () => {
+  it('keeps the caret and the undo history across those re-renders', async () => {
     // What a rebuild would cost, stated as the thing a user notices: the cursor jumping to the start.
-    const { opened, container } = open(note())
+    const { opened, container } = await open(note())
     const view = editor(container)
     type(view, 'X')
     const caret = view.state.selection.main.head
@@ -155,9 +165,9 @@ describe('the identity guard, through Svelte', () => {
     expect(view.state.selection.main.head).toBe(caret)
   })
 
-  it('rebuilds exactly once when the ref changes, because that is a different note', () => {
+  it('rebuilds exactly once when the ref changes, because that is a different note', async () => {
     const destroy = vi.spyOn(EditorView.prototype, 'destroy')
-    const { opened, container } = open(note())
+    const { opened, container } = await open(note())
     const first = container.firstElementChild
 
     opened.value = note({ ref: 'NOTE-7', id: 7, title: 'Architecture', body: 'other\n' })
@@ -170,10 +180,10 @@ describe('the identity guard, through Svelte', () => {
     expect(container.querySelector('.cm-content')!.textContent).toContain('other')
   })
 
-  it('tears down on unmount rather than leaking the view', () => {
+  it('tears down on unmount rather than leaking the view', async () => {
     const destroy = vi.spyOn(EditorView.prototype, 'destroy')
     const instance = mount(EditorPane, { target: host, props: { note: note(), error: null } })
-    flushSync()
+    await editorArrived(host)
 
     unmount(instance)
     flushSync()
@@ -182,11 +192,11 @@ describe('the identity guard, through Svelte', () => {
     expect(host.querySelector('.cm-editor')).toBeNull()
   })
 
-  it('visits five notes and leaves five nothings behind', () => {
+  it('visits five notes and leaves five nothings behind', async () => {
     // SLICES §V3, "no leaked listeners", counted. An `EditorView` per visited note, all still
     // listening, is a leak that looks like nothing until the app is slow.
     const destroy = vi.spyOn(EditorView.prototype, 'destroy')
-    const { opened, container } = open(note())
+    const { opened, container } = await open(note())
 
     for (const ref of ['NOTE-7', 'NOTE-8', 'NOTE-9', 'NOTE-10']) {
       opened.value = note({ ref })
@@ -199,12 +209,12 @@ describe('the identity guard, through Svelte', () => {
 })
 
 describe('the echo guard, through Svelte', () => {
-  it('dispatches nothing when the parent re-sends the body already in the editor', () => {
+  it('dispatches nothing when the parent re-sends the body already in the editor', async () => {
     // The loop's shape without the loop: whatever put the value there, if the editor already holds it
     // there is nothing to write. Asserted through `dispatch` rather than through the document, because
     // the document would look identical either way — a no-op transaction is still a transaction, and a
     // transaction is what wakes the listener that starts the cycle.
-    const { opened, container } = open(note({ body: 'same\n' }))
+    const { opened, container } = await open(note({ body: 'same\n' }))
     const view = editor(container)
     const dispatch = vi.spyOn(view, 'dispatch')
 
@@ -214,11 +224,11 @@ describe('the echo guard, through Svelte', () => {
     expect(dispatch).not.toHaveBeenCalled()
   })
 
-  it('does not overwrite in-flight typing when the parent re-sends an unchanged note', () => {
+  it('does not overwrite in-flight typing when the parent re-sends an unchanged note', async () => {
     // The other half, and the reason it is a separate check from the echo guard: here the incoming
     // body *does* differ from the document, because the user typed — so the echo guard would let it
     // through and the edit would vanish on a re-render that changed nothing.
-    const { opened, container } = open(note({ body: 'server\n' }))
+    const { opened, container } = await open(note({ body: 'server\n' }))
     const view = editor(container)
     type(view, 'mine')
 
@@ -228,8 +238,8 @@ describe('the echo guard, through Svelte', () => {
     expect(view.state.doc.toString()).toBe('server\nmine')
   })
 
-  it('applies a genuinely new body for the same note as a transaction', () => {
-    const { opened, container } = open(note({ body: 'first\n' }))
+  it('applies a genuinely new body for the same note as a transaction', async () => {
+    const { opened, container } = await open(note({ body: 'first\n' }))
     const view = editor(container)
     const node = container.firstElementChild
 
@@ -242,17 +252,17 @@ describe('the echo guard, through Svelte', () => {
 })
 
 describe('what the mounted editor actually is', () => {
-  it('installs the markdown language, in the component and not only in a test', () => {
+  it('installs the markdown language, in the component and not only in a test', async () => {
     // `editor-view.test.ts` proves the grammar parses what the product needs; that test builds its own
     // view, so on its own it would stay green if this component installed no language at all. CM6
     // stamps the active language onto `.cm-content`, which closes the gap from this side.
-    const { container } = open(note())
+    const { container } = await open(note())
 
     expect(container.querySelector('.cm-content')!.getAttribute('data-language')).toBe('markdown')
   })
 
-  it('is editable, wraps lines, and has an undo history', () => {
-    const { container } = open(note())
+  it('is editable, wraps lines, and has an undo history', async () => {
+    const { container } = await open(note())
     const view = editor(container)
 
     expect(container.querySelector('.cm-content')!.getAttribute('contenteditable')).toBe('true')
@@ -266,8 +276,8 @@ describe('what the mounted editor actually is', () => {
 })
 
 describe('the zero state', () => {
-  it("is CM6's own placeholder, so the container still holds nothing Svelte made", () => {
-    const { container } = open(null)
+  it("is CM6's own placeholder, so the container still holds nothing Svelte made", async () => {
+    const { container } = await open(null)
 
     expect(container.querySelectorAll(':scope > .cm-editor')).toHaveLength(1)
     expect(container.textContent).toContain('No note open')
@@ -279,7 +289,7 @@ describe('the zero state', () => {
 describe("saving, and ADR 0009's precondition", () => {
   it('PATCHes the body with the updated_at it read, to the microsecond', async () => {
     const calls = stubFetch(200, note({ body: '# Week of 2026-08-03\nX', updated_at: SAVED_AT }))
-    const { container } = open(note())
+    const { container } = await open(note())
     type(editor(container), 'X')
 
     host.querySelector('button')!.click()
@@ -299,7 +309,7 @@ describe("saving, and ADR 0009's precondition", () => {
     // microseconds ago instead of the version this edit was made against. So exactly one request per
     // save, and its precondition comes from the previous *response*.
     const calls = stubFetch(200, note({ updated_at: SAVED_AT }))
-    const { container } = open(note())
+    const { container } = await open(note())
     const view = editor(container)
 
     type(view, 'one')
@@ -328,7 +338,7 @@ describe("saving, and ADR 0009's precondition", () => {
     // *next* save would then send them under a precondition it had already used, so the mystery
     // arrived later as a `409`. `dirty` is now compared against the body that was actually sent.
     const calls = stubFetch(200, note({ updated_at: SAVED_AT }))
-    const { container } = open(note())
+    const { container } = await open(note())
     const view = editor(container)
 
     type(view, 'one')
@@ -345,7 +355,7 @@ describe("saving, and ADR 0009's precondition", () => {
 
   it('reports the stamp the editor is now guarded against, not the stale prop', async () => {
     stubFetch(200, note({ updated_at: SAVED_AT }))
-    const { container } = open(note())
+    const { container } = await open(note())
     expect(host.querySelector('.stamp')!.textContent).toContain(READ_AT)
 
     type(editor(container), 'X')
@@ -372,7 +382,7 @@ describe("ADR 0009's 409, which must not be swallowed", () => {
 
   it('shows the refusal and both timestamps', async () => {
     refuse()
-    const { container } = open(note())
+    const { container } = await open(note())
     type(editor(container), 'mine')
     host.querySelector('button')!.click()
 
@@ -388,7 +398,7 @@ describe("ADR 0009's 409, which must not be swallowed", () => {
     // Nothing was written, so nothing may be discarded either — least of all the text the refusal is
     // about. KAN-556's "keep mine" has nothing to keep if this is wrong.
     refuse()
-    const { container } = open(note())
+    const { container } = await open(note())
     const view = editor(container)
     type(view, 'mine')
     host.querySelector('button')!.click()
@@ -403,7 +413,7 @@ describe("ADR 0009's 409, which must not be swallowed", () => {
     // A conflict that fails to parse is a conflict. Silence here is the exact failure ADR 0009 exists
     // to prevent — the user believing a save happened.
     stubFetch(409, { error: { code: 'note_conflict', message: 'Refused: stale precondition.' } })
-    const { container } = open(note())
+    const { container } = await open(note())
     type(editor(container), 'mine')
     host.querySelector('button')!.click()
 
@@ -415,7 +425,7 @@ describe("ADR 0009's 409, which must not be swallowed", () => {
 
   it('surfaces any other refusal rather than looking saved', async () => {
     stubFetch(404, { error: { code: 'note_not_found', message: 'No note NOTE-6.' } })
-    const { container } = open(note())
+    const { container } = await open(note())
     type(editor(container), 'X')
     host.querySelector('button')!.click()
 
@@ -427,7 +437,7 @@ describe("ADR 0009's 409, which must not be swallowed", () => {
 
   it('never puts the credential anywhere a screenshot would catch it', async () => {
     refuse()
-    const { container } = open(note())
+    const { container } = await open(note())
     type(editor(container), 'mine')
     host.querySelector('button')!.click()
     await vi.waitFor(() => expect(host.querySelector('[data-testid="conflict"]')).not.toBeNull())
