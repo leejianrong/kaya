@@ -3,6 +3,16 @@
 # (pandan ADR 0018 §Package-name reality). That constrains the distribution name only. The console
 # script is `kaya`, and there is exactly one of them (Q39).
 name = "kaya-notes"
+# 0.10.0 — KAN-724 adds `409` → exit `6` (`EXIT_CONFLICT`) to `EXIT_FOR_STATUS`. Behavioural, and
+# behavioural in the way exit codes are versioned for: a stale `--if-updated-at` used to exit `1` and
+# now exits `6`, so a script branching on the number sees a different answer for the same event. An
+# *addition* to the status table, not a renumber — `0/1/2/3/4/5` are where ADR 0005 §contract 4 put
+# them — but the first addition that published a new **number**, which is why ADR 0005 gained the
+# 2026-08-12 amendment arguing that a seventh meaning is not the reuse the ADR warned against: `409`
+# is neither kaya failing (`1`) nor the caller's input being wrong (`2`), and ADR 0009's two whole
+# notes make re-read-and-retry the correct action, which `1` puts out of reach. Keyed on the status,
+# so the next `409` code needs no edit; `422` and everything else keep the `1` default. Pandan's
+# matching row is its KAN-831.
 # 0.9.0 — KAN-549 lands SLICES §V2b step 4, ADR 0005 §contract 7's content-first bare invocation,
 # and completes V2b. Bare `kaya` was a banner and an epilogue that exited `0` on any machine; it now
 # opens a session, prints three banner lines and the caller's five most recently updated notes with
@@ -46,7 +56,7 @@ name = "kaya-notes"
 # 0.2.0 — KAN-543 gives the CLI argument parsing and ADR 0007's build-stamped `--version`. A
 # behavioural change to a shipped package bumps it in the same PR (ADR 0007 §3, CLAUDE.md
 # §Conventions §Versioning).
-version = "0.9.0"
+version = "0.10.0"
 description = "kaya — the notes CLI"
 readme = "README.md"
 license = "Apache-2.0"

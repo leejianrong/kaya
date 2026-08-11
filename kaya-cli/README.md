@@ -170,7 +170,7 @@ Two modules, and the split between them is ADR 0004's review question answered t
 | Code → exit number | `kaya-cli/src/kaya_cli/failures.py` | An MCP tool returns content to a host. It has no process to exit |
 
 - **`failures.py`** holds [ADR 0005](../docs/adr/0005-born-agent-conformant.md) §contract 4's table —
-  `0` ok · `1` runtime · `2` usage · `3` 401 · `4` 403 · `5` 404 — plus `EXIT_FOR_CODE`, keyed on
+  `0` ok · `1` runtime · `2` usage · `3` 401 · `4` 403 · `5` 404 · `6` 409 — plus `EXIT_FOR_CODE`, keyed on
   the `code` string every `KayaError` subclass carries. A raise site picks a **class**, and the class
   is the meaning; nothing in this repository writes an exit number at a raise site. The table is
   **add-only**: adding a row is free, renumbering one is breaking a published contract, and
@@ -182,6 +182,15 @@ Two modules, and the split between them is ADR 0004's review question answered t
   amended ADR 0005's wording; no number moved. `invalid_note_ref` is deliberately not a row in
   `EXIT_FOR_CODE` — the status is what carries the meaning, so the next `400` code needs no edit —
   and everything the tables have no row for still exits `1`.
+- **`6` is `409`: the note moved under a guarded write.** KAN-724's addition, and the first number
+  this repository chose rather than inherited from pandan.
+  [ADR 0009](../docs/adr/0009-optimistic-concurrency-on-note-bodies.md) puts `attempted` and `stored`
+  on that refusal as two whole notes so a caller can merge and retry, and exit `1` made that
+  unreachable — a script has to read `1` as "kaya failed", so it re-sends the same stale precondition
+  forever or abandons a conflict it was handed everything to resolve. Not `2` either: the precondition
+  was correct when it was read. `note_conflict` is not a row in `EXIT_FOR_CODE`, so the next `409`
+  code needs no edit, and `422` deliberately kept the `1` default. Pandan's CLI still maps its own
+  `409`s to `1`; its matching row is tracked as KAN-831.
 - **`parsing.py`** intercepts `ArgumentParser.error()` and `.exit()`. argparse's default prints usage
   to stderr and calls `sys.exit(2)`, which emits nothing a program can read and takes the process
   with it. `StructuredParser` writes argparse's stderr text verbatim and then raises, so `main()`
@@ -203,6 +212,9 @@ reported in the format the user asked for, and a failure from the parse is repor
 because argv never got far enough to name one.
 
 `tests/test_failure_classes.py` proves SLICES §V2a's classes end to end — unknown flag (2), invalid
-enum (2), missing token (1), 400 (2), 404 (5), 401 (3), 403 (4) — each asserting stream, shape and
-exit code together, against an `httpx.MockTransport`. KAN-542 could only assert them at the seam,
-because it had no verbs to produce one. Seven, not the six SLICES planned: the `400` is KAN-718's.
+enum (2), missing token (1), 400 (2), 404 (5), 401 (3), 403 (4), 409 (6) — each asserting stream,
+shape and exit code together, against an `httpx.MockTransport`. KAN-542 could only assert them at the
+seam, because it had no verbs to produce one. Eight, not the six SLICES planned: the `400` is
+KAN-718's and the `409` is KAN-724's. The `409`'s argv is the only one that had to be a *particular*
+command — `note edit … --if-updated-at` — because it is the only refusal reachable solely through a
+verb that sends a precondition.
