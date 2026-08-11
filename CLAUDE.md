@@ -37,28 +37,27 @@ origin: TLS on the CLI hop, kaya's own cold start, and the manifests on non-k3d 
 | *root* | `Dockerfile` (bases pinned by digest), `docker-compose.yml`, `deploy/k8s/`. KAN-544: `scripts/check-version-bump.sh` (+ `lib/pyproject_diff.py`), `scripts/build-cli-artifact.sh`, `scripts/check-release-artifact.sh`, `.github/workflows/release.yml`'s `build` job. KAN-545: that workflow's `publish` job — the only `contents: write` in the repository, and it runs for a pushed `v*` tag and nothing else |
 
 Now: **V3, the editor, is complete** — KAN-552 landed the skeleton, KAN-553 the editor, KAN-555 the
-way in, KAN-556 the conflict banner, KAN-554 the sidebar and the preview and KAN-767 the chunk split,
-so `frontend/` is a
-browsable app with a router, a typed API layer, a credential seam, a real landing page that takes a
-**one-time PAT paste** (and walks a `401` out rather than reloading through it), a CodeMirror 6 pane
-that opens a note, edits it, saves it under ADR 0009's precondition and offers **keep mine / keep
-theirs / side by side** when that precondition fails, a **folder tree over the `path` column** beside
-the flat list, and a **live preview** that follows the document without the editor's `$effect`
-re-running — all driven against a real stack and a real PAT. KAN-767 closed the slice by moving the
-editor's ~80 kB gzip onto **its own chunk**, so the visitor who has not signed in yet no longer
-downloads one. **V4 has started at the bottom** (KAN-557): `note.search_vector` is a stored generated
-`tsvector` over `title` + `body` with a GIN index, so full-text search has storage before it has a
-query. `?q=` (KAN-558) and `--q` + the search box (KAN-559) do not exist at any layer, and neither
-does `/links` / `/backlinks` (KAN-566, V5).
-V6 is the MCP server: `mcp/` holds ADR 0006's frozen tool-name tuple and no server
-and no tools, and every one of those tools is meant to call the `render()` seam V2a and V2b just
-finished. PLAN §Config's **third** tier, the nearest `.mcp.json`, is deliberately not built and
-arrives with V6: choosing which server entry in an MCP host's file is kaya's is a guess until there
-is a server to name, and a host launching one usually exports the `env` block anyway, so tier one
-covers the common case (see `config.py`). Also unbuilt: `make test-e2e` is still a stub, and its
-blocker moved with KAN-552 — the shell exists, so what the target is waiting for is the behaviour
-SLICES §V3's demo describes — KAN-553's editor is in, so what is left is KAN-556's banner. ADR 0005
-§Consequences defers ambient session context (pandan's V48) post-MVP.
+way in, KAN-556 the conflict banner, KAN-554 the sidebar and the preview, and KAN-767 the chunk
+split, so `frontend/` is a browsable app with a router, a typed API layer, a credential seam, a real
+landing page that takes a **one-time PAT paste** (and walks a `401` out rather than reloading through
+it), a CodeMirror 6 pane that opens a note, edits it, saves it under ADR 0009's precondition and
+offers **keep mine / keep theirs / side by side** when that precondition fails, a **folder tree over
+the `path` column** beside the flat list, and a **live preview** that follows the document without
+the editor's `$effect` re-running — all driven against a real stack and a real PAT. KAN-767 closed
+the slice by moving the editor's ~80 kB gzip onto **its own chunk**, so the visitor who has not
+signed in yet no longer downloads one. **V4 has started at the bottom** (KAN-557):
+`note.search_vector` is a stored generated `tsvector` over `title` + `body` with a GIN index, so
+full-text search has storage before it has a query. `?q=` (KAN-558) and `--q` + the search box
+(KAN-559) do not exist at any layer, and neither does `/links` / `/backlinks` (KAN-566, V5). V6 is
+the MCP server: `mcp/` holds ADR 0006's frozen tool-name tuple and no server and no tools, and every
+one of those tools is meant to call the `render()` seam V2a and V2b just finished. PLAN §Config's
+**third** tier, the nearest `.mcp.json`, is deliberately not built and arrives with V6: choosing
+which server entry in an MCP host's file is kaya's is a guess until there is a server to name, and a
+host launching one usually exports the `env` block anyway, so tier one covers the common case (see
+`config.py`). Also unbuilt: `make test-e2e` is still a stub, and **it is no longer blocked on any
+card** — KAN-552 moved its blocker off the shell and onto the behaviour SLICES §V3's demo describes,
+and every one of those cards has now landed, so what the target waits on is somebody writing it.
+ADR 0005 §Consequences defers ambient session context (pandan's V48) post-MVP.
 
 **Trust the code over the docs.** When this file and the repository disagree, the repository is
 right and this file is stale. Fix it in the same PR.
