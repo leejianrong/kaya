@@ -1,11 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte'
 
-  import { defaultKeymap, history, historyKeymap, isolateHistory } from '@codemirror/commands'
-  import { markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown'
-  import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
-  import { EditorState } from '@codemirror/state'
-  import { EditorView, keymap, placeholder } from '@codemirror/view'
+  import type { EditorView } from '@codemirror/view'
 
   import { ApiError } from '../lib/api'
   import { type ConflictVersions, keepMinePatch } from '../lib/conflict'
@@ -13,6 +9,15 @@
   import { updateNote } from '../lib/notes'
   import type { Note, NoteUpdate } from '../lib/types'
   import ConflictBanner from './ConflictBanner.svelte'
+
+  /**
+   * `lib/codemirror.ts`, named as a **type** so naming it costs nothing.
+   *
+   * `typeof import(…)` is erased by `verbatimModuleSyntax` exactly like an `import type` is, so this
+   * line does not put the module in the entry chunk — the only thing that reaches it is the
+   * `import()` in the loader below, which is what makes it a chunk of its own.
+   */
+  type EditorKit = typeof import('../lib/codemirror')
 
   const {
     note,
@@ -70,6 +75,30 @@
    * one subtree and PLAN §Open risks' update loop is live.
    */
   let host: HTMLDivElement | undefined = $state()
+
+  /**
+   * The CodeMirror module, once it has arrived — **KAN-767, and the only reason this component is
+   * asynchronous at all.**
+   *
+   * CM6 is ~100 KB gzip and `lib/codemirror.ts` is reached through a dynamic `import()`, so it is its
+   * own chunk and an unauthenticated visitor pasting a PAT never fetches it. That makes the editor's
+   * arrival an event, and where that event is handled is the whole of this card's correctness.
+   *
+   * **It is a rune, and the mount effect *reads* it — so the mount effect stays synchronous.** That
+   * is the design, stated as the thing it avoids: the obvious implementation puts the `await` inside
+   * the mount effect, and then two runs of that effect can be in flight at once. Svelte runs an
+   * effect's cleanup *before* every re-run, so a cleanup firing while run A is still awaiting sees
+   * `view === undefined` and has nothing to destroy; A then resolves and builds a view into a host
+   * that run B is also building into, or into one that is being torn down. Two views in one
+   * container, or an orphan nobody holds a reference to — and both are invisible from a green test
+   * suite. Reading a rune instead means the load resolves *once*, per component, and every mount is
+   * the same straight-line code KAN-553 wrote: read the deps, guard, build. There is nothing to
+   * cancel because nothing races.
+   *
+   * `null` behaves exactly like `host === undefined` did already — a state the effect returns out of
+   * and is re-entered from — which is why it costs one clause below and no new shape.
+   */
+  let kit: EditorKit | null = $state(null)
 
   /**
    * The live view, the ref it was built for, and ADR 0009's precondition. **Plain `let`, not
@@ -146,6 +175,16 @@
    * saying `saved` there would claim the server holds text it does not.
    */
   let resolution: string | null = $state(null)
+  /**
+   * The editor's chunk never arrived (KAN-767). Rendered as a notice, **beside** the container.
+   *
+   * A lazy chunk is one more request, so it is one more thing that can fail — offline, or a deploy
+   * that replaced the asset while this tab was open. Left unhandled the symptom is an empty bordered
+   * rectangle and no explanation, which is the worst of the two states this card chooses between. It
+   * is its own rune rather than folded into `refusal` because that one means "the server refused a
+   * write", and telling a load failure apart from a refused save is exactly what a bug report needs.
+   */
+  let unavailable: string | null = $state(null)
 
   /**
    * Mount CodeMirror once per note, and hand it every later document as a transaction.
@@ -162,11 +201,18 @@
    * been torn down. The per-note destroy therefore sits in the body, immediately beside the
    * construction it replaces, and the per-component destroy is the second effect below, which reads
    * nothing and whose cleanup can only fire on unmount.
+   *
+   * **KAN-767 added `kit` to the reads and one clause to the guard, and changed nothing else about
+   * this effect — deliberately.** It does not `await`, so every property above survives verbatim.
+   * All three dependencies are read *before* the early return, because that is what registers them:
+   * returning above the `note` read would leave this effect unsubscribed from the note and the pane
+   * would never open a second one.
    */
   $effect(() => {
     const parent = host
     const opened = note
-    if (parent === undefined) {
+    const loaded = kit
+    if (parent === undefined || loaded === null) {
       return
     }
     const incomingRef = opened?.ref ?? null
@@ -185,7 +231,7 @@
     }
 
     view?.destroy()
-    view = build(parent, opened)
+    view = build(loaded, parent, opened)
     mountedRef = incomingRef
     appliedBody = incomingBody
     basedOn = opened?.updated_at ?? null
@@ -202,78 +248,73 @@
   })
 
   /**
-   * The component's own teardown. Reads nothing, so it runs once and its cleanup fires only when the
-   * component is destroyed — which is what makes it safe to put `view.destroy()` in.
+   * The component's two once-per-lifetime jobs: **fetch the editor, and give it back.**
+   *
+   * Reads nothing, so it runs exactly once and its cleanup fires only when the component is
+   * destroyed — which is what makes it safe to put `view.destroy()` in, and is also what makes it the
+   * right place for KAN-767's `import()`. One run means one load, which is the property the mount
+   * effect above leans on when it treats `kit` as a value that only ever arrives.
+   *
+   * The two live together because they share `live`, and that flag is the only cancellation this
+   * design needs: a component unmounted while the chunk is in flight must not come back and assign a
+   * rune afterwards. Splitting them into two effects would put the flag and the destroy in different
+   * closures, and the next person would have to notice they are the same lifetime.
    *
    * SLICES §V3 asks for "mounts once per note and tears down cleanly on navigation (no leaked
    * listeners)". Navigation is the effect above; this is the pane going away.
    */
   $effect(() => {
+    let live = true
+    // The one `import()` in this component, and the reason CodeMirror is a chunk rather than a third
+    // of the entry bundle. A rejection is a real state — offline, or a deploy that replaced the asset
+    // under an open tab — and an unexplained empty rectangle is a worse answer than a sentence.
+    import('../lib/codemirror').then(
+      (loaded) => {
+        if (live) {
+          kit = loaded
+        }
+      },
+      () => {
+        if (live) {
+          unavailable = 'The editor could not be loaded. Reload the page to try again.'
+        }
+      },
+    )
     return () => {
+      live = false
       view?.destroy()
       view = undefined
       mountedRef = null
     }
   })
 
-  /** The extension set, and the one place a new CodeMirror package would have to earn its bytes. */
-  function build(parent: HTMLElement, opened: Note | null): EditorView {
+  /**
+   * The view for one note, built by the module that owns CodeMirror's values.
+   *
+   * What is left here is only what is about the *note*: whether there is one to edit, which words the
+   * zero state says, and the four runes a document change moves. The extension set and the theme are
+   * `lib/codemirror.ts`, because they cannot be written without a CodeMirror value in scope and that
+   * value is the thing KAN-767 defers.
+   */
+  function build(loaded: EditorKit, parent: HTMLElement, opened: Note | null): EditorView {
     const editable = opened !== null
-    return new EditorView({
+    return loaded.createView({
       parent,
-      state: EditorState.create({
-        doc: opened?.body ?? '',
-        extensions: [
-          // Undo history is part of what the identity guard protects: a remount per keystroke would
-          // throw this away silently, so it is here from the first commit rather than later.
-          history(),
-          keymap.of([
-            { key: 'Mod-s', preventDefault: true, run: onSaveKey },
-            ...markdownKeymap,
-            ...historyKeymap,
-            ...defaultKeymap,
-          ]),
-          // **`markdownLanguage.extension`, not `markdown()`, and this is a measurement rather than a
-          // preference.** Both give the same GFM grammar; `markdown()` additionally wires
-          // `@codemirror/lang-html` in as the parser for raw HTML blocks, and lang-html drags
-          // `lang-javascript` and `lang-css` behind it for embedded script and style tags. (Do not
-          // write those two tag names literally in this file: a bare opening script tag anywhere in a
-          // Svelte component's source — comment or not — makes svelte-check report the real one as
-          // left open, four files away.) Measured on this tree with esbuild, minified:
-          // `markdown()` costs **500,618 B raw / 171,369 B gzip -9** against
-          // **312,798 / 101,872** for the language plus its keymap — **187,820 B raw / 69,497 B gzip**
-          // for highlighting HTML that a markdown note rarely contains. `markdownKeymap` is imported
-          // explicitly because it is the part of `markdown()` worth keeping (Enter continues a list),
-          // and taking it by name is what lets the html import tree-shake away.
-          //
-          // If you replace this with `markdown()`, the bundle grows by two thirds of the editor.
-          // Fenced-code sub-language highlighting is what that would buy, and no card asks for it.
-          markdownLanguage.extension,
-          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-          EditorView.lineWrapping,
-          EditorView.editable.of(editable),
-          // The zero states, as CM6's own placeholder rather than as a Svelte node — the container
-          // has no template children and this is why it does not need any.
-          placeholder(editable ? 'Write markdown…' : 'No note open.'),
-          // Out through the update listener, as ADR 0001 §2 requires. It sets runes the effect above
-          // never reads, so our own wiring cannot cycle; the echo guard is what holds when someone
-          // else's wiring does.
-          EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
-              dirty = true
-              saved = null
-              // Including the transaction `keepTheirs` dispatches — from CM6's side that is an edit
-              // like any other, which is why that function sets its own two runes *after* the
-              // dispatch rather than before it.
-              resolution = null
-              // The document seam. `update.state.doc` and not the note's `body`: this is the value on
-              // screen, which is the only one a preview or a link panel can honestly render.
-              publish(update.state.doc.toString())
-            }
-          }),
-          theme,
-        ],
-      }),
+      doc: opened?.body ?? '',
+      editable,
+      placeholder: editable ? 'Write markdown…' : 'No note open.',
+      onSave: onSaveKey,
+      onChange: (document) => {
+        dirty = true
+        saved = null
+        // Including the transaction `keepTheirs` dispatches — from CM6's side that is an edit like
+        // any other, which is why that function sets its own two runes *after* the dispatch rather
+        // than before it.
+        resolution = null
+        // The document seam. The view's document and not the note's `body`: this is the value on
+        // screen, which is the only one a preview or a link panel can honestly render.
+        publish(document)
+      },
     })
   }
 
@@ -345,10 +386,15 @@
   function keepTheirs(): void {
     const versions = conflict
     const current = view
-    if (versions === null || current === undefined || saving) {
+    // `kit` is non-null whenever `view` is — a view can only exist because the module arrived — but
+    // TypeScript cannot see that, and asserting it would be the one place a refactor could make the
+    // claim false without anything complaining. `HISTORY_ISOLATION` lives in the lazy module because
+    // `isolateHistory` is a `@codemirror/commands` value; see `lib/codemirror.ts`.
+    const loaded = kit
+    if (versions === null || current === undefined || loaded === null || saving) {
       return
     }
-    syncDocument(current, versions.stored.body, [isolateHistory.of('full')])
+    syncDocument(current, versions.stored.body, loaded.HISTORY_ISOLATION)
     basedOn = versions.stored.updated_at
     dirty = false
     conflict = null
@@ -410,28 +456,6 @@
       saving = false
     }
   }
-
-  /**
-   * CM6 injects its own CSS through `style-mod` at runtime, so this theme costs JavaScript rather
-   * than stylesheet — and it reads `app.css`'s tokens, so the editor is one surface with the app in
-   * both colour schemes instead of a light rectangle inside a dark page.
-   */
-  const theme = EditorView.theme({
-    '&': {
-      backgroundColor: 'transparent',
-      color: 'var(--ink)',
-      fontFamily: 'var(--mono)',
-      fontSize: '0.9rem',
-      height: '100%',
-    },
-    '.cm-scroller': { fontFamily: 'inherit', lineHeight: '1.6' },
-    '.cm-content': { caretColor: 'var(--accent)' },
-    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)' },
-    '.cm-gutters': { backgroundColor: 'transparent', borderRight: '1px solid var(--edge)' },
-    '.cm-activeLine': { backgroundColor: 'color-mix(in srgb, var(--accent) 6%, transparent)' },
-    '&.cm-focused': { outline: 'none' },
-    '.cm-placeholder': { color: 'var(--muted)' },
-  })
 </script>
 
 <section class="pane" aria-label="Editor">
@@ -500,6 +524,14 @@
 
   {#if refusal}
     <p class="conflict" data-testid="save-error">{refusal}</p>
+  {/if}
+
+  {#if unavailable}
+    <!-- KAN-767's lazy chunk failing to arrive. A **sibling** of the container below, like every
+         other message in this pane: the empty container is the honest rendering of "there is no
+         editor", and a word of Svelte-owned text inside it would be PLAN §S9 broken by the notice
+         that explains why S9's occupant is missing. -->
+    <p class="conflict" data-testid="editor-unavailable">{unavailable}</p>
   {/if}
 
   <!--

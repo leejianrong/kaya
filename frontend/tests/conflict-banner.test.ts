@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import EditorPane from '../src/components/EditorPane.svelte'
 import * as auth from '../src/lib/auth'
 import type { Note } from '../src/lib/types'
+import { editorArrived } from './editor-arrival'
 import { box } from './reactive.svelte'
 import { FAKE_TOKEN } from './token'
 
@@ -99,10 +100,14 @@ function stubFetch(...replies: Reply[]): Call[] {
   return calls
 }
 
-function open(initial: Note | null = note()): {
+/**
+ * `async` since KAN-767: CodeMirror is behind a dynamic `import()`, so the container is empty until the
+ * chunk lands and every `editor(container)` below would find nothing. See `editor-arrival.ts`.
+ */
+async function open(initial: Note | null = note()): Promise<{
   opened: ReturnType<typeof box<Note | null>>
   container: HTMLElement
-} {
+}> {
   const opened = box<Note | null>(initial)
   mounted.push(
     mount(EditorPane, {
@@ -116,6 +121,7 @@ function open(initial: Note | null = note()): {
     }),
   )
   flushSync()
+  await editorArrived(host)
   return { opened, container: host.querySelector('.editor-host')! }
 }
 
@@ -182,7 +188,7 @@ describe('the banner shows both versions', () => {
     // keep; a rendering that dropped the trailing newline would be describing a note that does not
     // exist.
     stubFetch({ status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) })
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
 
     expect(pick('conflict-mine-body')!.textContent).toBe(MINE)
@@ -195,7 +201,7 @@ describe('the banner shows both versions', () => {
     // markdown note that the note does not contain.
     const fussy = '```\n  two  spaces\n```\ntail 🌱 é'
     stubFetch({ status: 409, payload: refusal(fussy, `${fussy}!`, THEIRS_AT) })
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container, fussy)
 
     expect(pick('conflict-mine-body')!.textContent).toBe(fussy)
@@ -204,7 +210,7 @@ describe('the banner shows both versions', () => {
 
   it('marks the region that differs and leaves the shared lines unmarked', async () => {
     stubFetch({ status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) })
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
 
     expect(pick('conflict-mine-body')!.querySelector('mark')!.textContent).toBe('2. my step\n')
@@ -213,7 +219,7 @@ describe('the banner shows both versions', () => {
 
   it('names both stamps outside the comparison, so hiding it does not hide them', async () => {
     stubFetch({ status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) })
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
 
     click('conflict-toggle')
@@ -231,7 +237,7 @@ describe('the banner shows both versions', () => {
     // `concurrency.py`'s second "looks like a bug and is not": a body-only write's `409` carries the
     // stored `title` and `path` on **both** sides, because kaya never saw the caller's base version.
     stubFetch({ status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) })
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
 
     const agreed = prose('conflict-agreed')
@@ -243,7 +249,7 @@ describe('the banner shows both versions', () => {
 
   it('says so when the two bodies are identical instead of showing two silent columns', async () => {
     stubFetch({ status: 409, payload: refusal(MINE, MINE, THEIRS_AT) })
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
 
     expect(prose('conflict-identical')).toContain('The two bodies are identical')
@@ -260,7 +266,7 @@ describe('keep mine', () => {
       { status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) },
       { status: 200, payload: note({ body: MINE, updated_at: WRITTEN_AT }) },
     )
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
 
     click('conflict-keep-mine')
@@ -281,7 +287,7 @@ describe('keep mine', () => {
       { status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) },
       { status: 200, payload: note({ body: MINE, updated_at: WRITTEN_AT }) },
     )
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
 
     click('conflict-keep-mine')
@@ -298,7 +304,7 @@ describe('keep mine', () => {
       { status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) },
       { status: 200, payload: note({ body: MINE, updated_at: WRITTEN_AT }) },
     )
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
     const view = editor(container)
     const node = container.firstElementChild
@@ -320,7 +326,7 @@ describe('keep mine', () => {
       { status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) },
       { status: 200, payload: note({ body: MINE, updated_at: WRITTEN_AT }) },
     )
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
     typeAll(editor(container), `${MINE}typed while deciding\n`)
 
@@ -335,7 +341,7 @@ describe('keep mine', () => {
       { status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) },
       { status: 200, payload: note({ body: MINE, updated_at: WRITTEN_AT }) },
     )
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
 
     click('conflict-keep-mine')
@@ -354,7 +360,7 @@ describe('keep theirs', () => {
     // Nothing to write: the stored version already *is* what the server holds. A `PATCH` here would
     // be a write whose only effect is a new `updated_at`, and it could fail.
     const calls = stubFetch({ status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) })
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
     expect(calls).toHaveLength(1)
 
@@ -370,7 +376,7 @@ describe('keep theirs', () => {
     // test needs — survives. Node identity is the instrument, as in `editor-pane.test.ts`.
     const destroy = vi.spyOn(EditorView.prototype, 'destroy')
     stubFetch({ status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) })
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
     const view = editor(container)
     const node = container.firstElementChild
@@ -390,7 +396,7 @@ describe('keep theirs', () => {
     // so ⌘/Ctrl-Z is a real undo. It matters because ADR 0009 §Consequences is explicit that there is
     // **no revision history** — this is the only copy of the text that exists after the click.
     stubFetch({ status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) })
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
     const view = editor(container)
 
@@ -407,7 +413,7 @@ describe('keep theirs', () => {
 
   it('never claims a save, because nothing was written', async () => {
     stubFetch({ status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) })
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
 
     click('conflict-keep-theirs')
@@ -427,7 +433,7 @@ describe('keep theirs', () => {
       { status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) },
       { status: 200, payload: note({ body: `${THEIRS}mine again\n`, updated_at: WRITTEN_AT }) },
     )
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
 
     click('conflict-keep-theirs')
@@ -451,7 +457,7 @@ describe('a conflict on the retry, because the note can move again while you rea
       { status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) },
       { status: 409, payload: refusal(MINE, `${THEIRS}third writer\n`, THIRD_AT, THEIRS_AT) },
     )
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
 
     click('conflict-keep-mine')
@@ -474,7 +480,7 @@ describe('a conflict on the retry, because the note can move again while you rea
       { status: 409, payload: refusal(MINE, `${THEIRS}third writer\n`, THIRD_AT, THEIRS_AT) },
       { status: 200, payload: note({ body: MINE, updated_at: WRITTEN_AT }) },
     )
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
 
     click('conflict-keep-mine')
@@ -492,7 +498,7 @@ describe('a conflict on the retry, because the note can move again while you rea
     // Correct, and not news: claiming "it changed again" on an unchanged stored stamp would teach the
     // user to distrust the one sentence that means someone is writing right now.
     stubFetch({ status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) })
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
     expect(pick('conflict-moved-again')).toBeNull()
 
@@ -519,7 +525,7 @@ describe("PLAN §S9, with the banner up", () => {
     // container has zero template children, so a `<ConflictBanner />` moved inside it would be named
     // there — and this one covers the state that source check cannot reach: a conflict actually up.
     stubFetch({ status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) })
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
 
     const rendered = pick('conflict')!
@@ -532,7 +538,7 @@ describe("PLAN §S9, with the banner up", () => {
   it('does not remount the editor when the banner appears or is resolved', async () => {
     const destroy = vi.spyOn(EditorView.prototype, 'destroy')
     stubFetch({ status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) })
-    const { container } = open()
+    const { container } = await open()
     const node = container.firstElementChild
 
     await saveIntoConflict(container)
@@ -549,7 +555,7 @@ describe("PLAN §S9, with the banner up", () => {
     // The four-character sweep `kaya config show` is held to. The banner is the widest new surface in
     // this card — two whole notes, an API message, and prose about both.
     stubFetch({ status: 409, payload: refusal(MINE, THEIRS, THEIRS_AT) })
-    const { container } = open()
+    const { container } = await open()
     await saveIntoConflict(container)
 
     for (let start = 0; start + 4 <= FAKE_TOKEN.length; start += 1) {

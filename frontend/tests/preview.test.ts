@@ -32,6 +32,7 @@ import EditorPane from '../src/components/EditorPane.svelte'
 import PreviewPane from '../src/components/PreviewPane.svelte'
 import * as auth from '../src/lib/auth'
 import type { Note } from '../src/lib/types'
+import { editorArrived } from './editor-arrival'
 import { box, type Box } from './reactive.svelte'
 import { FAKE_TOKEN } from './token'
 
@@ -88,8 +89,12 @@ interface Pair {
  *
  * The preview is mounted lazily so a test can prove the seam works for a consumer that arrives *late* —
  * which is the toggle's case, and the thing the deleted `MutationObserver` used to insure by hand.
+ *
+ * `async` since KAN-767: CodeMirror is behind a dynamic `import()`, so the editor is not in the region
+ * when `mount()` returns and the preview's first publish has not happened yet. See
+ * `editor-arrival.ts`.
  */
-function mountPair(opened: Box<Note | null>, options: { preview?: boolean } = {}): Pair {
+async function mountPair(opened: Box<Note | null>, options: { preview?: boolean } = {}): Promise<Pair> {
   const region = document.createElement('div')
   host.append(region)
   const live = box('')
@@ -110,7 +115,7 @@ function mountPair(opened: Box<Note | null>, options: { preview?: boolean } = {}
       },
     }),
   )
-  flushSync()
+  await editorArrived(region)
 
   const mountPreview = (): void => {
     mounted.push(
@@ -159,19 +164,19 @@ function typeInto(view: EditorView, text: string): void {
 }
 
 describe('the preview follows the document', () => {
-  it('renders the open note before anything is typed', () => {
+  it('renders the open note before anything is typed', async () => {
     // The build-time publish: a newly mounted view fired no transaction, so the update listener never
     // ran, and the preview would be blank if `EditorPane` did not publish once after building.
     const opened = box<Note | null>(note({ body: '# Hello\n\nA paragraph.' }))
-    const { region } = mountPair(opened)
+    const { region } = await mountPair(opened)
 
     expect(preview(region).querySelector('h1')?.textContent).toBe('Hello')
     expect(preview(region).querySelector('p')?.textContent).toBe('A paragraph.')
   })
 
-  it('updates as the document changes, without the change passing through `note`', () => {
+  it('updates as the document changes, without the change passing through `note`', async () => {
     const opened = box<Note | null>(note({ body: '# One' }))
-    const { region } = mountPair(opened)
+    const { region } = await mountPair(opened)
     const before = opened.value
 
     typeInto(editor(region), '## Two\n\n- a\n- b')
@@ -187,9 +192,9 @@ describe('the preview follows the document', () => {
     expect(opened.value?.body).toBe('# One')
   })
 
-  it('keeps up over a sequence of edits', () => {
+  it('keeps up over a sequence of edits', async () => {
     const opened = box<Note | null>(note({ body: '' }))
-    const { region } = mountPair(opened)
+    const { region } = await mountPair(opened)
     const view = editor(region)
 
     for (const [source, expected] of [
@@ -202,9 +207,9 @@ describe('the preview follows the document', () => {
     }
   })
 
-  it('empties when the note is closed', () => {
+  it('empties when the note is closed', async () => {
     const opened = box<Note | null>(note({ body: '# Something' }))
-    const { region } = mountPair(opened)
+    const { region } = await mountPair(opened)
     expect(preview(region).textContent).toContain('Something')
 
     opened.value = null
@@ -213,12 +218,12 @@ describe('the preview follows the document', () => {
     expect(preview(region).childNodes).toHaveLength(0)
   })
 
-  it('follows the editor to a different note', () => {
+  it('follows the editor to a different note', async () => {
     // `EditorPane` destroys and rebuilds its view here (ADR 0008's identity guard is keyed on the
     // ref), and the seam publishes again from the new view. A preview still showing the previous
     // note's text is the failure this pins.
     const opened = box<Note | null>(note({ body: '# First' }))
-    const { region } = mountPair(opened)
+    const { region } = await mountPair(opened)
 
     opened.value = note({ ref: 'NOTE-7', body: '# Second' })
     flushSync()
@@ -227,11 +232,11 @@ describe('the preview follows the document', () => {
     expect(editor(region).state.doc.toString()).toBe('# Second')
   })
 
-  it('shows the editor’s document rather than the stale prop after an unsaved edit', () => {
+  it('shows the editor’s document rather than the stale prop after an unsaved edit', async () => {
     // The parent's copy goes out of date the moment you type, and the seam publishes `state.doc` and
     // never `note.body`, so a re-render handing down the server's version cannot win.
     const opened = box<Note | null>(note({ body: '# Saved' }))
-    const { region } = mountPair(opened)
+    const { region } = await mountPair(opened)
     typeInto(editor(region), '# Typed, not saved')
 
     // A new object with the *old* body — exactly what `EditorPane`'s `appliedBody` guard exists for.
@@ -241,12 +246,12 @@ describe('the preview follows the document', () => {
     expect(preview(region).querySelector('h1')?.textContent).toBe('Typed, not saved')
   })
 
-  it('is correct for a consumer that mounts after the editing has already happened', () => {
+  it('is correct for a consumer that mounts after the editing has already happened', async () => {
     // The seam's value lives in a rune, so a preview appearing late reads the current document rather
     // than having to go and find it. This is what the deleted `MutationObserver` was insuring by hand
     // when the preview reached into the view; the prop makes the ordering hazard not exist.
     const opened = box<Note | null>(note({ body: '# Before the preview existed' }))
-    const pair = mountPair(opened, { preview: false })
+    const pair = await mountPair(opened, { preview: false })
     typeInto(editor(pair.region), '# Typed with no preview mounted')
 
     pair.mountPreview()
@@ -258,9 +263,9 @@ describe('the preview follows the document', () => {
 })
 
 describe('the document seam costs the editor nothing', () => {
-  it('does not rebuild the view or its element when the document changes', () => {
+  it('does not rebuild the view or its element when the document changes', async () => {
     const opened = box<Note | null>(note({ body: 'a' }))
-    const { region } = mountPair(opened)
+    const { region } = await mountPair(opened)
     const view = editor(region)
     const element = region.querySelector('.cm-editor')
 
@@ -271,12 +276,12 @@ describe('the document seam costs the editor nothing', () => {
     expect(view.state.doc.toString()).toBe('a longer document, typed')
   })
 
-  it('leaves the caret alone and the undo history intact', () => {
+  it('leaves the caret alone and the undo history intact', async () => {
     // The observable harm an effect re-run would do. A `syncDocument` replace maps the selection
     // through a whole-document change, and a remount discards `history()` — so a caret that stayed put
     // and an undo that still works are together the evidence that neither happened.
     const opened = box<Note | null>(note({ body: 'hello' }))
-    const { region } = mountPair(opened)
+    const { region } = await mountPair(opened)
     const view = editor(region)
 
     view.dispatch({ changes: { from: 5, insert: ' world' }, selection: { anchor: 8 } })
@@ -291,17 +296,17 @@ describe('the document seam costs the editor nothing', () => {
     expect(preview(region).textContent).toBe('hello world!')
   })
 
-  it('does not mark the note dirty by publishing', () => {
+  it('does not mark the note dirty by publishing', async () => {
     // The build-time publish must not look like an edit. Opening a note that says `unsaved changes`
     // would make `⌘S` `PATCH` a body identical to the stored one.
     const opened = box<Note | null>(note())
-    const { region } = mountPair(opened)
+    const { region } = await mountPair(opened)
 
     expect(region.querySelector('[data-testid="save-state"]')?.textContent?.trim()).toBe('no changes')
     expect(region.querySelector('button')?.hasAttribute('disabled')).toBe(true)
   })
 
-  it('publishes with no consumer attached at all', () => {
+  it('publishes with no consumer attached at all', async () => {
     // `ondocument` is optional, and an `EditorPane` with nobody listening must not throw. V6 and the
     // existing `tests/editor-pane.test.ts` mount it without the prop.
     const opened = box<Note | null>(note({ body: '# Alone' }))
@@ -316,16 +321,16 @@ describe('the document seam costs the editor nothing', () => {
         },
       }),
     )
-    flushSync()
+    await editorArrived(host)
     expect(() => typeInto(editor(host), '# Still alone')).not.toThrow()
     expect(editor(host).state.doc.toString()).toBe('# Still alone')
   })
 
-  it('renders nothing inside CM6’s subtree', () => {
+  it('renders nothing inside CM6’s subtree', async () => {
     // PLAN §S9 from this card's side. `tests/shell.test.ts` and `tests/editor-container.test.ts` own
     // the claim about `EditorPane`; this says the *preview* did not become a way around it.
     const opened = box<Note | null>(note({ body: '# H' }))
-    const { region } = mountPair(opened)
+    const { region } = await mountPair(opened)
 
     expect(region.querySelector('.editor-host [data-testid="preview"]')).toBeNull()
     expect(preview(region).closest('.editor-host')).toBeNull()
@@ -350,9 +355,9 @@ describe('a note body is rendered inert in the live preview', () => {
   ]
 
   for (const [payload, witness] of PAYLOADS) {
-    it(`stays inert when the document is: ${payload.slice(0, 32)}`, () => {
+    it(`stays inert when the document is: ${payload.slice(0, 32)}`, async () => {
       const opened = box<Note | null>(note({ body: '' }))
-      const { region } = mountPair(opened)
+      const { region } = await mountPair(opened)
       typeInto(editor(region), payload)
 
       const rendered = preview(region)
@@ -406,6 +411,7 @@ describe('the preview toggle', () => {
     // command about the pane beside it would silently discard unsaved work.
     mounted.push(mount(App, { target: host, props: {} }))
     await settle()
+    await editorArrived(host)
 
     const view = editor(host)
     const element = host.querySelector('.cm-editor')
@@ -426,6 +432,7 @@ describe('the preview toggle', () => {
   it('puts the preview beside the editor inside the shell, not inside it', async () => {
     mounted.push(mount(App, { target: host, props: {} }))
     await settle()
+    await editorArrived(host)
 
     const rendered = preview(host)
     expect(rendered.closest('.editor-host')).toBeNull()

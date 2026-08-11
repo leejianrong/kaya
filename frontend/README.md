@@ -10,11 +10,12 @@ npm run lint     # eslint + svelte-check
 npm test         # vitest, once
 ```
 
-KAN-531 got the toolchain and the dev proxy working; KAN-552 added the app skeleton the rest of V3
-is built inside, KAN-553 put CodeMirror 6 in it, KAN-555 added the way in and KAN-556 the conflict
-banner. What is here is a browsable three-region app with a working markdown editor that saves under
-ADR 0009's precondition and offers keep mine / keep theirs / side by side when it is refused; what is
-not is a live preview or a folder tree (KAN-554).
+KAN-531 got the toolchain and the dev proxy working; KAN-552 added the app skeleton the rest of V3 is
+built inside, KAN-553 put CodeMirror 6 in it, KAN-555 added the way in, KAN-556 the conflict banner,
+KAN-554 the folder tree and the live preview, and KAN-767 moved the editor out of the entry chunk. What
+is here is the whole of V3: a browsable three-region app with a folder tree over `path`, a live
+preview, and a markdown editor that saves under ADR 0009's precondition and offers keep mine / keep
+theirs / side by side when it is refused — and that arrives on its own chunk, when a note is opened.
 
 ## The layout, and who replaces what
 
@@ -27,6 +28,7 @@ src/
   lib/api.ts                 apiPath + apiRequest — the one place a request happens
   lib/auth.ts                the credential seam: the only module that knows what a bearer is
   lib/editor.ts              the editor's two guards + ADR 0009's two versions, as pure functions
+  lib/codemirror.ts          every runtime CodeMirror value, behind one import() (KAN-767)
   lib/notes.ts               the five note calls
   lib/router.ts              / and /notes/:ref, hand-written, no dependency
   lib/types.ts               the wire shapes, mirroring backend/app/api/schemas.py
@@ -129,6 +131,18 @@ cleanup.** Svelte runs an effect's cleanup before every re-run, and the re-run i
 `return () => view.destroy()` there would destroy the view on exactly the content change the identity
 guard exists to survive. The per-note destroy sits in the effect body beside the construction it
 replaces; the per-component destroy is a second effect that reads nothing.
+
+**KAN-767 made the library lazy and deliberately left that effect synchronous**, because those two
+sentences are the reason the obvious lazy implementation is wrong. Put the `await import()` at the top
+of the mount effect and two runs of it can be in flight at once: a cleanup firing while run A is still
+awaiting sees `view === undefined`, destroys nothing, and then A resolves and builds into a container
+run B is also building into — two views in one host, or an orphan whose `destroy()` will never be
+called. So the `import()` lives in the *second* effect, the one that reads nothing, which therefore
+runs exactly once per component; the mount effect only **reads** the resulting rune, and returns early
+while it is `null` exactly as it already did while `host` was `undefined`. There is nothing to cancel
+because nothing races. `tests/editor-lazy-mount.test.ts` acts inside that gap — navigating and
+unmounting before the module lands — and `tests/editor-chunk-failure.test.ts` covers the chunk that
+never arrives, which is a state the entry bundle could not be in.
 
 ### Saving
 
@@ -251,10 +265,67 @@ its own (a two-column grid, two scrolling `<pre>`s, a highlight) and the baselin
 1.7 kB gzip is still less than 1.5% of what the page fetches. No new dependency: the comparison is
 about forty lines of stdlib string work, and CodeMirror is still the only runtime dependency.
 
-One JS chunk and one CSS file, so an editor page fetches **392,516 B raw / 128,283 B gzip -9** in
-total and there is no second request hiding behind the entry number. CSS barely moves because CM6
-injects its own styles through `style-mod` at runtime — the editor's theme is JavaScript, which is
-also why it can read `app.css`'s tokens.
+### KAN-767: the editor is its own chunk, because the landing page paid for it
+
+Everything above was **one** JS chunk, and that became a defect the moment KAN-555 landed rather than
+when KAN-553 did. A visitor with **no credential** sees the landing page and pastes a pandan PAT into
+a password field; with CM6 in the entry chunk they downloaded a markdown grammar, a view layer and an
+undo history first, possibly without having an account yet. So `lib/codemirror.ts` holds every runtime
+CodeMirror value and `EditorPane.svelte` reaches it through one `import()`. Measured the same way,
+against `origin/main` at `2adfe99`:
+
+| | before (KAN-554) | after (KAN-767) | delta |
+|---|---|---|---|
+| Entry JS raw | 381,926 B | 134,770 B | **−247,156 B (−64.7%)** |
+| Entry JS gzip -9 | 125,862 B | 47,581 B | **−78,281 B (−62.2%)** |
+| Editor chunk raw | — | 248,645 B | new, on demand |
+| Editor chunk gzip -9 | — | 79,553 B | new, on demand |
+| CSS raw | 10,590 B | 10,590 B | 0 |
+| CSS gzip -9 | 2,421 B | 2,421 B | 0 |
+
+CSS does not move at all, for the reason this whole section has always given: CM6 injects its own
+styles through `style-mod` at runtime, so the editor's theme is JavaScript.
+
+What the two *pages* actually fetch, which is the number the card is about rather than the chunk list:
+
+| Page | before | after | delta |
+|---|---|---|---|
+| **Landing** (no credential) — entry JS + CSS | 392,516 raw / 128,283 gzip -9, 2 requests | 145,360 / **50,002**, 2 requests | −247,156 raw / **−78,281 gzip (−61.0%)** |
+| **Editor** — entry + editor chunk + CSS | 392,516 / 128,283, 2 requests | 394,005 / **129,555**, 3 requests | +1,489 raw / **+1,272 gzip (+1.0%)** |
+
+**So an editor page fetches 1,272 B gzip more than it did, and that is the trade stated plainly.**
+Splitting a bundle costs a little — a second chunk carries its own module preamble and loses some
+cross-module minification — and it buys 78 KB gzip on the page where a person has not decided to use
+kaya yet. The visitor the card exists for pays 61% less; the visitor who opens a note pays 1% more,
+having already paid nothing for the landing page they came through. There is **no `modulepreload`** for
+the editor chunk in `dist/index.html` — checked rather than assumed, because Vite emits one for
+statically imported chunks and that would have made the whole split invisible at the network layer.
+
+**One number this card did *not* fix, measured rather than guessed.** The entry chunk is still 47,581 B
+gzip, and **20,585 B of that is `@lezer/markdown`** — the live preview's parser, which
+`PreviewPane.svelte` imports statically. Measured by stubbing `lib/markdown.ts`'s import and
+rebuilding: the entry drops to 72,401 B raw / **26,996 B gzip** and the grammar moves wholly into the
+editor chunk (310,782 / 99,697), since `@codemirror/lang-markdown` needs it too. So a landing page
+could plausibly fetch ~29 kB gzip rather than 50 kB. That is a second lazy boundary, around the
+*preview*, it is a card of its own, and it is out of KAN-767's scope — recorded here so it stays a
+decision someone makes rather than a number nobody noticed.
+
+The guard is `tests/editor-chunk-is-lazy.test.ts`, and it exists because this regression is silent:
+one `import { EditorView } from '@codemirror/view'` at the top of any file in `src/` re-merges the
+chunk with every other test still green, and the only witness would be this table, which nobody
+re-measures on an unrelated card. It asserts over parsed ASTs — `svelte/compiler` for components,
+`typescript` for modules, never a grep, because there are six prose mentions of `@codemirror` in
+`src/` arguing about exactly this — that `lib/codemirror.ts` is the only file value-importing
+`@codemirror/*` **and** that nothing static-imports it. Either alone re-merges the chunk. Type-only
+imports are allowed everywhere, because `verbatimModuleSyntax` erases them and `lib/editor.ts`
+legitimately has two.
+
+One consequence for anybody writing a test: **`mount()` + `flushSync()` no longer leaves an editor in
+the container.** The mount effect returns early until the module lands and then runs again, so a DOM
+test has to `await editorArrived(host)` (`tests/editor-arrival.ts`) first. It polls rather than
+awaiting a fixed number of microtask ticks, because the first `import()` in a worker really loads the
+module while later ones resolve from the registry — a tick count would pass in whichever position the
+file happened to run in.
 
 `markdownLanguage.extension` is installed rather than `markdown()`, and that is where 187,820 B raw /
 69,497 B gzip went **un**spent: `markdown()` wires `@codemirror/lang-html` in for raw-HTML blocks, and
