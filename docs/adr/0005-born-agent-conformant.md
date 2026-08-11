@@ -41,7 +41,7 @@ is half a contract.
 | 1 | `--format {human,json,toon}` over **one** serializer in `kaya-client` (ADR 0004), so formats cannot drift | `--json` is a documented alias for `--format json`; `--format` wins if both are given |
 | 2 | `--fields a,b,c` selects named columns on every list verb; vocabulary derived from the payload's own keys; an unknown name is a clean error naming it | **Omitting** it leaves structured output complete; supplying it narrows every format alike, which under `human` is the widening this row used to describe. Wording corrected by the 2026-08-09 (KAN-546) amendment below. A usage error on single-entity verbs, never a silent no-op |
 | 3 | Errors **structured on stdout**: `error<TAB><code><TAB><message><TAB><arg>`, or an `{"error": {...}}` object under a structured format, with all keys always present | Human `usage:` text still goes to stderr |
-| 4 | Exit codes: `0` ok · `1` runtime · `2` usage — the caller's input was rejected, by argparse or by the API (`400`) · `3` 401 · `4` 403 · `5` 404 | **Pandan's scheme, adopted verbatim.** Branch on the stable `code` string, never on message text. `2`'s wording widened by the 2026-08-09 amendment below; no number moved |
+| 4 | Exit codes: `0` ok · `1` runtime · `2` usage — the caller's input was rejected, by argparse or by the API (`400`) · `3` 401 · `4` 403 · `5` 404 · `6` 409 — the guarded write was refused because the note moved | **Pandan's scheme through `5`, adopted verbatim.** Branch on the stable `code` string, never on message text. `2`'s wording widened by the 2026-08-09 (KAN-718) amendment below; `6` added by the 2026-08-12 (KAN-724) one, and pandan's matching row is tracked as its KAN-831. No number moved for either |
 | 5 | A pre-computed `summary` on every list verb, describing **the returned set** — under a filter or `--limit`, the returned set, not the whole corpus | A trailing line for humans, a `summary` object for structured consumers, both from the same dict. **What is in it** was left open here and settled by the 2026-08-09 (KAN-548) amendment below: one key, `count`. A single entity gets none |
 | 6 | Text truncated by default with a **true** total and `--full` to opt out; an allow-list of prose fields, never "any long string" | A truncated value stays a string: no key added, removed or retyped. **Where** the total is written was left open here, and settled by the 2026-08-09 (KAN-547) amendment below: in-band, inside the string, so it reaches the structured formats too. The multi-byte guarantee is code points |
 | 7 | Bare `kaya` prints live state and exits `0`; `--help` still prints usage | No token → a structured auth error, not a stack trace. **How much** state was left open here, and settled by the 2026-08-09 (KAN-549) amendment below: the five most recent notes, sliced in `kaya-client` |
@@ -421,3 +421,64 @@ structured auth error, not a stack trace") arriving rather than a change of mind
 status, which is the correct answer to "is this kaya usable?" and was not what it was told before.
 `--help` and `--version` are untouched and both still answer before anything opens a session, which
 is what keeps the two commands a confused user reaches for working on a machine with no credential.
+
+## Amendment (2026-08-12, KAN-724): `6` is `409` — the note moved, and re-read-and-retry is the action
+
+§contract 4's table stopped at `5`, so ADR 0009's `409` took KAN-542's deliberate unmapped default
+and reported as exit `1`. Observed against a real backend:
+
+```
+kaya note edit NOTE-12 --body mine --if-updated-at <a stale stamp>
+  -> exit 1, error<TAB>note_conflict<TAB>NOTE-12 has changed since you read it. Nothing was written.<TAB>
+```
+
+**Why `1` is the wrong number rather than merely an imprecise one.** `1` means "something failed and
+no more specific meaning applies", which a script has to read as *kaya failed*. But nothing failed:
+the note moved, nothing was written, and the write can succeed. [ADR 0009](0009-optimistic-concurrency-on-note-bodies.md)
+went to the trouble of putting `attempted` and `stored` on that refusal as **two whole notes**
+precisely so a caller could merge and retry from one command's output — and exit `1` hides that
+affordance behind a number whose two available responses are both wrong. A script that retries a
+runtime failure re-sends the same stale precondition and is refused identically, forever; a script
+that abandons one throws away a conflict it was handed everything needed to resolve.
+
+**Why the `code` string on stdout is not already the answer.** It is the argument for keeping `1`,
+and it proves too much: `401`, `403` and `404` are equally derivable from `code` and have numbers
+anyway. §contract 4 exists so a shell can branch on `$?` without parsing stdout at all, and `409` is
+the one status where the correct action is unreachable from the number it was getting.
+
+**What changed.** `409 → 6` is a row added to `EXIT_FOR_STATUS` in `kaya-cli/src/kaya_cli/failures.py`
+alongside a new `EXIT_CONFLICT = 6`, and the table in §contract 4 above now carries it. Every half of
+the rule survives:
+
+- **It is an addition, not a renumber.** `0/1/2/3/4/5` mean exactly what they meant in V2a.
+  `tests/test_exit_codes.py` pins each shipped row by literal value and checks both tables as
+  *supersets*, so the row reddened nothing; the one literal it did have to widen is the published
+  range, from `{0..5}` to `{0..6}`, which is the new number being published rather than a pin being
+  loosened. A row pointing at `7` is still red.
+- **The refusal is keyed on its status, not on the code string.** `note_conflict` is deliberately
+  *not* a row in `EXIT_FOR_CODE`. It is today's only `409` code, and the backend's vocabulary grows
+  without the client's knowledge, so the next one must exit `6` without anybody remembering to add
+  it — the same reasoning that made `401`/`403`/`404` status-keyed and `400` a status row in KAN-718.
+- **The unmapped default stays `1`, and nothing else joined.** `422` in particular did not: a body
+  the API validated and rejected has no action a number could name that its `code` does not already
+  name better, and adding rows nobody asked for is what the add-only rule guards against.
+- **Not `2`.** KAN-718 widened `2` to "the caller's input was rejected" on purpose and declined to
+  default unknown statuses into it. A `409` is the case that argues hardest for the restraint: the
+  precondition was *correct when it was read*, so sending the caller back to re-read their own
+  command line would be as wrong as `1` is, in the other direction.
+
+**Why a seventh number is not the thing this ADR warned against.** The warning above is scoped —
+*"inventing a seventh number for **the API rejected your input** would have been the version of this
+change that broke the sameness"*. That meaning already had a number, so reusing `2` kept a pandan
+user's model of kaya correct. `409` has no number that fits: it is neither kaya failing nor the
+caller's input being wrong. Adding a row a pandan user's model does not contain cannot make that
+model wrong; mapping `409` onto a number that model *does* contain would.
+
+**Sameness is preserved by extending both tools, not by kaya abstaining.** This was checked before
+it was chosen. Pandan does return `409`s — `backend/app/routers/members.py` (the user is already a
+member) and `backend/app/routers/boards.py` (no board available and none supplied) — and pandan's CLI
+has no `409` row: `pandan-cli/pandan_cli/cli.py` publishes `0/1/2/3/4/5` and maps every other non-2xx
+to `api_error → EXIT_ERROR = 1`, the same unmapped default kaya had. So the divergence is real, and
+the matching change is filed as **KAN-831 on pandan's board 5**. It is temporary and tracked rather
+than an oversight, and it is the safe direction to diverge in: a `6` an operator has not met yet is a
+number they look up, whereas a `409` reported as `1` is a number they act on wrongly.

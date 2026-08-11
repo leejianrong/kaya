@@ -55,6 +55,27 @@ It is a row in ``EXIT_FOR_STATUS`` and **not** a row in ``EXIT_FOR_CODE``. Keyin
 backend's code vocabulary grows without this package's knowledge, and the next `400` code — a
 malformed cursor, a rejected path — must exit `2` without anybody remembering to add it. The default
 for everything else stays `1`, because only `400` carries that meaning in its status alone.
+
+### Why `409` is a *row*, and the one status that needed a number of its own (KAN-724)
+
+`409` is where the default's two available answers are both wrong. It is not kaya failing, so `1` is
+a lie; and the precondition was *correct when it was read*, so `2` would send a caller back to
+re-read its own command line over a race it had no way to avoid — the direction KAN-718 was explicit
+about not widening `2` into. What a `409` caller should do is re-read and retry, and ADR 0009's body
+is built for exactly that: the refusal carries ``attempted`` and ``stored`` as two whole notes, so
+the merge is available from one command's output. None of it is reachable from `1`, because a script
+must read `1` as "kaya failed" — so it either retries the same stale precondition forever or
+abandons a conflict it could have resolved.
+
+That the code string is on stdout is not the answer to this. `401`, `403` and `404` are equally
+derivable from it and have numbers anyway; the table exists so a shell can branch on ``$?`` without
+parsing stdout at all.
+
+It is a row in ``EXIT_FOR_STATUS`` and **not** in ``EXIT_FOR_CODE``, for the reason `400` is:
+``note_conflict`` is today's only `409` code and the backend's vocabulary grows without this
+package's knowledge, so the next one must exit `6` without anybody remembering to add it. The
+default for everything else — `422`, `503`, whatever arrives next — is still `1`, and adding a row
+is still the only way out of it.
 """
 
 import sys
@@ -86,6 +107,14 @@ EXIT_NOT_FOUND = 5
 """`404`. Distinct from `4` because "not yours" and "not there" lead a script to different actions,
 and `app/auth/authorization.py` goes to real trouble to keep them distinguishable."""
 
+EXIT_CONFLICT = 6
+"""`409`. The write was refused because the note moved under it (ADR 0009), and **nothing was
+written**. KAN-724's addition, and the only meaning that needed a number rather than a reused one:
+the caller did nothing wrong, kaya did not fail, and the action a script should take — re-read,
+merge the ``attempted``/``stored`` pair the refusal carries, retry — is reachable from neither `1`
+nor `2`. It is keyed on the *status* rather than on ``note_conflict``, so a second `409` code
+arriving in the backend's vocabulary exits `6` without this package being told."""
+
 EXIT_FOR_CODE: Mapping[str, int] = MappingProxyType(
     {
         "usage": EXIT_USAGE,
@@ -113,6 +142,7 @@ EXIT_FOR_STATUS: Mapping[int, int] = MappingProxyType(
         401: EXIT_UNAUTHENTICATED,
         403: EXIT_FORBIDDEN,
         404: EXIT_NOT_FOUND,
+        409: EXIT_CONFLICT,
     }
 )
 """ADR 0005's status-keyed meanings. Consulted before ``EXIT_FOR_CODE`` for an ``ApiError``, for the
@@ -121,6 +151,13 @@ reason in this module's docstring: the API's code vocabulary grows and its statu
 ``400`` is KAN-718's addition and reuses ``EXIT_USAGE``, which is an **addition to this table**, not
 a renumber — no shipped number moved, and ADR 0005's add-only rule permits exactly this. See the
 module docstring for why it is keyed on the status rather than on ``invalid_note_ref``.
+
+``409`` is KAN-724's addition and is the one row that brought a *new* number with it. Also an
+addition and not a renumber, for the same reason and with the same proof — and a seventh meaning is
+not what ADR 0005 warned against, because there was no existing number for "the note moved under
+you". Mapping it onto one there was would have been the change that broke the sameness. Pandan's
+matching change is tracked as KAN-831 on its board 5; until it lands, a `409` from pandan's CLI is
+still its own unmapped `1`.
 """
 
 
