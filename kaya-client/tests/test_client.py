@@ -61,6 +61,57 @@ def test_list_notes_hits_the_notes_route() -> None:
     assert str(handler.seen.url) == f"{BASE_URL}/api/v1/notes"  # type: ignore[attr-defined]
 
 
+def test_list_notes_with_no_q_adds_no_query_parameter() -> None:
+    """``q=None`` (the default) must be indistinguishable on the wire from `list_notes()` today —
+    KAN-559 adds a parameter, and the existing plain list is the one request that must not change.
+    """
+    handler = responder(200, NOTE_LIST_BODY)
+    with client_over(handler) as client:
+        client.list_notes(None)
+    assert str(handler.seen.url) == f"{BASE_URL}/api/v1/notes"  # type: ignore[attr-defined]
+
+
+def test_list_notes_forwards_q_as_a_query_parameter() -> None:
+    handler = responder(200, NOTE_LIST_BODY)
+    with client_over(handler) as client:
+        client.list_notes("reading list")
+    seen = handler.seen  # type: ignore[attr-defined]
+    assert seen.url.path == "/api/v1/notes"
+    assert dict(seen.url.params) == {"q": "reading list"}
+
+
+def test_list_notes_returns_a_collection_payload_when_searching() -> None:
+    """The response is the same ``NoteList`` shape a plain list gets — no ``rank`` key, no second
+    envelope — so a search result and a listing go through the same ``Payload.collection``.
+    """
+    with client_over(responder(200, NOTE_LIST_BODY)) as client:
+        payload = client.list_notes("reading")
+    assert payload.kind is Kind.COLLECTION
+    assert [record["ref"] for record in payload.records] == ["NOTE-12", "NOTE-3"]
+
+
+def test_list_notes_forwards_a_blank_q_rather_than_refusing_it_client_side() -> None:
+    """`app/api/search.py` refuses a present-but-blank ``q`` with a `400`, and that refusal has to
+    happen there and nowhere earlier — see ``notes_matching``'s docstring on why a client-side
+    opinion about a search term would be a second resolver disagreeing with the first (ADR 0008's
+    argument, one layer over). This client sends exactly what it was given.
+    """
+    handler = responder(200, NOTE_LIST_BODY)
+    with client_over(handler) as client:
+        client.list_notes("")
+    seen = handler.seen  # type: ignore[attr-defined]
+    assert seen.url.path == "/api/v1/notes"
+    assert dict(seen.url.params) == {"q": ""}
+
+
+def test_list_notes_a_blank_q_surfaces_the_apis_refusal() -> None:
+    body = {"error": {"code": "empty_search_query", "message": "q was empty"}}
+    with client_over(responder(400, body)) as client, pytest.raises(ApiError) as excinfo:
+        client.list_notes("")
+    assert excinfo.value.status == 400
+    assert excinfo.value.payload["error"]["code"] == "empty_search_query"
+
+
 def test_get_note_returns_an_entity_payload() -> None:
     with client_over(responder(200, GROCERIES)) as client:
         payload = client.get_note("NOTE-12")

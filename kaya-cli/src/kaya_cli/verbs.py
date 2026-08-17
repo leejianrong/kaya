@@ -138,8 +138,16 @@ def _overview(client: KayaClient, _args: Namespace) -> Payload:
     return client.recent_notes()
 
 
-def _note_list(client: KayaClient, _args: Namespace) -> Payload:
-    return client.list_notes()
+def _note_list(client: KayaClient, args: Namespace) -> Payload:
+    """`note list`, with KAN-559's `--q` forwarded exactly as argv carried it.
+
+    ``args.q`` is ``None`` when the flag was not given, which is the one value that makes
+    ``KayaClient.list_notes`` add no query parameter at all — the same plain list this verb has
+    always made. A present value, blank or not, goes to the client untouched: what a blank search
+    term means is `app/api/search.py`'s decision, not this adapter's, and it comes back as an
+    `ApiError` `render` already knows how to print.
+    """
+    return client.list_notes(args.q)
 
 
 def _note_get(client: KayaClient, args: Namespace) -> Payload:

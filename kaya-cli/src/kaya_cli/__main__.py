@@ -86,6 +86,7 @@ from kaya_cli.parsing import (
     NO_TEXT_LIMIT,
     PATH_FLAG,
     PRECONDITION_FLAG,
+    QUERY_FLAG,
     TITLE_FLAG,
     TOKEN_FLAG,
     ParserExit,
@@ -109,9 +110,9 @@ EPILOGUE = (
     "Bare `kaya` prints this build, where it is installed, and your five most recently updated\n"
     "notes. Notes: `note list`, `note get <ref>`, `note create <title>`, `note edit <ref>`,\n"
     "`note move <ref> <path>`, `note delete <ref>`. Configuration: `config show`, `config set`,\n"
-    "`config path`. `--fields a,b,c` selects columns on a list, and prose is cut to\n"
-    "KAYA_MAX_TEXT_CHARS (default 500) unless `--full`. A note is addressed as NOTE-12, note-12\n"
-    "or 12, never by its path. See docs/SLICES.md."
+    "`config path`. `note list --q TERM` searches title and body; `--fields a,b,c` selects\n"
+    "columns on a list, and prose is cut to KAYA_MAX_TEXT_CHARS (default 500) unless `--full`. A\n"
+    "note is addressed as NOTE-12, note-12 or 12, never by its path. See docs/SLICES.md."
 )
 
 NOTE_HELP = "create, read, change and delete the notes you own"
@@ -235,11 +236,20 @@ def _add_note_verbs(note_commands, flags: argparse.ArgumentParser) -> None:
     ``update_note`` rather than making its own call, so there is no second request shape for anybody
     to later "back properly" with a second route.
     """
-    note_commands.add_parser(
+    listing = note_commands.add_parser(
         verbs.LIST,
         parents=[flags],
-        help="list the notes you own, newest first",
-        description="List the notes you own, newest first.",
+        help="list the notes you own, newest first, or search them with --q",
+        description="List the notes you own, newest first. --q searches title and body.",
+    )
+    listing.add_argument(
+        QUERY_FLAG,
+        default=None,
+        metavar="TERM",
+        help=(
+            "search title and body, ranked by relevance (KAN-558); omit to list every note. "
+            "A present but blank term is refused (400)"
+        ),
     )
 
     get = note_commands.add_parser(

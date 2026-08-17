@@ -1,5 +1,13 @@
 [project]
 name = "kaya-client"
+# 0.13.0 — KAN-559 adds ``q`` to `list_notes`, forwarded to `GET /api/v1/notes?q=` exactly as
+# `if_updated_at` is forwarded: an opaque string, ``None`` when the caller did not ask to search
+# (adding no query parameter at all, so a plain `list_notes()` is byte-identical to before) and
+# sent verbatim otherwise, blank or not — `app/api/search.py` owns the `400 empty_search_query`
+# refusal, and this package has no second opinion about a search term to disagree with it. New
+# public API and behavioural for `list_notes`' signature, so a minor bump; the response is the
+# same `NoteList` shape a plain list gets, so no new columns and no new envelope key. `render`'s
+# signature did not move.
 # 0.12.0 — KAN-549 completes V2b with ADR 0005 §contract 7's content-first bare invocation. New:
 # `overview.overview()`, the three banner lines a bare `kaya` prints — the version line, the
 # executable path and the sentence naming the slice — which takes three `str`s and **no `Payload`**,
@@ -61,7 +69,7 @@ name = "kaya-client"
 # 0.3.0 — KAN-543 adds `provenance`, the build stamp both adapters read. 0.2.0 was KAN-540's
 # `KayaClient` and `render()` seam. A behavioural change to a shipped package bumps it in the same
 # PR (ADR 0007 §3, CLAUDE.md §Conventions §Versioning).
-version = "0.12.0"
+version = "0.13.0"
 description = "The shared core for kaya: the API client and the one payload-shaping seam"
 readme = "README.md"
 license = "Apache-2.0"

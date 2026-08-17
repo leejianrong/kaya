@@ -41,6 +41,32 @@ describe('listNotes', () => {
     const fetchImpl = recorder({ notes: [{ ref: 'NOTE-1' }, { ref: 'NOTE-2' }] })
     await expect(listNotes({ fetchImpl })).resolves.toHaveLength(2)
   })
+
+  it('adds no query parameter when q is omitted (KAN-559)', async () => {
+    const fetchImpl = recorder({ notes: [] })
+    await listNotes({ fetchImpl })
+
+    const [url] = vi.mocked(fetchImpl).mock.calls[0] as [string]
+    expect(url).toBe('/api/v1/notes')
+  })
+
+  it('forwards q as a query parameter, percent-encoded', async () => {
+    const fetchImpl = recorder({ notes: [] })
+    await listNotes({ q: 'reading list', fetchImpl })
+
+    const [url] = vi.mocked(fetchImpl).mock.calls[0] as [string]
+    expect(url).toBe('/api/v1/notes?q=reading%20list')
+  })
+
+  it('forwards a blank q rather than omitting it — the backend decides what that means', async () => {
+    // A search box that has been cleared must send no `q` at all; a `q` that is present but blank
+    // is a different request and this module has no opinion about which one the caller meant.
+    const fetchImpl = recorder({ notes: [] })
+    await listNotes({ q: '', fetchImpl })
+
+    const [url] = vi.mocked(fetchImpl).mock.calls[0] as [string]
+    expect(url).toBe('/api/v1/notes?q=')
+  })
 })
 
 describe('moveNote', () => {
