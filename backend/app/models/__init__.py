@@ -15,6 +15,7 @@ from app.models.note import (
     NOTE_REF_SEQUENCE_NAME,
     Note,
 )
+from app.models.note_link import NoteLink
 from app.models.user import User
 
 __all__ = [
@@ -23,5 +24,6 @@ __all__ = [
     "NOTE_REF_SEQUENCE_NAME",
     "Base",
     "Note",
+    "NoteLink",
     "User",
 ]
