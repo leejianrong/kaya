@@ -3,6 +3,12 @@
 # (pandan ADR 0018 §Package-name reality). That constrains the distribution name only. The console
 # script is `kaya`, and there is exactly one of them (Q39).
 name = "kaya-notes"
+# 0.11.0 — KAN-559 adds `--q` to `note list` alone (not to `output_flags()`'s shared parent, since
+# it names a request parameter and not an output-shaping flag every verb inherits). Argv reaches
+# `KayaClient.list_notes(args.q)` untouched — `None` when the flag is absent, forwarded verbatim
+# otherwise — and a present-but-blank term is `app/api/search.py`'s `400 empty_search_query`,
+# which already exits `2` via `EXIT_FOR_STATUS` with nothing new to add. Behavioural: `note list`
+# now accepts a flag that used to be a usage error, so a minor bump.
 # 0.10.0 — KAN-724 adds `409` → exit `6` (`EXIT_CONFLICT`) to `EXIT_FOR_STATUS`. Behavioural, and
 # behavioural in the way exit codes are versioned for: a stale `--if-updated-at` used to exit `1` and
 # now exits `6`, so a script branching on the number sees a different answer for the same event. An
@@ -56,7 +62,7 @@ name = "kaya-notes"
 # 0.2.0 — KAN-543 gives the CLI argument parsing and ADR 0007's build-stamped `--version`. A
 # behavioural change to a shipped package bumps it in the same PR (ADR 0007 §3, CLAUDE.md
 # §Conventions §Versioning).
-version = "0.10.0"
+version = "0.11.0"
 description = "kaya — the notes CLI"
 readme = "README.md"
 license = "Apache-2.0"

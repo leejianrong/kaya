@@ -23,7 +23,43 @@
     notes,
     route,
     loading,
-  }: { notes: Note[]; route: Route; loading: boolean } = $props()
+    query = '',
+    onsearch = () => {},
+  }: {
+    notes: Note[]
+    route: Route
+    loading: boolean
+    /** The **committed** search term — what the last search actually asked for, `''` for none. */
+    query?: string
+    /** Fired with the trimmed term on submit, and with `''` when the search is cleared. */
+    onsearch?: (term: string) => void
+  } = $props()
+
+  /**
+   * The input's own text, kept apart from `query` on purpose (KAN-559).
+   *
+   * `query` is App's — it is what drove the request that produced `notes` — and this is the box's:
+   * what is typed but not yet submitted. Conflating them would either fetch on every keystroke (no
+   * card asked for that, and a note corpus scrolls fine without it) or make the box unable to hold
+   * a draft that differs from the last search.
+   *
+   * A **writable** `$derived` rather than `$state` plus a syncing `$effect`: Svelte 5 lets a
+   * `$derived` be reassigned locally, and that reassignment is exactly "the draft while typing"
+   * until `query` changes again, at which point it recomputes and the override is gone — a clear
+   * via the header or a fresh search both replace the draft with the newly committed term, with no
+   * effect for typing to race.
+   */
+  let draft = $derived(query)
+
+  function submit(event: SubmitEvent): void {
+    event.preventDefault()
+    onsearch(draft.trim())
+  }
+
+  function clear(): void {
+    draft = ''
+    onsearch('')
+  }
 
   type View = 'tree' | 'list'
   let view: View = $state('tree')
@@ -112,6 +148,28 @@
 {/snippet}
 
 <nav class="sidebar" aria-label="Notes">
+  <!--
+    KAN-559's search box. `--q` on the client is one flag and one input here, and it stays that
+    shape: submitting sends `draft.trim()` up to `onsearch`, which is App's request to make, not
+    this component's — a `Sidebar` that fetched would be a second network caller for the one list
+    App already owns.
+  -->
+  <form class="search" onsubmit={submit} data-testid="search-form">
+    <input
+      type="search"
+      class="search-input"
+      placeholder="Search notes…"
+      bind:value={draft}
+      aria-label="Search notes"
+      data-testid="search-input"
+    />
+    {#if query !== ''}
+      <button type="button" class="clear-search" onclick={clear} data-testid="clear-search">
+        Clear
+      </button>
+    {/if}
+  </form>
+
   <div class="views" role="group" aria-label="Sidebar view">
     <button type="button" class:active={view === 'tree'} onclick={() => (view = 'tree')}>
       Tree
@@ -124,7 +182,10 @@
   {#if loading}
     <p class="empty">Loading…</p>
   {:else if notes.length === 0}
-    <p class="empty">No notes yet.</p>
+    <!-- Presentation over the same empty array either way (ADR 0004: no aggregate to read a
+         count from here) — only the wording tells a "you own nothing yet" apart from a search
+         that matched nothing. -->
+    <p class="empty">{query === '' ? 'No notes yet.' : `No notes match "${query}".`}</p>
   {:else if view === 'list'}
     <!-- Every note, in the order `GET /api/v1/notes` returned them (newest first). Nothing is
          grouped, sorted or hidden here, which is the whole reason this view exists. -->
@@ -172,6 +233,36 @@
     overflow-y: auto;
     padding: 1rem 0.5rem 1.5rem;
     border-right: 1px solid var(--edge);
+  }
+
+  .search {
+    display: flex;
+    gap: 0.3rem;
+    padding: 0 0.5rem;
+  }
+
+  .search-input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--edge);
+    border-radius: 0.3rem;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 0.8rem;
+  }
+
+  .clear-search {
+    flex: none;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--edge);
+    border-radius: 0.3rem;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.7rem;
   }
 
   .views {

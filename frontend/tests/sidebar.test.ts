@@ -9,11 +9,12 @@
  */
 
 import { flushSync, mount, unmount } from 'svelte'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Sidebar from '../src/components/Sidebar.svelte'
 import type { Route } from '../src/lib/router'
 import type { Note } from '../src/lib/types'
+import { box } from './reactive.svelte'
 
 function note(ref: string, path: string, title = `Title ${ref}`): Note {
   return {
@@ -228,5 +229,108 @@ describe('the folder tree', () => {
     // `title` is `String(255)` and the API accepts `''`, so a row must never be a blank line.
     render([note('NOTE-9', 'a/b.md', '')])
     expect(host.querySelector('a[href="/notes/NOTE-9"]')?.textContent).toContain('NOTE-9')
+  })
+})
+
+describe('the search box (KAN-559)', () => {
+  function renderWithSearch(query: string, onsearch: (term: string) => void) {
+    mounted.push(
+      mount(Sidebar, {
+        target: host,
+        props: { notes: NOTES, route: { name: 'home' }, loading: false, query, onsearch },
+      }),
+    )
+    flushSync()
+    return host
+  }
+
+  function input(): HTMLInputElement {
+    return host.querySelector<HTMLInputElement>('[data-testid="search-input"]')!
+  }
+
+  function type(term: string): void {
+    input().value = term
+    input().dispatchEvent(new Event('input'))
+    flushSync()
+  }
+
+  it('does not fetch on every keystroke — typing changes no committed query', () => {
+    // `Sidebar` has no client of its own to fetch with; what this proves is that typing alone
+    // leaves `onsearch` uncalled, so App's effect (which depends on the *committed* query) does
+    // not refire per character.
+    const onsearch = vi.fn()
+    renderWithSearch('', onsearch)
+
+    type('reading')
+    expect(onsearch).not.toHaveBeenCalled()
+  })
+
+  it('submits the trimmed term on submit', () => {
+    const onsearch = vi.fn()
+    renderWithSearch('', onsearch)
+
+    type('  reading list  ')
+    host.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true }))
+    flushSync()
+
+    expect(onsearch).toHaveBeenCalledTimes(1)
+    expect(onsearch).toHaveBeenCalledWith('reading list')
+  })
+
+  it('shows a Clear button only once a search is committed, and clearing sends the empty term', () => {
+    // `query` is wired the way `App.svelte` wires it — a reactive prop that `onsearch` writes back
+    // into — because the Clear button's *disappearance* is a consequence of the parent reacting to
+    // the callback, not of anything `Sidebar` decides on its own.
+    const committed = box('reading list')
+    const onsearch = vi.fn((term: string) => (committed.value = term))
+    mounted.push(
+      mount(Sidebar, {
+        target: host,
+        props: {
+          notes: NOTES,
+          route: { name: 'home' },
+          loading: false,
+          get query() {
+            return committed.value
+          },
+          onsearch,
+        },
+      }),
+    )
+    flushSync()
+
+    const clear = host.querySelector<HTMLButtonElement>('[data-testid="clear-search"]')
+    expect(clear).not.toBeNull()
+    clear!.click()
+    flushSync()
+
+    expect(onsearch).toHaveBeenCalledTimes(1)
+    expect(onsearch).toHaveBeenCalledWith('')
+    expect(host.querySelector('[data-testid="clear-search"]')).toBeNull()
+  })
+
+  it('has no Clear button when there is no committed search', () => {
+    renderWithSearch('', vi.fn())
+    expect(host.querySelector('[data-testid="clear-search"]')).toBeNull()
+  })
+
+  it('distinguishes "no notes at all" from "no notes match this search"', () => {
+    mounted.push(
+      mount(Sidebar, {
+        target: host,
+        props: {
+          notes: [],
+          route: { name: 'home' },
+          loading: false,
+          query: 'nothing-matches-this',
+          onsearch: vi.fn(),
+        },
+      }),
+    )
+    flushSync()
+
+    expect(host.textContent).toContain('No notes match')
+    expect(host.textContent).toContain('nothing-matches-this')
+    expect(host.textContent).not.toContain('No notes yet.')
   })
 })

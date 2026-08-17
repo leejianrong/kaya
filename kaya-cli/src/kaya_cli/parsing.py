@@ -129,6 +129,10 @@ PATH_FLAG = "--path"
 PRECONDITION_FLAG = "--if-updated-at"
 API_URL_FLAG = "--api-url"
 TOKEN_FLAG = "--token"
+QUERY_FLAG = "--q"
+"""KAN-559's search flag, on `note list` alone rather than on `output_flags()`'s shared parent —
+``q`` is a request parameter `list_notes` forwards, not an output-shaping flag every verb inherits
+the way `--fields`/`--full` do, and `note get` already reads one note with no notion of a query."""
 """KAN-551's write flags, named here so `__main__` builds subparsers from constants and
 `tests/test_write_verbs.py` asserts against the same ones rather than against retyped strings."""
 
