@@ -1,21 +1,25 @@
 [project]
 name = "kaya-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "kaya's MCP server — a thin adapter over kaya-client"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     "kaya-client",
+    "mcp>=1.2.0",
 ]
-# The MCP SDK is deliberately absent until V6 (KAN-56x) actually stands the server up. ADR 0006
-# freezes the tool set there; a dependency with no tools behind it is weight, not progress.
+# KAN-569 lands the MCP SDK: the six tools ADR 0006 froze are now real, so the dependency that
+# stands the server up finally has tools behind it.
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3",
     "ruff>=0.9",
 ]
+
+[project.scripts]
+kaya-mcp = "kaya_mcp.__main__:main"
 
 [tool.uv.sources]
 # Adapters depend on the client, never the reverse (ADR 0004).
