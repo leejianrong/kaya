@@ -380,10 +380,18 @@ def test_renaming_the_resolved_target_note_leaves_the_backlink_intact(
 ) -> None:
     """SLICES §V5's own wording: "renaming a note leaves existing backlinks to it intact." The
     pointer is `resolved_id`, an id — it survived being *written* as a title lookup, and it must
-    just as certainly survive the target changing its title afterward. `[mutate]` per SLICES: this
-    is exercised by hand (comment out the `resolved_id IS NULL` guard in
-    ``resolve_pending_note_links``, watch this test fail naming the right row, then restore) rather
-    than automated here, per CLAUDE.md's guard-mutation convention."""
+    just as certainly survive the target changing its title afterward, and `target_ref` (what the
+    *linking* note actually typed) is not "helpfully" rewritten to track the target's new title
+    either — that would substitute a display convenience for the historical record SLICES §V5
+    asks this card to keep.
+
+    `[mutate]` per SLICES, verified by hand rather than automated here (CLAUDE.md's guard-mutation
+    convention): temporarily add, at the end of `resolve_pending_note_links`, a second
+    `session.execute` — one more `update(NoteLink)` matching `resolved_id == note.id` and setting
+    `target_ref=note.title` — the "helpfully keep the reference's label in sync with a rename"
+    feature nobody asked for. This test's `after.target_ref == "Original Title"` assertion then
+    goes red, naming the row whose `target_ref` moved to "Renamed Later" out from under the note
+    that wrote it. Restore immediately after."""
     target = create(client, title="Original Title", body="")
     linker = create(client, title="linker", body="see [[Original Title]] for background")
     before = link_row(engine, linker["id"])
