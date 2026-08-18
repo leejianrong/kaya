@@ -38,6 +38,9 @@ Nothing here touches FastAPI's dependency machinery, for the same reason ``resol
 the whole HTTP contract below is then assertable by the no-infrastructure test layer.
 """
 
+import uuid
+from collections.abc import Iterable
+
 from fastapi import HTTPException, status
 from sqlalchemy import Select, func, select
 
@@ -192,3 +195,30 @@ def notes_matching(principal: Principal, term: str) -> Select[tuple[Note]]:
         .where(Note.search_vector.bool_op("@@")(tsquery))
         .order_by(func.ts_rank(Note.search_vector, tsquery).desc(), Note.id.desc())
     )
+
+
+def notes_titled(owner_id: uuid.UUID, titles: Iterable[str]) -> Select[tuple[str, int]]:
+    """``owner_id``'s own notes, projected to ``(title, id)`` and filtered to `titles` — KAN-563's
+    forward-resolution lookup. ``app/note_links.py``'s ``_notes_by_title`` calls this to find out
+    which of a save's brand-new ``[[Some Title]]`` links already name a note that exists, so that
+    module never has to build its own ``select(Note, ...)`` and trip this file's own guard.
+
+    Keyed on a raw ``owner_id`` rather than on a ``Principal`` like ``notes_owned_by`` is: the
+    caller here is reconciling *some* note's links, and by the time that runs the note has already
+    passed `authorize_note` (or was just created for the current principal), so its `owner_id` is
+    always the request's own principal — but the value in hand is the column, not the object, and
+    manufacturing a `Principal` just to satisfy a different function's signature would be the
+    tail wagging the dog. The scoping is the same clause either way, and it stays in this module
+    either way.
+    """
+    return select(Note.title, Note.id).where(Note.owner_id == owner_id, Note.title.in_(titles))
+
+
+def note_ids_owned_by(owner_id: uuid.UUID) -> Select[tuple[int]]:
+    """``owner_id``'s own note ids, and nothing else about them — KAN-563's backward-resolution
+    pass. ``app/note_links.py``'s ``resolve_pending_note_links`` uses this as a subquery, so that a
+    title landing on one owner's note can only ever resolve a ``note_link`` row whose *source* note
+    belongs to that same owner: a resolution crossing an owner boundary would let one person's save
+    reveal, indirectly, that another person has a note by some particular title.
+    """
+    return select(Note.id).where(Note.owner_id == owner_id)
