@@ -1,4 +1,5 @@
-"""``note_link`` against a real Postgres — KAN-562, SLICES §V5's integration row.
+"""``note_link`` against a real Postgres — KAN-562, SLICES §V5's integration row. KAN-563 adds
+note-to-note resolution by title, still against the same real database.
 
 The fast layer (``tests/unit/test_note_links.py``) proves the diff and the wrapper's calls to a fake
 session. What only a real database can show: that an untouched edge really is the same **row** —
@@ -6,6 +7,12 @@ same primary key, same `created_at` — across two saves rather than a delete-an
 looks identical; that `ON DELETE CASCADE` actually removes a note's edges when the note goes; and
 that the whole thing happens through the real routes (`POST`/`PATCH /api/v1/notes`), the same shape
 `tests/integration/test_note_search_vector.py` uses for KAN-557/558.
+
+KAN-563's own share of that argument: whether a title match happens *at all* is a database property
+in exactly the same way, and SLICES §V5's own test plan places "resolves once a matching note is
+created" under **End-to-end**, not Unit — the fast layer proves the pure value logic
+(`resolved_ids_for_additions`) and the wrapper's wiring against a fake title map, and this file is
+what proves the map itself is a real, owner-scoped, exact-match query rather than an assumption.
 
 **No ``import app.*`` at module top** — see the package docstring, and pandan's PR #17 trap.
 """
@@ -22,6 +29,9 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 ALICE_TOKEN = "a-caller-supplied-string-kaya-does-not-parse"
 ALICE_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
+
+BOB_TOKEN = "a-different-callers-string-kaya-also-does-not-parse"
+BOB_ID = uuid.UUID("22222222-2222-4222-8222-222222222222")
 
 NOTES = "/api/v1/notes"
 
@@ -115,13 +125,13 @@ def client(database_url: str, upstream: FakeUpstream) -> Iterator[Any]:
         empty()
 
 
-def auth() -> dict[str, str]:
-    return {"Authorization": f"Bearer {ALICE_TOKEN}"}
+def auth(token: str = ALICE_TOKEN) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
 
 
-def create(client: Any, **fields: str) -> dict[str, Any]:
+def create(client: Any, *, token: str = ALICE_TOKEN, **fields: str) -> dict[str, Any]:
     fields.setdefault("title", "a note")
-    response = client.post(NOTES, json=fields, headers=auth())
+    response = client.post(NOTES, json=fields, headers=auth(token))
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -296,3 +306,181 @@ def test_deleting_a_note_removes_its_note_link_rows(client: Any, engine: Any) ->
     assert deleted.status_code == 204
 
     assert links_of(engine, created["id"]) == []
+
+
+# --- KAN-563: note-to-note resolution by title, with the id recorded ------------------------------
+
+
+def link_row(engine: Any, note_id: int) -> Any:
+    """The single ``note_link`` row for a note that is only expected to have exactly one."""
+    rows = links_of(engine, note_id)
+    assert len(rows) == 1, rows
+    return rows[0]
+
+
+def test_a_note_title_link_gets_a_note_kind_row_unresolved_when_no_such_title_exists_yet(
+    client: Any, engine: Any
+) -> None:
+    created = create(client, title="linker", body="see [[A Title Nobody Has Yet]] for background")
+
+    row = link_row(engine, created["id"])
+    assert (row.target_kind, row.target_ref) == ("NOTE", "A Title Nobody Has Yet")
+    assert row.resolved_id is None
+
+
+def test_linking_to_an_existing_notes_title_resolves_immediately_on_creation(
+    client: Any, engine: Any
+) -> None:
+    """KAN-563's forward pass: no second save required — the target already exists when the link
+    is written, so the row is born resolved."""
+    target = create(client, title="Existing Note", body="")
+
+    linker = create(client, title="linker", body="see [[Existing Note]] for background")
+
+    row = link_row(engine, linker["id"])
+    assert row.resolved_id == target["id"]
+
+
+def test_a_link_to_a_title_that_doesnt_exist_yet_resolves_once_a_matching_note_is_created(
+    client: Any, engine: Any
+) -> None:
+    """SLICES §V5's own wording, verbatim. This is the property nothing would prove without a
+    backward pass: note A's own row is never revisited by anything A does again, so the only thing
+    that can ever fill it in is note B's own creation looking backward for A."""
+    linker = create(client, title="linker", body="blocked on [[Future Note]]")
+    unresolved = link_row(engine, linker["id"])
+    assert unresolved.resolved_id is None
+
+    target = create(client, title="Future Note", body="")
+
+    resolved = link_row(engine, linker["id"])
+    assert resolved.id == unresolved.id, "the same row, filled in — not a new one"
+    assert resolved.resolved_id == target["id"]
+
+
+def test_renaming_a_note_into_a_title_resolves_other_notes_pending_links_too(
+    client: Any, engine: Any
+) -> None:
+    """The backward pass fires on a rename as well as on a creation — a link can be waiting for a
+    title that already exists under a different name."""
+    linker = create(client, title="linker", body="blocked on [[Some Title]]")
+    target = create(client, title="Something Else", body="")
+    assert link_row(engine, linker["id"]).resolved_id is None
+
+    renamed = client.patch(
+        f"{NOTES}/{target['ref']}", json={"title": "Some Title"}, headers=auth()
+    )
+    assert renamed.status_code == 200, renamed.text
+
+    assert link_row(engine, linker["id"]).resolved_id == target["id"]
+
+
+def test_renaming_the_resolved_target_note_leaves_the_backlink_intact(
+    client: Any, engine: Any
+) -> None:
+    """SLICES §V5's own wording: "renaming a note leaves existing backlinks to it intact." The
+    pointer is `resolved_id`, an id — it survived being *written* as a title lookup, and it must
+    just as certainly survive the target changing its title afterward. `[mutate]` per SLICES: this
+    is exercised by hand (comment out the `resolved_id IS NULL` guard in
+    ``resolve_pending_note_links``, watch this test fail naming the right row, then restore) rather
+    than automated here, per CLAUDE.md's guard-mutation convention."""
+    target = create(client, title="Original Title", body="")
+    linker = create(client, title="linker", body="see [[Original Title]] for background")
+    before = link_row(engine, linker["id"])
+    assert before.resolved_id == target["id"]
+
+    renamed = client.patch(
+        f"{NOTES}/{target['ref']}", json={"title": "Renamed Later"}, headers=auth()
+    )
+    assert renamed.status_code == 200, renamed.text
+
+    after = link_row(engine, linker["id"])
+    assert after.id == before.id
+    assert after.resolved_id == target["id"], "the id-based pointer outlives the target's rename"
+    assert after.target_ref == "Original Title", "what the linking note typed is untouched too"
+
+
+def test_title_matching_is_exact_and_case_sensitive(client: Any, engine: Any) -> None:
+    """A decision this card had to make and did: two titles differing only in case are not the same
+    edge, the same way `Note.title` is stored and compared byte for byte everywhere else."""
+    create(client, title="Reading List", body="")
+
+    linker = create(client, title="linker", body="see [[reading list]] please")
+
+    assert link_row(engine, linker["id"]).resolved_id is None
+
+
+def test_resolution_never_crosses_an_owner_boundary(
+    client: Any, engine: Any, upstream: Any
+) -> None:
+    """A title match is scoped to the *linking* note's own owner — Bob having a note titled
+    "Shared Title" must never resolve (or, worse, silently name) Alice's link to that title, the
+    same "another user's note must never appear" property `notes_owned_by` enforces for a list."""
+    from app.auth.principal import Principal
+
+    upstream.known[BOB_TOKEN] = Principal(id=BOB_ID, email="bob@example.com")
+    create(client, token=BOB_TOKEN, title="Shared Title", body="")
+
+    linker = create(client, title="linker", body="see [[Shared Title]] for background")
+
+    assert link_row(engine, linker["id"]).resolved_id is None
+
+
+def test_an_ambiguous_title_resolves_to_the_newest_matching_note(
+    client: Any, engine: Any
+) -> None:
+    """Title is not unique (`app/models/note.py`). The module docstring argues for "newest wins"
+    as the same tie-break direction this codebase uses everywhere else one is needed; this is that
+    argument, proven against real auto-incrementing ids rather than assumed from the query's
+    shape."""
+    older = create(client, title="Duplicate Title", body="")
+    newer = create(client, title="Duplicate Title", body="")
+    assert newer["id"] > older["id"], "the fixture's own assumption, made explicit"
+
+    linker = create(client, title="linker", body="see [[Duplicate Title]] for background")
+
+    assert link_row(engine, linker["id"]).resolved_id == newer["id"]
+
+
+def test_a_note_can_link_to_its_own_title_and_resolve_on_its_first_save(
+    client: Any, engine: Any
+) -> None:
+    """The note being created is itself a candidate for its own forward-resolution lookup: by the
+    time `reconcile_note_links` queries, the note has already been flushed, so it is visible to its
+    own query inside the same transaction."""
+    created = create(client, title="Self Reference", body="see also [[Self Reference]]")
+
+    assert link_row(engine, created["id"]).resolved_id == created["id"]
+
+
+def test_a_note_title_link_and_a_pandan_reference_coexist_and_resolve_independently(
+    client: Any, engine: Any
+) -> None:
+    """The two kinds share one table and one reconcile pass, and nothing about handling one
+    disturbs the other — a NOTE-kind row may resolve locally while a KAN-kind row sitting right
+    beside it stays `NULL`, exactly as it did before this card (ADR 0003, KAN-564's alone to fill
+    in)."""
+    target = create(client, title="Runbook", body="")
+
+    linker = create(client, title="linker", body="[[KAN-1]] and also [[Runbook]]")
+
+    rows = {(r.target_kind, r.target_ref): r for r in links_of(engine, linker["id"])}
+    assert rows[("KAN", "KAN-1")].resolved_id is None
+    assert rows[("NOTE", "Runbook")].resolved_id == target["id"]
+
+
+def test_editing_a_body_to_add_a_note_title_link_resolves_it_on_that_save_too(
+    client: Any, engine: Any
+) -> None:
+    """The forward pass is not create-only: `reconcile_note_links` runs on every body-touching
+    edit, so a link added later resolves exactly as promptly as one written at creation."""
+    target = create(client, title="Existing Note", body="")
+    linker = create(client, title="linker", body="no links yet")
+    assert links_of(engine, linker["id"]) == []
+
+    edited = client.patch(
+        f"{NOTES}/{linker['ref']}", json={"body": "now see [[Existing Note]]"}, headers=auth()
+    )
+    assert edited.status_code == 200, edited.text
+
+    assert link_row(engine, linker["id"]).resolved_id == target["id"]

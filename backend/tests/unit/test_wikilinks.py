@@ -10,7 +10,7 @@ import dataclasses
 
 import pytest
 
-from app.wikilinks import WikilinkRef, find_wikilinks
+from app.wikilinks import NoteTitleLink, WikilinkRef, find_note_title_links, find_wikilinks
 
 
 def spanned(body: str, raw: str, kind: str, number: int) -> WikilinkRef:
@@ -320,3 +320,115 @@ def test_wikilink_ref_is_frozen_and_comparable() -> None:
     assert a == b
     with pytest.raises(dataclasses.FrozenInstanceError):
         a.number = 2  # type: ignore[misc]
+
+
+# --- KAN-563: the note-to-note sibling, `[[Some Note Title]]` ------------------------------------
+
+
+def spanned_title(body: str, raw: str, title: str) -> NoteTitleLink:
+    """`spanned`'s twin for `NoteTitleLink` — see that helper's own docstring."""
+    start = body.index(raw)
+    return NoteTitleLink(title=title, raw=raw, start=start, end=start + len(raw))
+
+
+def test_a_single_note_title_link() -> None:
+    body = "see [[Some Note Title]] for context"
+    refs = find_note_title_links(body)
+
+    assert refs == [spanned_title(body, "[[Some Note Title]]", "Some Note Title")]
+
+
+def test_no_title_links_is_an_empty_list() -> None:
+    assert find_note_title_links("just some prose, no brackets here") == []
+
+
+def test_a_kan_reference_is_never_also_a_note_title_link() -> None:
+    """The whole point of `NOTE_TITLE_PATTERN`'s own negative lookahead: without it, `[[KAN-1]]`
+    would be reported by *both* parsers and `app/note_links.py` would record a phantom edge to a
+    note titled "KAN-1" nobody meant to name."""
+    for body in ["[[KAN-1]]", "[[EPIC-45]]", "[[ kan-561 ]]", "[[epic-9]]"]:
+        assert find_note_title_links(body) == [], body
+
+
+def test_a_form_the_pandan_parser_itself_refuses_is_read_as_a_literal_title() -> None:
+    """`[[KAN-]]` (no digits), `[[KAN-123-old]]` (a trailing suffix) and a non-ASCII digit are all
+    refused by `find_wikilinks` (see the tests above) — none of them is a *syntactically valid*
+    pandan reference, so `NOTE_TITLE_PATTERN`'s lookahead does not exclude them, and they fall
+    through to being read as literal titles instead, the same way they already fall through to
+    plain prose today."""
+    assert find_wikilinks("[[KAN-]]") == []
+    assert [r.title for r in find_note_title_links("[[KAN-]]")] == ["KAN-"]
+
+    assert find_wikilinks("[[KAN-123-old]]") == []
+    assert [r.title for r in find_note_title_links("[[KAN-123-old]]")] == ["KAN-123-old"]
+
+
+def test_multiple_title_links_and_a_pandan_reference_in_one_body() -> None:
+    body = "text [[Title A]] more [[EPIC-9]] and [[Title B]]"
+
+    assert [r.canonical for r in find_wikilinks(body)] == ["EPIC-9"]
+    assert [r.title for r in find_note_title_links(body)] == ["Title A", "Title B"]
+
+
+def test_surrounding_whitespace_inside_the_brackets_is_trimmed_from_the_title() -> None:
+    body = "[[  Some Title  ]]"
+    refs = find_note_title_links(body)
+
+    assert len(refs) == 1
+    assert refs[0].title == "Some Title"
+    assert refs[0].raw == "[[  Some Title  ]]", "raw keeps the caller's own whitespace verbatim"
+
+
+def test_a_whitespace_only_bracket_pair_is_not_a_link() -> None:
+    """The same "not a link" treatment `WIKILINK_PATTERN` gives `[[KAN-]]`'s missing digits, applied
+    to a title with nothing in it once trimmed."""
+    assert find_note_title_links("[[   ]]") == []
+    assert find_note_title_links("[[]]") == []
+
+
+def test_an_overlong_title_is_not_a_link() -> None:
+    """Longer than `Note.title` (`String(255)`) could ever be, so it cannot name a real note and
+    would overflow `note_link.target_ref`'s own column if it reached an INSERT — refused here
+    rather than truncated, the same posture the module docstring argues for `NOTE_TITLE_MAX`."""
+    from app.wikilinks import NOTE_TITLE_MAX
+
+    assert find_note_title_links(f"[[{'x' * NOTE_TITLE_MAX}]]") != []
+    assert find_note_title_links(f"[[{'x' * (NOTE_TITLE_MAX + 1)}]]") == []
+
+
+def test_nesting_resolves_to_the_innermost_pair_for_title_links_too() -> None:
+    """The structural argument in `WIKILINK_PATTERN`'s own docstring, unchanged: no wildcard in
+    `NOTE_TITLE_PATTERN` spans a bracket, so the same left-to-right scan finds only the inner
+    pair."""
+    refs = find_note_title_links("[[Some [[Nested]] Title]]")
+
+    assert [r.title for r in refs] == ["Nested"]
+
+
+def test_an_unclosed_bracket_is_not_a_title_link() -> None:
+    assert find_note_title_links("see [[Some Title for details") == []
+
+
+def test_a_title_link_inside_a_fenced_code_block_is_ignored() -> None:
+    body = "\n".join(["before [[Real Title]]", "```", "[[Fenced Title]]", "```", "after"])
+
+    assert [r.title for r in find_note_title_links(body)] == ["Real Title"]
+
+
+def test_case_is_preserved_verbatim_never_folded() -> None:
+    """Resolution (`app/note_links.py`) matches a title exactly, case included; the parser's job
+    stops at reporting exactly what was typed."""
+    ref = find_note_title_links("[[Reading List]]")[0]
+
+    assert ref.title == "Reading List"
+    assert ref.canonical == "Reading List"
+
+
+def test_note_title_link_is_frozen_and_comparable() -> None:
+    a = NoteTitleLink(title="Foo", raw="[[Foo]]", start=0, end=7)
+    b = NoteTitleLink(title="Foo", raw="[[Foo]]", start=0, end=7)
+
+    assert a == b
+    assert a.kind == "NOTE"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        a.title = "Bar"  # type: ignore[misc]
