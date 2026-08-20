@@ -1,10 +1,11 @@
 """The single entry point behind the `kaya` console script.
 
-There is exactly one console script (Q39, ADR 0007 §4). Since KAN-551 it has nine verbs —
-`note {list,get,create,edit,move,delete}` and `config {set,show,path}` — and the three formats ADR
-0005 §contract 1 publishes. ADR 0005 sequences the output layer *before* the behaviour that goes
-through it, and the whole of this file is what that sequencing bought: the verbs are a subparser and
-a dispatch table, because the layer they print through was already finished when they arrived.
+There is exactly one console script (Q39, ADR 0007 §4). Since KAN-566 it has eleven verbs — `note
+{list,get,create,edit,move,delete}`, `config {set,show,path}` and the two top-level link reads,
+`links <ref>` and `backlinks <ref>` — plus the three formats ADR 0005 §contract 1 publishes. ADR
+0005 sequences the output layer *before* the behaviour that goes through it, and the whole of this
+file is what that sequencing bought: the verbs are a subparser and a dispatch table, because the
+layer they print through was already finished when they arrived.
 KAN-551 quadrupled the verb count; ``main`` below gained one conditional, and only after a
 review found the eager one was a lockout (the comment there has it).
 
@@ -109,7 +110,8 @@ typed a command — the worst way for a product description to be inconsistent."
 EPILOGUE = (
     "Bare `kaya` prints this build, where it is installed, and your five most recently updated\n"
     "notes. Notes: `note list`, `note get <ref>`, `note create <title>`, `note edit <ref>`,\n"
-    "`note move <ref> <path>`, `note delete <ref>`. Configuration: `config show`, `config set`,\n"
+    "`note move <ref> <path>`, `note delete <ref>`. Links: `links <ref>` for what a note points\n"
+    "at, `backlinks <ref>` for what points at it. Configuration: `config show`, `config set`,\n"
     "`config path`. `note list --q TERM` searches title and body; `--fields a,b,c` selects\n"
     "columns on a list, and prose is cut to KAYA_MAX_TEXT_CHARS (default 500) unless `--full`. A\n"
     "note is addressed as NOTE-12, note-12 or 12, never by its path. See docs/SLICES.md."
@@ -219,6 +221,8 @@ def build_parser() -> StructuredParser:
     config = commands.add_parser(verbs.CONFIG, help=CONFIG_HELP, description=CONFIG_HELP)
     _add_config_verbs(config.add_subparsers(dest="subcommand", required=True), flags)
 
+    _add_link_verbs(commands, flags)
+
     return parser
 
 
@@ -306,6 +310,50 @@ def _add_note_verbs(note_commands, flags: argparse.ArgumentParser) -> None:
         description="Delete a note. The ref is never reused, so a later read is a 404 forever.",
     )
     delete.add_argument("ref", help=REF_HELP)
+
+
+def _add_link_verbs(commands, flags: argparse.ArgumentParser) -> None:
+    """`links <ref>` and `backlinks <ref>` — KAN-566, and the first **top-level** verbs.
+
+    Every other word in this parser lives under a group (`note`, `config`), so these two are the
+    only rows in ``verbs.VERBS`` keyed on ``(word, None)``. That falls out of argparse rather than
+    being arranged: ``dest="subcommand"`` exists only on the two groups' own subparser actions, and
+    a subparser that declares none leaves the top-level ``set_defaults(subcommand=None)`` in place.
+    So ``verbs.run`` dispatches these through the same table lookup as everything else, with no
+    branch and no sentinel of its own.
+
+    **Why top level rather than `note links` / `note backlinks`.** SLICES §V5 step 6 spells them
+    this way, and the spelling has an argument behind it worth keeping. Putting a word under `note`
+    is a claim that its positional *is* a note — that is what the group means and what
+    `kaya note --help` says — and `backlinks` is the one verb here whose namespace is still open:
+    SLICES §V5's demo asks for ``kaya backlinks KAN-501``, a pandan ticket ref, which ADR 0008's
+    resolver refuses by design and which this card deliberately does not ship. Under `note` that
+    future is a word that has to move; at the top level it is the same word accepting more.
+
+    They carry the output flags like every other verb, from the same parent parser, so ADR 0005
+    §contract 1's promise about *every* verb cannot be broken by a verb added outside a group.
+    """
+    links = commands.add_parser(
+        verbs.LINKS,
+        parents=[flags],
+        help="list the wikilinks in a note's body, resolved where they can be",
+        description=(
+            "List a note's outbound [[wikilinks]]. A card or epic is resolved against pandan with "
+            "your own token; one that cannot be resolved is reported unresolved, never as an error."
+        ),
+    )
+    links.add_argument("ref", help=REF_HELP)
+
+    backlinks = commands.add_parser(
+        verbs.BACKLINKS,
+        parents=[flags],
+        help="list the notes whose body links to this one",
+        description=(
+            "List the notes linking to this one. Answered from kaya's own database, so it works "
+            "with pandan down, and a rename of the target does not break an existing link."
+        ),
+    )
+    backlinks.add_argument("ref", help=REF_HELP)
 
 
 def _add_body_flags(verb: argparse.ArgumentParser) -> None:

@@ -1,10 +1,10 @@
-"""What a note looks like on the wire.
+"""What a note, and since KAN-566 a link, looks like on the wire.
 
-Three models and one envelope, and the constraints on them come from migration ``0001`` rather than
-from taste: ``title`` is ``String(255)`` and ``path`` is ``String(1024)``, so a longer value is a
-`422` here instead of a psycopg ``DataError`` and a `500` two layers down. ``body`` is ``TEXT`` and
-carries no limit, because ADR 0008's model comment is right that a length cap on prose is a cap on
-the product.
+Three note models and one envelope, plus KAN-566's ``LinkRead``/``LinkList``. The note constraints
+come from migration ``0001`` rather than from taste: ``title`` is ``String(255)`` and ``path`` is
+``String(1024)``, so a longer value is a `422` here instead of a psycopg ``DataError`` and a `500`
+two layers down. ``body`` is ``TEXT`` and carries no limit, because ADR 0008's model comment is
+right that a length cap on prose is a cap on the product.
 
 **Shaping does not live here** (ADR 0004). No projection, no truncation, no aggregates: those go
 through ``kaya-client``'s ``render()`` seam in V2a/V2b, and a `--fields`-shaped parameter appearing
@@ -196,3 +196,89 @@ class NoteUpdate(BaseModel):
         edit, in the opposite direction.
         """
         return self.if_updated_at is not None and "body" in self.model_fields_set
+
+
+class LinkRead(BaseModel):
+    """One outbound wikilink of a note, resolved as far as it can be — KAN-566's `/links`.
+
+    Five keys, and the shape's whole job is to let a renderer draw a pill (KAN-567) or a panel
+    (KAN-568) **without branching on whether resolution succeeded**. Q26 settled that an unresolved
+    link renders as an unresolved link rather than as an error, so every resolved-side field is
+    nullable and ``null`` is the honest value rather than a missing key.
+
+    **No internal id anywhere, and that is the reason this class exists rather than the table being
+    serialized.** ``note_link`` carries ``id``, ``source_note_id`` and ``resolved_id``; all three
+    are internal surrogates, and ADR 0008 makes a note's identity its ``ref``. ``resolved_id`` is
+    the one it would be most tempting to publish — it is already the thing the edge points at — and
+    publishing it would hand a caller a number that no route accepts and that ``kaya_client``'s
+    ``field_names()`` would then offer as ``--fields resolved_id``. ``source_note_id`` is absent for
+    a second reason on top: it is the note in the URL, so it carries no information (the same
+    argument ``NoteRead`` makes about ``owner_id``). ``tests/unit/test_link_payload_keys.py`` pins
+    this list in order for the reason ``tests/unit/test_note_payload_keys.py`` pins the other one.
+
+    **There is deliberately no ``resolved`` boolean.** It would be a second spelling of
+    ``resolved_ref is null``, and two spellings of one state is how a client ends up branching on
+    the one that happens to be wrong — the same argument ADR 0005 makes for ``--full`` being
+    ``text_limit=0`` and not also a ``full=True``. ``resolved_ref`` is the flag *and* the value.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    target_kind: str
+    """``"KAN"``, ``"EPIC"`` or ``"NOTE"`` (``app/models/note_link.py``). A plain string here for
+    the same reason it is a plain string in the column: the vocabulary is a value, not a schema,
+    and an enum on the wire would make adding a kind a breaking change for every generated
+    client."""
+
+    target_ref: str
+    """What the body actually said, between the brackets: ``"KAN-501"`` for a pandan reference
+    (``WikilinkRef.canonical`` — case-normalised, brackets and padding gone) or the note title
+    exactly as typed for a ``NOTE`` edge, never case-folded.
+
+    This is the *written* half of the link and it is never rewritten. ADR 0008 forbids link
+    rewriting on a move, and the same reasoning covers a rename: the body says what the author
+    typed, and a payload that silently reported the new title here would be claiming the note's text
+    changed when it did not."""
+
+    resolved_ref: str | None
+    """The canonical identifier of the thing this link points at, or ``null`` for an unresolved one.
+
+    ``NOTE-7`` for a resolved note-to-note edge, ``KAN-501``/``EPIC-3`` for a card or epic pandan
+    answered for. For a pandan target that is the same string as ``target_ref``, which is redundant
+    and is kept anyway: uniform means a renderer reads one field to get "what do I link to", and the
+    NOTE case — where the two genuinely differ, because a title was typed and a ref came back — is
+    the one that would otherwise need a branch.
+
+    ``null`` covers four situations a caller cannot and should not tell apart (Q26, ADR 0003):
+    pandan does not have that ticket; pandan has it but this caller cannot see it; pandan could not
+    be reached at all; and a ``[[Title]]`` naming no note the caller owns. The first two are
+    pandan's own answer and are indistinguishable *there* by design (see
+    ``app/integrations/card_resolution.py``); collapsing the other two into the same value is what
+    keeps an outage from looking like a broken link."""
+
+    title: str | None
+    """The resolved thing's **current** title — the card's, the epic's, or the target note's — or
+    ``null`` when unresolved.
+
+    Current, not stored, and for a ``NOTE`` edge that is the visible half of SLICES §V5's rename
+    criterion: after the target is renamed, ``target_ref`` still shows what was typed and this shows
+    what the note is called now. Nothing here is cached in kaya's database, so the two can never
+    drift apart into a stale pair."""
+
+    column: str | None
+    """Pandan's column name for a resolved **card** (e.g. ``"in_progress"``), and ``null`` for
+    everything else: an epic has no column (``ResolvedTicket.column``), a note has no column, and an
+    unresolved anything has nothing to report. Present because KAN-567's pill renders
+    ``KAN-501 · in_progress · "…"`` and the alternative is a second request per link."""
+
+
+class LinkList(BaseModel):
+    """`GET /api/v1/notes/{ref}/links`'s envelope — named, like ``NoteList``, and for PLAN
+    §Implementation decisions' reason rather than a fresh one.
+
+    ``summary`` and ``next_cursor`` are absent here exactly as they are there: the aggregate is
+    attached inside ``kaya-client``'s ``render()`` (ADR 0004) and paging is nobody's card yet. The
+    array is wrapped so both stay additive.
+    """
+
+    links: list[LinkRead]

@@ -89,6 +89,26 @@ TARGET_KIND_MAX = 16
 """Room for ``"KAN"``, ``"EPIC"`` and a plausible ``"NOTE"`` (KAN-563) with margin, not a tight fit
 to today's two-value vocabulary — the whole point of this column being a plain string."""
 
+TARGET_KIND_NOTE = "NOTE"
+"""KAN-563's note-to-note kind, as a name rather than a literal at each of the five places that
+now test for it (``app/note_links.py``'s three, and KAN-566's ``notes_linking_to`` and
+``app/api/links.py``).
+
+It lives here, beside the column whose value it is, rather than in ``app/wikilinks.py`` beside the
+parser that produces it — ``NoteTitleLink.kind`` is a ``Literal["NOTE"]`` with a default, which is
+the *parser*'s statement about what it emits, and a storage value that only happens to agree with
+it today is the coupling this constant exists to make explicit. The ``KAN``/``EPIC`` kinds get no
+equivalent, deliberately: ``app.wikilinks.WIKILINK_KINDS`` already names that pair and this table
+never singles one of them out — the only comparison anything makes against ``target_kind`` is "is
+this the local kind or a pandan one?", which is one name, not three.
+
+**KAN-566 is where this stopped being cosmetic.** ``notes_linking_to`` filters on it *and* on
+``resolved_id``, and the ``target_kind`` half is the load-bearing one: ``resolved_id`` is
+deliberately not a ``ForeignKey`` because which table it points at depends on this column, so
+without the kind filter a KAN-kind row whose pandan card id happened to equal some note's id would
+surface as a backlink to that note. Nothing writes a KAN-kind ``resolved_id`` today, which is
+exactly why the guard has to be structural rather than remembered."""
+
 TARGET_REF_MAX = 255
 """Byte-for-byte ``app/api/schemas.py``'s ``TITLE_MAX``, duplicated rather than imported: a model
 does not reach into the API layer for a constant, the same direction ``app/models/note.py`` already
@@ -104,9 +124,16 @@ class NoteLink(Base):
     to say is what this class deliberately is *not*. It is not resolved against pandan by anything
     in its own module or in ``app/note_links.py``'s reconcile logic (ADR 0003) — every row this
     card writes carries ``resolved_id IS NULL``, always, and stays that way until KAN-564 exists to
-    change it. And it is not queried for backlinks anywhere yet: ``/links`` / ``/backlinks`` is
-    KAN-566, a separate card in the same epic, and nothing here needs to anticipate its access
-    pattern beyond not requiring a migration to add one.
+    change it.
+
+    **KAN-566 is now the reader**, and the access pattern it needed required no migration — which is
+    what the sentence this paragraph replaces was hoping for. Two queries: ``app/api/links.py``'s
+    ``outbound_edges`` reads by ``source_note_id``, served by the unique constraint's leading
+    column, which is why there is still no second index; and ``app.auth.notes_linking_to`` joins
+    this table to ``note`` and filters on ``(target_kind, resolved_id)``. That second one has no
+    index behind it and is correct at any corpus size this product has seen. An index on
+    ``(target_kind, resolved_id)`` is the thing to add when a measurement asks for one, and nothing
+    has — see ``app/models/note.py``'s own comment on paying for an index on every write.
     """
 
     __tablename__ = "note_link"

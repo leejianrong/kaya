@@ -6,7 +6,11 @@ and V2b needs facts about the payload that a raw ``dict`` cannot carry:
 
 - **list or single entity?** ``--fields`` is "a usage error on single-entity verbs, never a silent
   no-op" (ADR 0005 §contract 2). Sniffing for a ``"notes"`` key would work today and break the day
-  `/links` and `/backlinks` land (KAN-566) with envelopes nobody taught the sniffer about.
+  `/links` and `/backlinks` land (KAN-566) with envelopes nobody taught the sniffer about. **They
+  landed**, and the sniffer would have been wrong in both directions at once: ``kaya links`` is a
+  collection under ``links``, which a ``"notes"`` sniffer reads as a single entity, while
+  ``kaya backlinks`` genuinely *is* a collection under ``notes`` and would have read correctly by
+  accident. One of the two being right is what makes this the class of bug that ships.
 - **which fields are prose?** V2b truncates over "an allow-list of prose fields … rather than a
   length heuristic", because a blanket rule "eventually cuts a ``next_cursor``". The allow-list is
   knowledge of the API's schema, so it belongs next to the client that made the call, not inside a
