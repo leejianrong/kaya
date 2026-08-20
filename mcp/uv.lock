@@ -341,7 +341,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "kaya-mcp"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "kaya-client" },
@@ -350,12 +350,14 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "jsonschema" },
     { name = "pytest" },
     { name = "ruff" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "jsonschema", marker = "extra == 'dev'", specifier = ">=4.23" },
     { name = "kaya-client", editable = "../kaya-client" },
     { name = "mcp", specifier = ">=1.2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },

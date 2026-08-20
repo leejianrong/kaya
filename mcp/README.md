@@ -110,6 +110,56 @@ reverse-engineered from whatever got built. All six are real today:
   at a different URL (ADR 0004, and `kaya-client/src/kaya_client/client.py`'s `backlinks` docstring
   for the full argument).
 
+## The advertised schemas are compacted, and it is the small half
+
+KAN-571 landed ADR 0006 §3: generated `title` annotations stripped, and `anyOf: [{T}, {null}]`
+collapsed to `type: [T, null]`. `src/kaya_mcp/schema.py` is the rule and
+`server.SchemaCompactingServer` applies it at `list_tools` — the one place a tool's input schema
+leaves this process, and a place from which the pydantic model that *validates* a call is not
+reachable. So "compaction changes what a host is told, never what is accepted" is structural rather
+than promised, and `tests/test_schema_compaction.py` checks it three ways anyway: same argument
+names and required-ness and nullability, then every call in a derived corpus admitted by both
+schemas or neither, then real `call_tool` runs against the fake API.
+
+Measured on these six tools, `o200k_base`, re-runnable with
+`uv run --with tiktoken python scripts/measure_schema_compaction.py --markdown`:
+
+| what | bytes | tokens (`o200k_base`) |
+|---|---|---|
+| input schemas only | 1,633 → 1,022 (−37.4%) | 428 → 265 (−38.1%) |
+| whole `tools/list` reply | 3,701 → 3,090 (−16.5%) | 948 → 785 (−17.2%) |
+
+**Read the second row, and read it beside the other number.** The first row is the biggest honest
+percentage and the narrower thing — it is what changed, not what a host holds. The second is the
+whole reply a host keeps resident, tool descriptions included, which compaction does not touch; it
+lands on the ~16% ADR 0006 §3 predicted. That same section measured **84%** for narrowing a read to
+five useful fields, which these tools have taken since KAN-569 by calling `render()`. Compaction is
+the 16%. ADR 0006's Finding 1 is exactly that trimming the resident surface optimises a ~4%-of-window
+line item while a 22% one sits beside it, so this is hygiene worth taking and not a win worth
+overselling. The per-read payload figure — the 22% side — is **KAN-574's** to measure.
+
+Two guards, both adopted from pandan's implementation rather than rediscovered, and both with the
+positive control that keeps them from being vacuous:
+
+- **A nullable enum is not collapsed**, because `enum` constrains the whole value and the collapsed
+  form therefore **rejects `null`** — asserted against a real JSON Schema validator rather than
+  quoted. It falls out of an allow-list of sibling keys provably inert for `null`, so `const`, `$ref`
+  and the in-place applicators are refused by the same line with nothing written for them. **Kaya
+  has no nullable enum on any of its six tools**, and the test says so out loud: the guard is
+  asserted over a *constructed* probe tool driven through the real SDK, and a separate test reddens
+  the day a real one arrives so the guard can graduate from constructed to live.
+- **A `title` argument survives.** Pandan's first pass recursed on the key's spelling and deleted the
+  argument from two tools. Kaya has the collision for real — `create_note(title, …)` and
+  `edit_note(ref, title=None, …)` — so the traversal is driven by JSON Schema keywords: inside
+  `properties` (or `$defs`, or `patternProperties`) a key is a *name* and is never inspected, and
+  `title` is stripped only at a schema position, where it is an annotation. A third case comes free
+  from the same rule: `default`, `const`, `enum` and `examples` hold arbitrary JSON, so a blind walk
+  edits a caller's *data* there.
+
+The word "generated" in "strip generated `title` keys" is checked rather than assumed: nothing in
+this package authors a title, and a test rebuilds each stripped annotation from the name pydantic
+generated it from, so a card that starts writing `Field(title=…)` reddens instead of losing it.
+
 ## Watch for: a new tool needs a restart; a new field doesn't
 
 Because the tools pass JSON straight through `render()`, a new **field** the API starts returning
@@ -127,4 +177,4 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-Verified against this package as of this README: 43 tests pass, ruff is clean.
+Verified against this package as of this README: 92 tests pass, ruff is clean.
