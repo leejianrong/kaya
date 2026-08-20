@@ -28,17 +28,29 @@ how pandan ended up with four MCP capabilities no CLI command could reach and a 
 impossible to retire. In kaya, the MCP server is always removable, and a single exec-`kaya` tool
 stays available as a future simplification rather than being blocked on closing gaps.
 
-Two tests hold today's half of that: `tests/test_frozen_tool_set.py` pins `kaya_mcp.TOOL_NAMES`
-against the six names ADR 0006 froze, and `tests/test_server.py` pins the *running server's*
-registrations against that same tuple, so a stray seventh tool or a missing decorator fails before
-anything else notices. What isn't built yet is the other half of the direction: a test asserting
-that every one of those six names has a corresponding CLI verb. That's KAN-570
-(`FROZEN_TOOLS`/`FROZEN_TOOL_COUNT` plus the parity test itself), still `todo` on the board. Until it
-lands, `MCP ⊆ CLI` is true by inspection — all six tools call the same `KayaClient` methods
-`kaya-cli` calls, and the table below is that inspection written out so the claim can be checked
-rather than trusted.
+**Both halves of that are now tests** (KAN-570 landed the second one). Three files, and the split
+is deliberate, because a set, a count and a direction fail for different reasons:
 
-| MCP tool | `KayaClient` method | CLI verb |
+- `tests/test_server.py` pins the *running server's* registrations against `kaya_mcp.TOOL_NAMES`
+  name for name, so a stray seventh tool or a missing decorator fails there.
+- `tests/test_frozen_tool_set.py` holds ADR 0006 §2's freeze: `FROZEN_TOOLS` and
+  `FROZEN_TOOL_COUNT` as literals separate from the shipped tuple, the count asserted **twice** —
+  once off `server.py`'s `@server.tool()` decorators and once off what the server lists, because a
+  registration that never becomes a listing counts in one and not the other — and the failure
+  message the ADR asks for: why the pin exists, that adding a tool amends the ADR rather than
+  appending a decorator, and the four-step check a *removal* has to pass first.
+- `tests/test_cli_parity.py` is §4 rule 2: every frozen tool name has a CLI verb behind it. It reads
+  `kaya-cli`'s `verbs.py` dispatch tables and `__main__.py`'s parser construction as **ASTs** rather
+  than importing them, because ADR 0004 points the dependency arrow at `kaya-client` and neither
+  adapter may depend on the other — the same technique, for the same reason, as
+  `backend/tests/unit/test_client_deadline_outlasts_auth.py`. So a CLI verb renamed in the other
+  package reddens here, which is the assertion that makes this a parity check rather than a copy of
+  one.
+
+The table is the mapping that test holds, and it is **data rather than derivation** — see the row
+marked ¹ for why that is not a shortcut:
+
+| MCP tool | `KayaClient` method | CLI equivalent |
 |---|---|---|
 | `list_notes` | `list_notes()` | `kaya note list` |
 | `get_note` | `get_note(ref)` | `kaya note get <ref>` |
@@ -49,13 +61,25 @@ rather than trusted.
 
 ¹ The only row where the tool name and the CLI word differ, and the only one where two tools share a
 client method: there is no separate search call, because `GET /api/v1/notes?q=` answers with the same
-`NoteList` a plain list does (KAN-558/559). Worth writing down before KAN-570, since a parity test
-keyed on tool *names* would look for a `kaya search_notes` that will never exist.
+`NoteList` a plain list does (KAN-558/559). **This row is why the parity test is keyed on a table and
+not on tool names** — a name-derived check would go looking for a `kaya search_notes` that will never
+exist, pass for five tools, and need a hand-written exception for the sixth, which is the parity test
+not holding. It is also why a row is *argv* rather than a verb word: `--q` is in the row, so deleting
+that flag from `kaya-cli` leaves `search_notes` with no CLI spelling and fails the test, where a
+word-only row would still find `note list` sitting there for `list_notes`. Output-shaping flags
+(`--fields`, `--full`, `--format`) are deliberately **not** in any row: they are ADR 0004's one
+parameter through one seam, on every verb by construction, and naming them here would be `mcp/`
+re-asserting a shaping contract it is forbidden to hold an opinion about.
 
 **KAN-964 is why every row above names something real.** Until it landed, `get_backlinks` refused
 every call, which would have let KAN-570's parity test go green over a tool that did not work — a
-correct-looking pin across a set where one member was broken. Landing this first means KAN-570 pins
+correct-looking pin across a set where one member was broken. Landing it first meant KAN-570 pinned
 a set where every member functions.
+
+What is still *not* automated is the truth of this file's prose, only its uniqueness: nothing in
+`make check` reads the paragraphs above and compares them with the code. KAN-570 closes one corner of
+that (names to verbs) and no more, which is why ADR 0006 §4's first rule — state it here and link,
+never restate — is doing as much work as the tests are.
 
 ## The six tools, honestly
 
@@ -103,4 +127,4 @@ uv run pytest -q
 uv run ruff check .
 ```
 
-Verified against this package as of this README: 30 tests pass, ruff is clean.
+Verified against this package as of this README: 43 tests pass, ruff is clean.

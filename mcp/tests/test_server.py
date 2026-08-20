@@ -1,11 +1,17 @@
 """The registered surface matches ADR 0006's frozen set, no more and no fewer.
 
-`mcp/tests/test_frozen_tool_set.py` pins `kaya_mcp.TOOL_NAMES` as a literal, before any tool
-existed to check it against. Now that `kaya_mcp.server` has six real registrations, this file is
-the other half: the *running server*'s tool names must equal that same tuple exactly. A stray
-seventh tool, or one of the six missing its `@server.tool()` decorator, fails here rather than
-being noticed only when KAN-570's future CLI-parity test goes looking for a name nothing ever
+`mcp/tests/test_frozen_tool_set.py` pins the six names as a literal, before any tool existed to
+check them against. Now that `kaya_mcp.server` has six real registrations, this file is the other
+half: the *running server*'s tool names must equal `kaya_mcp.TOOL_NAMES` exactly. A stray seventh
+tool, or one of the six missing its `@server.tool()` decorator, fails here rather than being
+noticed only when `tests/test_cli_parity.py` goes looking for a CLI verb behind a name nothing ever
 registered.
+
+**Three files, and the split is deliberate** (KAN-570). This one asserts the *set*, name for name,
+which is the assertion a rename fails. `test_frozen_tool_set.py` asserts the *count*, twice — once
+off `server.py`'s decorators and once off what the server lists — because a count and a set fail
+for different reasons and its docstring has the cases where the two counts disagree.
+`test_cli_parity.py` asserts the *direction*, `MCP ⊆ CLI`, against `kaya-cli`'s own source.
 """
 
 import anyio
