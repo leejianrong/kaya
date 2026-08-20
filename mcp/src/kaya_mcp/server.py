@@ -166,12 +166,17 @@ def search_notes(q: str, fields: list[str] | None = None) -> dict[str, Any]:
 
 @server.tool()
 def get_backlinks(ref: str, fields: list[str] | None = None) -> dict[str, Any]:
-    """Notes linking to `ref`. **Not available yet** — see `kaya_mcp.errors` and KAN-566.
+    """Notes whose body links to `ref` — the same shape `list_notes` returns.
 
-    Registered with the same shape a working version will need (a ref, and `fields` like every
-    other read) so that landing KAN-566 changes this tool's body and not its signature. Every call
-    raises a structured refusal rather than returning an empty list — see `kaya_mcp.tools.
-    get_backlinks` and `kaya_mcp.errors` for why.
+    `/backlinks` answers with the very same `NoteList` a plain list does, so `fields`, truncation
+    and the `{"count": n}` aggregate arrive here with nothing written for them (ADR 0004).
+
+    **KAN-569 predicted that landing KAN-566 would change this tool's body and not its signature,
+    and the prediction held with room to spare: neither moved.** The parameters are what they were
+    (`ref`, and `fields` like every other read), and so is every line of this function — the whole
+    change is one body in `kaya_mcp.tools`, which is what "the adapter is thin" is supposed to
+    mean. Recorded here rather than deleted because a prediction that held is only worth having
+    made if somebody checks it (KAN-964).
     """
     try:
         payload = tools.get_backlinks(ref)

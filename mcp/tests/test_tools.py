@@ -13,8 +13,10 @@ an in-memory transport and proves the thing SLICES §V6's demo actually describe
 failure reaches an MCP *client* as `CallToolResult(is_error=True)`, not a raised exception a host
 would have to catch specially.
 
-One happy path and at least one failure path per tool (KAN-569's brief), plus `get_backlinks`'s
-distinct always-refuses behaviour, tested separately in `test_get_backlinks.py`.
+One happy path and at least one failure path per tool (KAN-569's brief). `get_backlinks` keeps its
+own file, `test_get_backlinks.py` — it had one because its behaviour was distinct (it refused every
+call), and it keeps one because KAN-964 inverted those assertions rather than deleting them, and
+that account is worth a docstring of its own.
 """
 
 import json

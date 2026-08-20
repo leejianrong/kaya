@@ -65,10 +65,23 @@ def test_a_kaya_error_reaches_a_real_client_as_a_structured_tool_error(answering
     assert "note_not_found" in result.content[0].text
 
 
-def test_get_backlinks_reaches_a_real_client_as_a_structured_tool_error() -> None:
-    """SLICES §V6's demo, for the tool this card cannot finish: a real client asking for
-    backlinks gets a clear, structured refusal over the wire — never a connection drop and never a
-    silently empty result."""
+def test_get_backlinks_reaches_a_real_client_with_structured_content(answering) -> None:
+    """**Inverted in KAN-964**, and the inversion is the card landing — see
+    `test_get_backlinks.py`'s module docstring for the full account.
+
+    This test used to be `test_get_backlinks_reaches_a_real_client_as_a_structured_tool_error`:
+    SLICES §V6's demo for the one tool KAN-569 could not finish, proving a real client asking for
+    backlinks got a clear structured refusal over the wire rather than a dropped connection. KAN-566
+    landed the route, the client method and the CLI verb, so what has to reach a real client now is
+    the notes.
+
+    The failure half of this file did **not** thin out as a result: the test above it drives a `404`
+    through the same session and is what proves `_handle_call_tool`'s
+    exception → `CallToolResult(is_error=True)` conversion still happens. This one no longer needs
+    to be a second witness for that, so it is the demo it was always trying to be.
+    """
+    answering(200, {"notes": [GROCERIES]})
     result = call("get_backlinks", ref="NOTE-12")
-    assert result.is_error is True
-    assert "KAN-566" in result.content[0].text
+    assert result.is_error is False
+    assert [n["ref"] for n in result.structured_content["notes"]] == ["NOTE-12"]
+    assert result.structured_content["summary"] == {"count": 1}
