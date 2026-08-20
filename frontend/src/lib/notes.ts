@@ -25,9 +25,23 @@ export function notePath(ref: string): string {
   return `notes/${encodeURIComponent(ref)}`
 }
 
-/** Every note the caller owns, newest first. */
-export async function listNotes(options: Options = {}): Promise<Note[]> {
-  const payload = await apiRequest<NoteList>('notes', options)
+/**
+ * Every note the caller owns, newest first — or, with `q`, the ones that match it (KAN-559).
+ *
+ * `q` is forwarded to `GET /api/v1/notes?q=` exactly as it arrived: `undefined` adds no query
+ * parameter at all, which is the same request this function always made, and a defined value is
+ * sent verbatim, blank or not. `app/api/search.py` is the one place that decides what a blank `q`
+ * means — a present-but-empty term is a `400 empty_search_query` — and this module has no second
+ * opinion to disagree with it. **Whether to send `q` at all for an empty search box is one branch
+ * the caller makes**, not this function: a cleared box must send no `q`, never `q=`.
+ *
+ * The response is the same `NoteList` shape a plain list gets, so this stays one function rather
+ * than a second one for the search case.
+ */
+export async function listNotes(options: Options & { q?: string } = {}): Promise<Note[]> {
+  const { q, ...rest } = options
+  const path = q === undefined ? 'notes' : `notes?q=${encodeURIComponent(q)}`
+  const payload = await apiRequest<NoteList>(path, rest)
   return payload.notes
 }
 

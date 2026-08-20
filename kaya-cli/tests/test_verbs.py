@@ -74,6 +74,57 @@ def test_note_list_calls_the_list_endpoint(capsys, answering) -> None:
     assert capsys.readouterr().out == f"{LIST_ROWS}\n"
 
 
+def test_note_list_with_q_forwards_it_as_a_query_parameter(answering) -> None:
+    """KAN-559: ``--q`` reaches `KayaClient.list_notes` and from there the wire, untouched."""
+    seen = answering(200, NOTES)
+    code = main(["note", "list", "--q", "reading list"])
+
+    assert code == 0
+    assert len(seen) == 1
+    assert seen[0].url.path == "/api/v1/notes"
+    assert dict(seen[0].url.params) == {"q": "reading list"}
+
+
+def test_note_list_with_no_q_is_the_same_request_as_before(answering) -> None:
+    """Omitting ``--q`` must change nothing about the request `note list` already made."""
+    seen = answering(200, NOTES)
+    main(["note", "list"])
+
+    assert seen[0].url.query == b""
+
+
+def test_note_list_composes_with_fields_and_the_summary(capsys, answering) -> None:
+    """The card's own acceptance line: `--q` composes with `--fields` and the aggregate describes
+    the *matched* set, not the corpus — true here by construction (`attach_summary` takes one
+    payload) but CLAUDE.md's rule is that a structural guard does not cover a behavioural claim, so
+    it is asserted end to end rather than cited.
+    """
+    answering(200, NOTES)
+    main(["note", "list", "--q", "reading", "--fields", "ref,title", "--format", "json"])
+
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["notes"] == [
+        {"ref": "NOTE-12", "title": "Groceries"},
+        {"ref": "NOTE-3", "title": "A reading list"},
+    ]
+    assert printed["summary"] == {"count": 2}
+
+
+def test_a_blank_q_is_the_apis_refusal_not_a_silent_list(capsys, answering) -> None:
+    """`kaya note list --q "$TERM"` with ``TERM`` unset must not quietly return the whole corpus —
+    it is the API's `400 empty_search_query`, which ADR 0005's table already maps to exit `2`.
+    """
+    answering(
+        400,
+        {"error": {"code": "empty_search_query", "message": "q was empty"}},
+    )
+    code = main(["note", "list", "--q", ""])
+
+    assert code == 2
+    out = capsys.readouterr().out
+    assert out.startswith("error\tempty_search_query\t")
+
+
 def test_note_get_calls_the_single_note_endpoint(capsys, answering) -> None:
     seen = answering(200, GROCERIES)
     code = main(["note", "get", "NOTE-12"])
