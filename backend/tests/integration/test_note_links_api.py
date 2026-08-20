@@ -360,6 +360,56 @@ def test_a_cross_owner_resolved_id_is_still_not_a_backlink(client: Any) -> None:
     assert "Bob's private note" not in str(found)
 
 
+def test_a_cross_owner_resolved_id_never_names_the_other_owners_note_in_links(client: Any) -> None:
+    """The same manufactured row, read from the *other* end — and **untested until KAN-965**.
+
+    `notes_named_by_id` is what turns a NOTE edge's `resolved_id` into a ref and a title for
+    `/links`, and its docstring is explicit that the owner clause there "is a real filter rather
+    than a formality" because `resolved_id` is not a `ForeignKey`. Unscoping it came back green
+    across the entire repository: the unit layer never compiled that statement and no integration
+    test read `/links` over a cross-owner row. So this is the leak stated as a test — the *title* of
+    somebody else's note, reachable by anyone who can get a row to point at it.
+
+    The correct answer is the one a deleted target already gets: three nulls, an unresolved link,
+    the `target_ref` the body actually typed. Same fixture shape as
+    `test_a_cross_owner_resolved_id_is_still_not_a_backlink`, because it is the same impossible row.
+    """
+    from sqlalchemy import text as sql
+
+    from app.db import get_sessionmaker
+
+    alices = create(client, ALICE_TOKEN, title="Alice's secret title", body="target")
+    bobs = create(client, BOB_TOKEN, title="Bob's note", body="[[Alice's secret title]]")
+
+    with get_sessionmaker()() as session:
+        alice_id = session.execute(
+            sql("SELECT id FROM note WHERE ref = :ref"), {"ref": alices["ref"]}
+        ).scalar_one()
+        bob_id = session.execute(
+            sql("SELECT id FROM note WHERE ref = :ref"), {"ref": bobs["ref"]}
+        ).scalar_one()
+        updated = session.execute(
+            sql(
+                "UPDATE note_link SET resolved_id = :target "
+                "WHERE source_note_id = :source AND target_kind = 'NOTE'"
+            ),
+            {"target": alice_id, "source": bob_id},
+        )
+        session.commit()
+        assert updated.rowcount == 1, (
+            "the cross-owner row this test is about must exist, or the assertions below pass "
+            "because there was nothing to leak"
+        )
+
+    [edge] = links(client, bobs["ref"], BOB_TOKEN)
+
+    assert edge["target_ref"] == "Alice's secret title", "the typed text is Bob's own body"
+    assert (edge["resolved_ref"], edge["title"], edge["column"]) == (None, None, None), (
+        "a `resolved_id` naming another owner's note degrades to an unresolved link"
+    )
+    assert alices["ref"] not in str(edge), "and never leaks the ref of the note it points at"
+
+
 def test_a_note_that_links_to_its_own_title_appears_in_its_own_backlinks(client: Any) -> None:
     """Not a special case being allowed through — the absence of one. The note genuinely contains a
     link that resolves to it (`app/note_links.py` resolves a self-link on the first save, on
