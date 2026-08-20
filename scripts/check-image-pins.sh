@@ -39,22 +39,34 @@ complain() {
   status=1
 }
 
-# --- the Dockerfile ------------------------------------------------------------------------------
+# --- every Dockerfile in the repo -----------------------------------------------------------------
+# KAN-573: this used to read the literal path `Dockerfile`, so `mcp/Dockerfile` (new in that card)
+# would have been invisible to it — pinned by hand today, silently driftable tomorrow, which
+# defeats the point of a guard. Found by `find` rather than a second literal path, so the *next*
+# Dockerfile this repo adds is covered on its first commit rather than on whichever later commit
+# somebody remembers to add it here. `.venv`/`node_modules`/`dist` are pruned because a vendored or
+# built tree can legitimately contain a `Dockerfile` this repo does not own and did not write.
+#
 # The references live in ARG defaults, which is what makes them overridable and what makes them
 # easy to leave unpinned. Read those, and read any literal FROM too, in case a stage stops using
 # the ARGs.
-while IFS=: read -r line content; do
-  # `ARG NAME=ref` where the value looks like an image reference (has a `/` or a `:`).
-  ref=$(sed -nE 's/^ARG[[:space:]]+[A-Z_]*(BASE|IMAGE)=(.+)$/\2/p' <<<"$content")
-  if [ -z "$ref" ]; then
-    # A literal `FROM ref [AS stage]`, skipping the `FROM ${VAR}` forms handled above.
-    ref=$(sed -nE 's/^FROM[[:space:]]+([^$][^[:space:]]*).*$/\1/p' <<<"$content")
-  fi
-  [ -z "$ref" ] && continue
-  if ours "$ref"; then exempt=$((exempt + 1)); continue; fi
-  checked=$((checked + 1))
-  pinned "$ref" || complain Dockerfile "$line" "$ref"
-done < <(grep -nE '^(ARG|FROM)[[:space:]]' Dockerfile)
+while IFS= read -r -d '' dockerfile; do
+  dockerfile=${dockerfile#./}
+  while IFS=: read -r line content; do
+    # `ARG NAME=ref` where the value looks like an image reference (has a `/` or a `:`).
+    ref=$(sed -nE 's/^ARG[[:space:]]+[A-Z_]*(BASE|IMAGE)=(.+)$/\2/p' <<<"$content")
+    if [ -z "$ref" ]; then
+      # A literal `FROM ref [AS stage]`, skipping the `FROM ${VAR}` forms handled above.
+      ref=$(sed -nE 's/^FROM[[:space:]]+([^$][^[:space:]]*).*$/\1/p' <<<"$content")
+    fi
+    [ -z "$ref" ] && continue
+    if ours "$ref"; then exempt=$((exempt + 1)); continue; fi
+    checked=$((checked + 1))
+    pinned "$ref" || complain "$dockerfile" "$line" "$ref"
+  done < <(grep -nE '^(ARG|FROM)[[:space:]]' "$dockerfile")
+done < <(find . \
+  \( -name .venv -o -name node_modules -o -name dist -o -name .git \) -prune -o \
+  -type f -name Dockerfile -print0 | sort -z)
 
 # --- compose and the manifests -------------------------------------------------------------------
 # `image:` in YAML, wherever it appears. `deploy/k8s/overlays/` is included: an overlay that pins
