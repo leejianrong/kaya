@@ -9,8 +9,9 @@ cross-linked to the board.
 > reads, edits and deletes notes over `/api/v1/notes`, and the whole stack ships as one container
 > image serving the SPA and the API from a single origin. **`kaya` drives all of it from a shell** —
 > `note {list,get,create,edit,move,delete}`, `links <ref>`, `backlinks <ref>` and
-> `config {set,show,path}`, in `human`, `json` or `toon`. The SPA is a browsable app: a CodeMirror 6 editor, a folder tree, a live preview, a PAT
-> paste to get in, and a conflict banner when two writers collide. The MCP server registers six
+> `config {set,show,path}`, in `human`, `json` or `toon`. The SPA is a browsable app: a CodeMirror 6
+> editor, a folder tree, a live preview, a PAT paste to get in, and a conflict banner when two
+> writers collide. The MCP server registers six
 > tools and five of them work. Full-text search runs end to end: a ranked `?q=` in the API, `--q` on
 > `note list`, a box in the sidebar. What has no answer at all is **where to point any of it: there
 > is no hosted deployment** (see *Where to point it*, below), and the published binary is older than
