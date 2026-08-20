@@ -8,7 +8,7 @@
  */
 
 import { apiRequest, type RequestOptions } from './api'
-import type { Note, NoteCreate, NoteList, NoteUpdate } from './types'
+import type { Link, LinkList, Note, NoteCreate, NoteList, NoteUpdate } from './types'
 
 type Options = Pick<RequestOptions, 'signal' | 'fetchImpl'>
 
@@ -109,6 +109,23 @@ export function moveNote(ref: string, path: string, options: Options = {}): Prom
 export async function listBacklinks(ref: string, options: Options = {}): Promise<Note[]> {
   const payload = await apiRequest<NoteList>(`${notePath(ref)}/backlinks`, options)
   return payload.notes
+}
+
+/**
+ * Every wikilink this note's body currently contains, resolved as far as `/links` managed —
+ * `GET /notes/{ref}/links` (KAN-566), read by KAN-567's editor pill.
+ *
+ * Unlike {@link listBacklinks}, this one is **not** the note noun: `/links` answers with `LinkRead`
+ * rows, because a pill needs `target_kind`/`target_ref`/`resolved_ref`/`title`/`column` and a note
+ * record has none of the first two. So `lib/types.ts` gained a `Link` interface for this call alone.
+ *
+ * May reach pandan for the pandan-shaped rows (`backend/app/api/links.py`) and never fails for that
+ * reason — an unreachable pandan degrades every pandan-kind row to unresolved rather than refusing
+ * the request (ADR 0003, Q26). A note-to-note edge never depends on pandan at all.
+ */
+export async function listLinks(ref: string, options: Options = {}): Promise<Link[]> {
+  const payload = await apiRequest<LinkList>(`${notePath(ref)}/links`, options)
+  return payload.links
 }
 
 /** Delete the note. `204`, no body. The ref is never reused (ADR 0008). */
