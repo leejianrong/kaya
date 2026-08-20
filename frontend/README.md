@@ -36,6 +36,7 @@ src/
   lib/types.ts               the wire shapes, mirroring backend/app/api/schemas.py
   lib/conflict.ts            ADR 0009's resolution rule + the side-by-side comparison (KAN-556)
   lib/backlinks.ts           the rail's five states + its identity guard, as pure functions (KAN-568)
+  lib/wikilinks.ts           `[[...]]` span-finding, link matching and the `[[` trigger, as pure functions (KAN-567)
   components/EditorPane.svelte CodeMirror 6, mounted once per note (KAN-553); owns the write path
   components/ConflictBanner.svelte keep mine / keep theirs / side by side (KAN-556)
   components/Landing.svelte    the no-credential state and the one-time PAT paste (KAN-555)
@@ -55,16 +56,18 @@ Three rules that are decisions rather than layout, each argued in the file that 
   now renders user markdown to HTML in this origin. `lib/auth.ts` has the full argument, and
   `lib/markdown.ts` is the other half: it builds DOM nodes and never an HTML string, so there is no
   `{@html}` anywhere in `src/` and `tests/no-html-injection.test.ts` asserts that over parsed ASTs.
-- **Seven runtime dependencies, and they are all CodeMirror or already inside it.**
+- **Eight runtime dependencies, and they are all CodeMirror or already inside it.**
   `@codemirror/state`, `view`, `commands`, `language` and `lang-markdown` (all MIT) are the **first**
   runtime dependencies this project has ever taken; KAN-553 made that crossing with the bundle delta
   in its PR, as ADR 0001 §2 obliges. KAN-554 added `@lezer/markdown` and `@lezer/common`, and those
   two are a **declaration rather than an addition**: `lang-markdown` already imports the markdown
   parser from them to build `markdownLanguage`, so `package-lock.json` gained no package and the
   bundle gained no byte (measured below). They are declared because importing a transitive dependency
-  directly is how a version constraint goes missing. Everything else in `package.json` is still a
-  devDependency, and the next addition that actually costs bytes is a decision of the same size as
-  KAN-553's — measure it the same way (`npm run build`, then `gzip -9`).
+  directly is how a version constraint goes missing. KAN-567 added `@codemirror/autocomplete` — an
+  official CodeMirror package extending a dependency already accepted, imported only from
+  `lib/codemirror.ts` like the other five and measured the same way (below). Everything else in
+  `package.json` is still a devDependency, and the next addition that actually costs bytes is a
+  decision of the same size as KAN-553's — measure it the same way (`npm run build`, then `gzip -9`).
 
 ### Testing
 
@@ -625,3 +628,91 @@ boundary at **+1,272 B gzip** on the page that fetches it (a second module pream
 cross-module minification a split gives up), so a chunk here would cost the signed-in page more than it
 saves the landing page. The thresholds that justified `lib/codemirror.ts` (79,553 B) and
 `lib/markdown.ts` (20,362 B) are two orders of magnitude away.
+
+## KAN-567: wikilink pills and `[[` autocomplete
+
+`[[KAN-501]]` and `[[Some Note Title]]` now render as a pill in the editor, and typing `[[` opens
+autocomplete over existing note titles. This is the last card in V5.
+
+**The pill is `Decoration.mark`, not a widget that replaces the raw text.** `lib/wikilinks.ts` mirrors
+`backend/app/wikilinks.py`'s two regexes (a pandan ref, a note title, fences excluded) as pure
+functions, tested in `node`; `lib/codemirror.ts` turns a match against `/links`' answer into a CSS
+class and a native tooltip carrying the demo's `KAN-501 · in_progress · "…"` string. The underlying
+`[[KAN-501]]` stays exactly what the caret can select and edit — nothing about the document changes,
+only how it is painted — which is the same convention `lib/markdown.ts`'s `unlinked()` already uses
+for a refused preview link (an explanation in `title`, not a rewrite of what is on screen). Resolved
+gets the accent-tinted rounded badge `App.svelte`'s `.toggle.on` already uses; unresolved gets
+`.unlinked`'s muted, dotted-underline treatment, so a link that could not be confirmed reads the same
+way in the editor as it does in the preview beside it.
+
+**`EditorPane.svelte` fetches `/links` itself, keyed on the `note` prop — a sibling of
+`BacklinksPanel.svelte`'s state machine rather than a value threaded down from `App.svelte`.** Reusing
+`lib/backlinks.ts`'s `needsFetch` for the identity guard is deliberate: the comparison it makes (the
+incoming ref against the ref already asked about) is exactly the same question asked about the same
+prop, so a third use is reuse rather than the kind of coincidence this repo usually duplicates on
+purpose. A fresh answer reaches an already-live view through `setWikilinks`, dispatched as a
+`StateEffect` outside any transaction the caller has in flight — `createView`'s `links` seeds only the
+first paint.
+
+**Typed-but-unsaved links render unresolved, and that is a decision rather than a gap.** `/links`
+reflects the note's last *saved* body (`note_link` reconciles on save, KAN-562, not on keystroke), so
+a `[[...]]` typed since the last save has no row yet and looks identical to one the API genuinely
+could not resolve — both collapse to the same muted pill, because guessing a resolution kaya's own
+database does not have would show a caller something it cannot back up. The window narrows on every
+successful save: `EditorPane.svelte`'s `write()` re-fetches `/links` right after `updateNote` returns,
+since that is the moment the reconciler has just run against the body that was written.
+
+**Autocomplete is `@codemirror/autocomplete`'s own `autocompletion()`, scoped to note titles only.**
+There is no browser-reachable search over pandan's `KAN-`/`EPIC-` cards, so a `[[KAN-501]]` reference
+is still hand-typed; the source only ever calls `lib/notes.ts`'s `listNotes` — the same unshaped call
+every other reader of `/api/v1/notes` makes (ADR 0004 exempts the SPA from shaping entirely) — and
+selecting a suggestion inserts `Title]]` after the `[[` already on screen. This is the one place the
+"CM6 extensions read data handed to them, they do not fetch it" rule (the pill's rule) deliberately
+does not apply: an async source is exactly what `autocompletion()` is built for, `context.aborted` is
+how it tells a stale request from a live one, and calling `listNotes` directly from inside it is the
+idiomatic use of the API CM6 offers rather than a rule bent to fit a card.
+
+### The new dependency
+
+`@codemirror/autocomplete` is the sixth `@codemirror/*` package this project takes, and it is not a
+new *decision* the way KAN-553's first crossing was — it is an official CodeMirror package extending
+a dependency already accepted, imported only from `lib/codemirror.ts` exactly like the other five.
+`tests/editor-chunk-is-lazy.test.ts` covers it with no changes: the guard counts "at least five"
+CodeMirror value imports out of that file and asserts nothing else in `src/` names one, so a sixth
+package lands inside the same two assertions rather than needing a new one.
+
+### The bundle
+
+Measured the same way as every table above (`npm run build`, then `gzip -9`), against `origin/main` at
+`6a97d7f`:
+
+| | before | after | delta |
+|---|---|---|---|
+| Entry JS raw | 71,138 B | 71,613 B | +475 B (+0.7%) |
+| Entry JS gzip -9 | 26,329 B | 26,495 B | **+166 B (+0.6%)** |
+| CSS raw / gzip -9 | 13,219 / 2,708 B | 13,219 / 2,708 B | 0, same content hash |
+| Editor chunk raw | 248,644 B | 286,852 B | **+38,208 B (+15.4%)** |
+| Editor chunk gzip -9 | 79,553 B | 91,732 B | **+12,179 B (+15.3%)** |
+| Grammar chunk raw / gzip -9 | 62,042 / 20,362 B | 62,042 / 20,362 B | 0, same content hash |
+| Preview chunk raw / gzip -9 | 6,220 / 2,479 B | 6,220 / 2,479 B | 0, same content hash |
+
+**The new bytes landed in the existing editor chunk, not a new one** — checked against the built
+output rather than assumed. `lib/codemirror.ts` is still the only file that names `@codemirror/*`
+values and is still reached through exactly one `import()`, so `@codemirror/autocomplete` is pulled
+into `codemirror-*.js` alongside the five packages already there; the grammar and preview chunks come
+out byte-identical (same content hashes), and `dist/index.html` still references only the entry chunk
+and the stylesheet — no `modulepreload` for any of the three lazy chunks, exactly as before.
+
+What the two page states actually fetch:
+
+| Page | before | after | delta |
+|---|---|---|---|
+| **Landing** (no credential) — entry + CSS | 84,357 raw / **29,037** gzip -9, 2 requests | 84,832 / **29,203**, 2 requests | +475 raw / **+166 gzip (+0.6%)** |
+| **Signed-in note** — entry + CSS + all three chunks | 401,263 / **131,431**, 5 requests | 439,946 / **143,776**, 5 requests | +38,683 / **+12,345 (+9.4%)** |
+
+**The landing page barely moves, and the editor page pays the whole cost, on the day it is first
+opened rather than before.** That is the same shape every split on this page has made since KAN-767,
+carried one layer further: the bytes a visitor downloads are gated on having a note open, not on
+having a credential. 12.3 kB gzip is a real number and it is paid once per session (the browser caches
+the chunk across every note opened afterward), on the page that was already fetching the 79.5 kB
+CodeMirror core and the 20.4 kB markdown grammar alongside it.

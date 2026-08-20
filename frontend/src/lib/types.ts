@@ -30,6 +30,35 @@ export interface NoteList {
   notes: Note[]
 }
 
+/**
+ * One outbound wikilink of a note, resolved as far as it can be — `GET /notes/{ref}/links`
+ * (KAN-566), mirroring `backend/app/api/schemas.py`'s `LinkRead` field for field.
+ *
+ * Every resolved-side field is nullable and `null` is the honest value rather than a missing key
+ * (Q26): a `[[...]]` pandan does not have, a `[[...]]` this caller cannot see, a network failure
+ * reaching pandan, and a `[[Title]]` naming no note the caller owns all collapse into the same
+ * `null` — a caller cannot and should not act differently on any of the four.
+ */
+export interface Link {
+  /** `"KAN"`, `"EPIC"` or `"NOTE"`. A plain string, not a union of those three literals, for the
+   *  same reason the backend keeps it a plain column: a kind this build has never heard of is
+   *  possible and must render as unresolved rather than fail to parse. */
+  target_kind: string
+  /** What the body actually said between the brackets — never rewritten by a rename or a move. */
+  target_ref: string
+  /** The canonical identifier this link resolves to, or `null` when unresolved. */
+  resolved_ref: string | null
+  /** The resolved thing's *current* title, or `null` when unresolved. */
+  title: string | null
+  /** Pandan's column name for a resolved card, `null` for an epic, a note, or anything unresolved. */
+  column: string | null
+}
+
+/** `GET /notes/{ref}/links`'s envelope — named, like `NoteList`, for the same reason. */
+export interface LinkList {
+  links: Link[]
+}
+
 /** `POST /api/v1/notes`. `body` and `path` default to `''` server-side. */
 export interface NoteCreate {
   title: string
