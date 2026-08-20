@@ -334,3 +334,166 @@ describe('the search box (KAN-559)', () => {
     expect(host.textContent).not.toContain('No notes yet.')
   })
 })
+
+describe('a search renders flat, and the toggle stops saying otherwise (KAN-962)', () => {
+  /**
+   * The card's measured case, reproduced: `GET /api/v1/notes?q=reading list` came back
+   * `NOTE-9, NOTE-2, NOTE-6` and the tree rendered `NOTE-6, NOTE-9, NOTE-2`.
+   *
+   * The paths are what make those two sequences differ, and they have to: `NOTE-6` is under a
+   * folder, `NOTE-9` is a root-level leaf, and `NOTE-2` has no path at all, so the tree's own rules
+   * (folders before leaves, unpathed in a group below the whole tree) put them in an order the
+   * server's ranking has no say in. Two of these tie at 0.9910 on that query against the live
+   * corpus, which is why KAN-558 has a tie-break at all.
+   */
+  const MATCHED: Note[] = [
+    note('NOTE-9', 'reading.md', 'A reading list'),
+    note('NOTE-2', '', 'Reading list'),
+    note('NOTE-6', 'journal/2026/08/weekly-review.md', 'Weekly review'),
+  ]
+
+  /** What the API returned: `ts_rank DESC, note.id DESC`. */
+  const RANKED = ['NOTE-9', 'NOTE-2', 'NOTE-6']
+
+  /** What grouping by `path` produces out of the same three notes. */
+  const GROUPED = ['NOTE-6', 'NOTE-9', 'NOTE-2']
+
+  /** Mounted the way `App.svelte` mounts it: `query` is a prop the callback writes back into. */
+  function renderLive(initial = ''): { value: string } {
+    const committed = box(initial)
+    mounted.push(
+      mount(Sidebar, {
+        target: host,
+        props: {
+          notes: MATCHED,
+          route: { name: 'home' },
+          loading: false,
+          get query() {
+            return committed.value
+          },
+          onsearch: (term: string) => (committed.value = term),
+        },
+      }),
+    )
+    flushSync()
+    return committed
+  }
+
+  /** Type a term and submit the form, which is the only thing that commits a search (KAN-559). */
+  function commit(term: string): void {
+    const input = host.querySelector<HTMLInputElement>('[data-testid="search-input"]')!
+    input.value = term
+    input.dispatchEvent(new Event('input'))
+    host.querySelector('form')!.dispatchEvent(new Event('submit', { cancelable: true }))
+    flushSync()
+  }
+
+  function clearSearch(): void {
+    host.querySelector<HTMLButtonElement>('[data-testid="clear-search"]')!.click()
+    flushSync()
+  }
+
+  function toggleGroup(): Element | null {
+    return host.querySelector('[role="group"][aria-label="Sidebar view"]')
+  }
+
+  it('positive control: these three notes really do render in a different order in the tree', () => {
+    // Without this, every assertion below could be passing against a corpus whose folder order
+    // happens to equal its rank order, and the whole block would be vacuous. Unsearched, in the
+    // default view, the tree puts them in folder order — a sequence the API did not choose.
+    renderLive()
+
+    expect(host.querySelector('[data-testid="note-tree"]')).not.toBeNull()
+    expect(links()).toEqual(GROUPED)
+    expect(GROUPED).not.toEqual(RANKED)
+  })
+
+  it("keeps the API's relevance order for a search made in the default Tree view", () => {
+    // The defect the card measured: TREE is the default, so this was the default rendering of a
+    // search, and it discarded `ts_rank DESC, note.id DESC` at the last layer.
+    renderLive()
+    commit('reading list')
+
+    expect(links()).toEqual(RANKED)
+    expect(host.querySelector('[data-testid="note-list"]')).not.toBeNull()
+    expect(host.querySelector('[data-testid="note-tree"]')).toBeNull()
+  })
+
+  it("keeps the API's relevance order for a search made in List view too", () => {
+    renderLive()
+    switchTo('List')
+    commit('reading list')
+
+    expect(links()).toEqual(RANKED)
+  })
+
+  it('shows every matched note exactly once, including the one with no path', () => {
+    // The rendered twin of `countNotes`, for the search rendering: a flat list has no unpathed
+    // group and no collapsed folder, so a note going missing here would be a different bug from the
+    // one `tests/tree.test.ts` guards, and it needs its own assertion.
+    renderLive()
+    commit('reading list')
+
+    expect(links()).toHaveLength(MATCHED.length)
+    expect(host.querySelector('[data-testid="unpathed"]')).toBeNull()
+    expect(host.querySelectorAll('button.folder')).toHaveLength(0)
+  })
+
+  it('takes the view toggle off the screen while a search is active', () => {
+    // Not disabled and not merely ignored. A control reading `Tree` above a flat list is the card's
+    // option (a) arriving through the back door — the setting silently overridden, with the toggle
+    // still claiming it holds.
+    const committed = renderLive()
+
+    expect(toggleGroup()).not.toBeNull()
+    commit('reading list')
+    expect(committed.value).toBe('reading list')
+    expect(toggleGroup()).toBeNull()
+
+    clearSearch()
+    expect(toggleGroup()).not.toBeNull()
+  })
+
+  it('says why the notes are not grouped, in place of the toggle', () => {
+    renderLive()
+    expect(host.querySelector('[data-testid="search-ordering"]')).toBeNull()
+
+    commit('reading list')
+    const notice = host.querySelector('[data-testid="search-ordering"]')
+
+    expect(notice).not.toBeNull()
+    expect(notice!.textContent).toContain('Ordered by relevance')
+    expect(notice!.textContent).toContain('not grouped by folder')
+    // And it says where the toggle went, because it is the toggle that vanished.
+    expect(notice!.textContent).toContain('clear the search')
+
+    clearSearch()
+    expect(host.querySelector('[data-testid="search-ordering"]')).toBeNull()
+  })
+
+  it('restores the Tree view when the search is cleared', () => {
+    // The half that option (a) cannot have: nothing writes the chosen view, so clearing a search
+    // puts a person back where they were rather than leaving them in a flat list they never picked.
+    renderLive()
+    commit('reading list')
+    expect(host.querySelector('[data-testid="note-tree"]')).toBeNull()
+
+    clearSearch()
+
+    expect(
+      host.querySelector('[data-testid="note-tree"]'),
+      'the chosen Tree view did not come back when the search was cleared',
+    ).not.toBeNull()
+    expect(links()).toEqual(GROUPED)
+  })
+
+  it('leaves a chosen List view alone when the search is cleared', () => {
+    renderLive()
+    switchTo('List')
+    commit('reading list')
+    clearSearch()
+
+    expect(host.querySelector('[data-testid="note-list"]')).not.toBeNull()
+    expect(host.querySelector('[data-testid="note-tree"]')).toBeNull()
+  })
+})

@@ -437,3 +437,76 @@ that never arrives is a real state: `[data-testid="preview-unavailable"]` is a *
 `.rendered` element, never a child of it, for the same reason `EditorPane`'s notice is a sibling of
 PLAN §S9's container — the element whose children belong to `replaceChildren` cannot hold the sentence
 explaining why `replaceChildren` never ran.
+
+## The sidebar's two views, and what a search does to them (KAN-962)
+
+The sidebar has a folder tree over `path` (KAN-554) and a flat list, toggled, and the tree is the
+default. **A search is rendered by the flat list, whatever the toggle was set to**, and this is the
+one place in the SPA where a rendering decision needed an argument written down.
+
+`GET /api/v1/notes?q=` returns notes in relevance order — `ts_rank DESC, note.id DESC`, and KAN-558
+went to real trouble over that tie-break because equal ranks are common rather than exotic. The tree
+groups by the `path` column, so it *cannot* carry an arbitrary row order: a folder exists because
+some note's path names it, folders sort before leaves, and notes with no path sit in a group below the
+whole tree. Whatever order the server chose is destroyed by the grouping. The tree is not sorting
+wrongly — it is answering a different question — and because it is the **default** view, the default
+rendering of a search was the one that threw the ranking away, silently.
+
+Measured in a browser against `make up` and a real PAT, on a seeded corpus where two notes tie at
+`0.9910322` and the tie-break decides them:
+
+| | order |
+|---|---|
+| API — `GET /api/v1/notes?q=reading list`, by `curl` | `NOTE-2, NOTE-1, NOTE-3` |
+| Sidebar, **Tree** view (the default) — before | `NOTE-3, NOTE-1, NOTE-2` |
+| Sidebar, **List** view — before | `NOTE-2, NOTE-1, NOTE-3` |
+| Sidebar, either view — after | `NOTE-2, NOTE-1, NOTE-3` |
+
+Three parts, each a decision rather than an implementation detail:
+
+- **The chosen view is a rune of its own (`chosen`) and a search never writes it.** So clearing a
+  search puts a person back in the view they picked. Switching the view *for* them — the card's
+  option (a) — looks identical on screen and is not the same thing, because nothing would ever switch
+  it back.
+- **The view toggle leaves the screen while a search is active.** It is the other arm of the same
+  `{#if}` that renders the notice, so "a toggle reading `Tree` above a flat list" is unreachable
+  rather than merely untested. Disabling it instead would keep a highlighted `Tree` on screen over a
+  flat list, which is the same lie with a layer of grey on top.
+- **One line says what the ordering is**, in the toggle's place: *Ordered by relevance, not grouped by
+  folder. The view toggle returns when you clear the search.* It is the honest half of the card's
+  option (b), and it is also the only thing that says where the toggle went. It shows for a search
+  that matched nothing too — the toggle has to be gone in that state for the same reason, so a
+  sidebar with neither the toggle nor the sentence would explain less.
+
+Not built, deliberately: ranking the *folders* by their best-matching note (option (c)). It is a real
+algorithm needing its own invariant beside `countNotes(buildTree(xs)) === xs.length`, and it is a
+different card.
+
+Ordering and grouping records the caller already holds is **presentation, not payload shaping**, so
+this is the SPA's decision to make (ADR 0004 §Decision, and `lib/api.ts`'s header). Nothing here
+projects a field, cuts prose or counts anything.
+
+`tests/sidebar.test.ts` asserts all of it over the rendered DOM, and its first assertion is a
+**positive control**: the same three notes really do render in a different order in the tree, so the
+order assertions below it cannot be passing against a corpus that fails to tell the two orders apart.
+
+### The bundle
+
+One `{#if}`, one `<p>` and one CSS rule, measured the same way as every table above (`npm run build`,
+then `gzip -9`), against `origin/main` at `56464f0`:
+
+| | before | after | delta |
+|---|---|---|---|
+| Entry JS raw | 67,618 B | 67,918 B | +300 B (+0.4%) |
+| Entry JS gzip -9 | 25,385 B | 25,477 B | **+92 B (+0.4%)** |
+| CSS raw | 11,168 B | 11,270 B | +102 B (+0.9%) |
+| CSS gzip -9 | 2,476 B | 2,491 B | **+15 B (+0.6%)** |
+| Editor chunk gzip -9 | 79,553 B | 79,553 B | 0 |
+| Grammar chunk gzip -9 | 20,362 B | 20,362 B | 0 |
+| Preview chunk gzip -9 | 2,479 B | 2,479 B | 0 |
+
+The three lazy chunks come out byte-identical with the same content hashes, which is the check worth
+making rather than the total: this card touches one component that was already in the entry chunk, so
+anything moving in `codemirror-*.js` or `dist-*.js` would mean an import had migrated. A landing page
+fetches **27,968 B gzip** against 27,861 (2 requests either way, **+107 B / +0.4%**); a signed-in load
+fetches **130,362 B** against 130,255 across the same 5 requests.
