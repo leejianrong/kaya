@@ -27,7 +27,7 @@ a retry over a 21.8 s cold introspection makes an outage take a multiple of the 
 """
 
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -127,6 +127,10 @@ unbounded, which for a CLI is a process that never returns."""
 
 NOTES_PATH = "/api/v1/notes"
 
+QUERY_PARAM = "q"
+"""``GET /api/v1/notes``'s search parameter (KAN-558, KAN-559). Named once so `list_notes` and its
+tests spell it the same way the API's own query parameter does."""
+
 NOTE_NOUN = "note"
 NOTE_ENVELOPE = "notes"
 """The API's own list key (``{"notes": [...]}``), per PLAN §Implementation decisions."""
@@ -210,14 +214,30 @@ class KayaClient:
 
     # ---------------------------------------------------------------- verbs
 
-    def list_notes(self) -> Payload:
-        """Every note the caller owns, newest first — the API's order, not re-sorted here.
+    def list_notes(self, q: str | None = None) -> Payload:
+        """Every note the caller owns, newest first — or, with ``q``, the ones that match it.
 
-        ``GET /api/v1/notes`` orders by ``updated_at DESC, id DESC`` and the second column is a
-        deliberate tie-break (`app/api/notes.py`). Re-sorting client-side would be a second opinion
-        about ordering that only one of the two adapters could stay consistent with.
+        ``GET /api/v1/notes`` orders by ``updated_at DESC, id DESC`` with no ``q``, and by
+        ``ts_rank DESC, id DESC`` with one (`app/auth/authorization.py`::``notes_matching``,
+        KAN-558). Both orders are the API's; re-sorting client-side would be a second opinion about
+        ordering that only one of the two adapters could stay consistent with.
+
+        **``q`` is forwarded verbatim, the same opaque-string treatment ``if_updated_at`` gets.**
+        ``None`` means "no search" and adds no query parameter at all — the exact request
+        `list_notes()` always made, so an absent `--q` changes nothing about a plain `note list`.
+        A non-``None`` value is sent as ``?q=`` even when it is empty or all whitespace: this client
+        does not strip it, guess at it, or refuse it client-side, because `app/api/search.py` is the
+        one place that decision is made and it is a `400 empty_search_query` there — the same
+        argument ADR 0008 makes about a ref, applied to a search term. `ApiError` carries that
+        refusal to the caller unchanged, and it inherits exit `2` from `EXIT_FOR_STATUS` with
+        nothing here or in `kaya-cli` keyed on the code string.
+
+        The response is the same ``NoteList`` shape either way — no ``rank`` key, nothing to
+        distinguish a search from a list except the notes it returned — so this method needs no
+        second envelope and no second set of columns.
         """
-        body = self._request("GET", NOTES_PATH)
+        path = NOTES_PATH if q is None else f"{NOTES_PATH}?{urlencode({QUERY_PARAM: q})}"
+        body = self._request("GET", path)
         return Payload.collection(
             noun=NOTE_NOUN,
             envelope_key=NOTE_ENVELOPE,

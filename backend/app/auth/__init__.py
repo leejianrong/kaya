@@ -24,8 +24,10 @@ from app.auth.authorization import (
     authorize_note,
     note_addressed_as_id,
     note_addressed_as_ref,
+    note_ids_owned_by,
     notes_matching,
     notes_owned_by,
+    notes_titled,
 )
 from app.auth.cache import PrincipalCache, digest
 from app.auth.dependencies import get_principal, get_resolver, reset_auth
@@ -58,8 +60,10 @@ __all__ = [
     "get_resolver",
     "note_addressed_as_id",
     "note_addressed_as_ref",
+    "note_ids_owned_by",
     "notes_matching",
     "notes_owned_by",
+    "notes_titled",
     "principal_from_bearer",
     "reset_auth",
     "split_timeout",

@@ -36,6 +36,7 @@ from app.api.search import SearchTerm
 from app.auth import Principal, get_principal, notes_matching, notes_owned_by
 from app.db import get_session
 from app.models import Note
+from app.note_links import reconcile_note_links, resolve_pending_note_links
 
 router = APIRouter(prefix="/api/v1", tags=["notes"])
 
@@ -62,9 +63,24 @@ def create_note(
 
     The owner is the resolved principal and is not a request field. There is no route by which a
     caller can file a note against somebody else's UUID.
+
+    KAN-562: the body's ``[[KAN-n]]`` / ``[[EPIC-n]]`` wikilinks are recorded in ``note_link`` in
+    the same transaction as the note itself, via ``reconcile_note_links``. The explicit ``flush()``
+    before that call is load-bearing — it is what makes ``note.id`` (the edges' foreign key)
+    available before the transaction commits, rather than relying on the implicit flush inside
+    ``commit()`` to have happened first.
+
+    KAN-563: the same call also resolves any of *this* note's own ``[[Some Title]]`` links against
+    notes that already exist, and ``resolve_pending_note_links`` afterward points any *other* note's
+    still-unresolved link at this one, in case this note's title is exactly what one was waiting
+    for. Both stay inside this same transaction for the reason above — a resolution landing without
+    the note it names, or the reverse, is a state nothing here may produce.
     """
     note = Note(owner_id=principal.id, **payload.model_dump())
     session.add(note)
+    session.flush()
+    reconcile_note_links(session, note)
+    resolve_pending_note_links(session, note)
     session.commit()
     session.refresh(note)
 
@@ -143,6 +159,17 @@ def update_note(note: NoteFromRef, payload: NoteUpdate, session: DbSession) -> N
     `PATCH` carrying a title and a body is rejected whole rather than leaving the title applied and
     the body not. See ``app/api/concurrency.py`` for why a metadata-only write is unguarded even
     when it carries a stale precondition.
+
+    KAN-562: a write that touches ``body`` reconciles ``note_link`` in the same transaction —
+    removed wikilinks disappear, added ones appear, and one left untouched is not re-written. A
+    title- or path-only edit does not scan anything: ``find_wikilinks`` / ``find_note_title_links``
+    read the body, and a save that never changed it cannot have changed what the body links to.
+
+    KAN-563: a write that touches ``title`` calls ``resolve_pending_note_links`` — a rename can
+    make this note satisfy some *other* note's still-unresolved ``[[Some Title]]`` link, and that
+    other row would otherwise wait forever for a save of its own that has no reason to happen. This
+    runs independently of whether ``body`` also changed in the same request, and it runs after
+    ``note.title`` has already been assigned above, so it always resolves against the new value.
     """
     enforce_precondition(session, note, payload)
 
@@ -155,6 +182,10 @@ def update_note(note: NoteFromRef, payload: NoteUpdate, session: DbSession) -> N
     # other client's precondition for no reason. SQLAlchemy would emit no UPDATE anyway; committing
     # only when something changed says so out loud.
     if changes:
+        if "body" in changes:
+            reconcile_note_links(session, note)
+        if "title" in changes:
+            resolve_pending_note_links(session, note)
         session.commit()
         session.refresh(note)
 

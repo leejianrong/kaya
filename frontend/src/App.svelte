@@ -36,6 +36,19 @@
   let failure: string | null = $state(null)
 
   /**
+   * KAN-559: the **committed** search term, `''` for "list everything". Owned here, not in
+   * `Sidebar`, because it drives the fetch below and `Sidebar` is presentation over the notes it is
+   * handed — the same split `notes`/`listing` already make. `Sidebar`'s own `draft` state is the
+   * text not yet submitted; this is what the last submit actually asked for.
+   */
+  let query = $state('')
+
+  /** `Sidebar`'s `onsearch`: commit the trimmed term, which is what re-runs the fetch below. */
+  function search(term: string): void {
+    query = term
+  }
+
+  /**
    * Whether this tab has a credential — **reactive**, and KAN-555 is why.
    *
    * It was a `const` read once at mount, which was honest while there was no way to acquire a
@@ -107,7 +120,12 @@
     }
     listing = true
     const abort = new AbortController()
-    listNotes({ signal: abort.signal })
+    // `query` is read directly, which is what makes this effect re-run on every committed search —
+    // an empty string sends no `q` at all (backend/app/api/search.py's own rule: a search box that
+    // has been cleared must send no `q`, never `q=`), so clearing the box is indistinguishable on
+    // the wire from a `note list` that never searched.
+    const term = query.trim()
+    listNotes({ q: term === '' ? undefined : term, signal: abort.signal })
       .then((found) => (notes = found))
       .catch(absorb)
       .finally(() => (listing = false))
@@ -180,6 +198,7 @@
     notes = []
     note = null
     failure = null
+    query = ''
     rejected = reason
     authed = false
   }
@@ -232,7 +251,7 @@
   </header>
 
   {#if authed}
-    <Sidebar {notes} {route} loading={listing} />
+    <Sidebar {notes} {route} loading={listing} {query} onsearch={search} />
     <main>
       {#if route.name === 'unknown'}
         <p class="notice">
