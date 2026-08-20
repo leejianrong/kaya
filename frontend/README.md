@@ -12,7 +12,8 @@ npm test         # vitest, once
 
 KAN-531 got the toolchain and the dev proxy working; KAN-552 added the app skeleton the rest of V3 is
 built inside, KAN-553 put CodeMirror 6 in it, KAN-555 added the way in, KAN-556 the conflict banner,
-KAN-554 the folder tree and the live preview, and KAN-767 moved the editor out of the entry chunk. What
+KAN-554 the folder tree and the live preview, and KAN-767 and KAN-836 moved the editor and the
+preview's markdown grammar out of the entry chunk. What
 is here is the whole of V3: a browsable three-region app with a folder tree over `path`, a live
 preview, and a markdown editor that saves under ADR 0009's precondition and offers keep mine / keep
 theirs / side by side when it is refused — and that arrives on its own chunk, when a note is opened.
@@ -29,6 +30,7 @@ src/
   lib/auth.ts                the credential seam: the only module that knows what a bearer is
   lib/editor.ts              the editor's two guards + ADR 0009's two versions, as pure functions
   lib/codemirror.ts          every runtime CodeMirror value, behind one import() (KAN-767)
+  lib/markdown.ts            markdown -> DOM nodes, behind one import() (KAN-554, KAN-836)
   lib/notes.ts               the five note calls
   lib/router.ts              / and /notes/:ref, hand-written, no dependency
   lib/types.ts               the wire shapes, mirroring backend/app/api/schemas.py
@@ -301,14 +303,9 @@ having already paid nothing for the landing page they came through. There is **n
 the editor chunk in `dist/index.html` — checked rather than assumed, because Vite emits one for
 statically imported chunks and that would have made the whole split invisible at the network layer.
 
-**One number this card did *not* fix, measured rather than guessed.** The entry chunk is still 47,581 B
-gzip, and **20,585 B of that is `@lezer/markdown`** — the live preview's parser, which
-`PreviewPane.svelte` imports statically. Measured by stubbing `lib/markdown.ts`'s import and
-rebuilding: the entry drops to 72,401 B raw / **26,996 B gzip** and the grammar moves wholly into the
-editor chunk (310,782 / 99,697), since `@codemirror/lang-markdown` needs it too. So a landing page
-could plausibly fetch ~29 kB gzip rather than 50 kB. That is a second lazy boundary, around the
-*preview*, it is a card of its own, and it is out of KAN-767's scope — recorded here so it stays a
-decision someone makes rather than a number nobody noticed.
+**One number KAN-767 did *not* fix, measured rather than guessed.** Its entry chunk was still 47,581 B
+gzip and **20,585 B of that was `@lezer/markdown`** — the live preview's parser, which
+`PreviewPane.svelte` imported statically. That became **KAN-836**, one section down.
 
 The guard is `tests/editor-chunk-is-lazy.test.ts`, and it exists because this regression is silent:
 one `import { EditorView } from '@codemirror/view'` at the top of any file in `src/` re-merges the
@@ -332,3 +329,111 @@ file happened to run in.
 that drags `lang-javascript` and `lang-css` behind it. The component's comment carries the measurement.
 The remaining cost is CodeMirror's core (state + view + commands ≈ 268 kB raw on its own) and the
 markdown grammar, and there is no version of a real editor that does not pay it.
+
+### KAN-836: the preview's parser is its own chunk too, because signing in paid for it
+
+KAN-767 left one number behind, and the section above records it: **20,585 B gzip — 43% of what was
+left in the entry chunk — was `@lezer/markdown`**, the grammar `lib/markdown.ts` walks to build the
+live preview's DOM. Same argument as KAN-767 one layer down. A visitor with no credential pays it on
+the landing page, and so does a signed-in user sitting on `/`; neither can see a rendered byte, because
+there is no note open. (`@lezer/markdown` costing **zero new bytes against `marked`+`DOMPurify`** is
+still true and is a different question — that is the *marginal* cost of this parser against an
+alternative, and this card is about the *arrival time* of bytes the app has already decided to ship.
+One does not undo the other.)
+
+So `PreviewPane.svelte` reaches `lib/markdown.ts` through one `import()`, exactly as `EditorPane.svelte`
+reaches `lib/codemirror.ts`. Measured the same way, against `origin/main` at `6beaba6`:
+
+| | before (KAN-767) | after (KAN-836) | delta |
+|---|---|---|---|
+| Entry JS raw | 135,663 B | 67,618 B | **−68,045 B (−50.2%)** |
+| Entry JS gzip -9 | 47,883 B | 25,385 B | **−22,498 B (−47.0%)** |
+| Editor chunk raw | 248,645 B | 248,644 B | −1 B |
+| Editor chunk gzip -9 | 79,550 B | 79,553 B | +3 B |
+| Grammar chunk raw | — | 62,042 B | new, **shared** |
+| Grammar chunk gzip -9 | — | 20,362 B | new, **shared** |
+| Preview chunk raw | — | 6,220 B | new, on demand |
+| Preview chunk gzip -9 | — | 2,479 B | new, on demand |
+| CSS raw | 11,013 B | 11,168 B | +155 B (the notice's rule) |
+| CSS gzip -9 | 2,468 B | 2,476 B | +8 B |
+
+**The grammar is shared between the two lazy chunks rather than duplicated into both, and that was
+measured rather than reasoned about.** `@codemirror/lang-markdown` builds `markdownLanguage` out of
+`@lezer/markdown`, so once *both* consumers are dynamic entries the grammar is reachable from two
+chunks and Rollup hoists it into a third. `grep -o 'from"\./[^"]*"' dist/assets/*.js` on the built
+output says so directly: `codemirror-*.js` and `markdown-*.js` each carry exactly one such edge and it
+is the same file. Rollup names that chunk after the module's own directory, so it appears as
+`dist-*.js` — an ugly name for the markdown grammar, left alone rather than papered over with a
+`manualChunks` entry, because build configuration added for cosmetics is configuration nobody can
+delete later.
+
+What the **three** page states actually fetch, which is the number the card is about rather than the
+chunk list. These are cold loads driven through CDP against `make up` on :8022 with a real PAT, with
+the browser cache disabled — so the request sets below are observed, not derived:
+
+| Page | before (KAN-767) | after (KAN-836) | delta |
+|---|---|---|---|
+| **Landing** (no credential) — entry + CSS | 146,676 raw / **50,351** gzip -9, 2 requests | 78,786 / **27,861**, 2 requests | −67,890 raw / **−22,490 gzip (−44.7%)** |
+| **Note list at `/`** (signed in, nothing open) | 395,321 / **129,901**, 3 requests | 395,692 / **130,255**, 5 requests | +371 raw / **+354 gzip (+0.3%)** |
+| **Note open, preview showing** | 395,321 / **129,901**, 3 requests | 395,692 / **130,255**, 5 requests | +371 raw / **+354 gzip (+0.3%)** |
+
+**The last two rows are identical, and that is a fact about the app rather than a rounding.**
+`EditorPane` sits **outside** the preview toggle's `{#if}` (see `App.svelte`, and `tests/preview.test.ts`
+for why), and `previewing` starts `true`, so a signed-in user on `/` already mounts both panes with
+`note === null`. Every cold load that has a credential fetches all five assets; every cold load that
+does not fetches two. There is no fourth state to quote — toggling the preview off after the fact
+cannot un-fetch a chunk, and `previewing` is not persisted, so "preview off" is not a page a visitor
+can land on.
+
+**So the trade is: −22,490 B gzip on the page where a person has not decided to use kaya yet, against
++354 B gzip and two extra requests on every page where they have.** That is 0.3% more on a signed-in
+load, and it buys 44.7% less on the landing page — the same shape of trade KAN-767 made (−61% / +1.0%),
+one layer down and with a better ratio. Two things make the extra requests cheaper than the count
+suggests: they are **parallel**, and they are not on the critical path — a note page's slowest asset is
+the 79,553 B editor chunk, and the grammar (20,362) and the preview's own module (2,479) are fetched
+alongside it. The preview also had nothing to render before the editor arrived, because its `source`
+comes from `EditorPane`'s `ondocument` seam, so waiting for a second chunk costs it no frame it was
+going to paint. There is still **no `modulepreload`** in `dist/index.html` — checked, because Vite emits
+one for statically imported chunks and that would make the whole split invisible at the network layer.
+
+One honest note about the numbers above: **kaya's own origin serves these assets uncompressed** — the
+entry chunk arrives as 67,970 B on the wire against 67,618 B on disk, i.e. the bytes plus headers. The
+`gzip -9` column is therefore what a compressing edge would deliver rather than what `make up` does
+today, which is the same convention every table on this page uses. `vite build` prints gzip at a lower
+level than `gzip -9`, so it says `25.69 kB` where `gzip -9` says `25,385 B`.
+
+The guard is `tests/preview-chunk-is-lazy.test.ts`, and it is `tests/editor-chunk-is-lazy.test.ts`'s
+twin because the regression is the same silent one: `lib/markdown.ts` is the only file under `src/` that
+may value-import `@lezer/*`, **and** nothing may static-import `lib/markdown.ts`. Either alone
+re-merges the grammar into the entry chunk with every other test still green. The AST scanner both
+files use now lives in `tests/module-graph.ts`; two copies of it would be two instruments that can drift
+apart while both look green, and each guard keeps its own positive controls. There is a third assertion
+in that file which is not a bundle rule at all: `lib/markdown.ts` has to stay **under `src/`**, because
+`tests/no-html-injection.test.ts` and `tests/markdown.test.ts` both sweep that tree, and the obvious
+wrong turn on this card was moving the DOM-building code somewhere those globs stop reaching — the XSS
+guard would narrow its scope silently and stay green.
+
+**The hazard here is not the editor's hazard, and that distinction is the whole of the design.**
+KAN-767's rule — put the `import()` in the effect that reads nothing, and have the consumer *read* the
+resulting rune — is followed to the letter, but for a different reason. `EditorPane` builds a stateful
+object into a host and owns a teardown, so an `await` at the top of its mount effect risks two views in
+one container or an orphan whose `destroy()` is never called. `PreviewPane` builds nothing and tears
+nothing down: `replaceChildren` is total and idempotent, so a second run cannot leak the first. What an
+`await` costs *here* is the **subscription** — Svelte registers an effect's dependencies during its
+synchronous pass only, so `source` read after an `await` is never a dependency, and the preview renders
+the document it was mounted with and then never moves again. No error, no leak, nothing in the DOM to
+look at. That was measured by building the naive version: `tests/preview-lazy-render.test.ts`'s
+`keeps rendering every later document` and `renders inside the same flush` both go red, and so do six
+tests in `tests/preview.test.ts`; the in-flight-navigation test stays **green**, for exactly the reason
+KAN-767 recorded about its own navigation tests, because with one shared module promise the runs resolve
+in queue order.
+
+Two consequences for anybody writing a test. **`mount()` + `flushSync()` no longer leaves rendered
+markup in the preview**, so a DOM test awaits `previewRendered(host)` (`tests/preview-arrival.ts`) —
+one await per mounted preview, at the first point a non-empty document reaches it, because *after*
+arrival the render effect only reads a rune and a keystroke is painted inside its own `flushSync`. It
+polls rather than counting microtask ticks, for the same reason `editor-arrival.ts` does. And a chunk
+that never arrives is a real state: `[data-testid="preview-unavailable"]` is a **sibling** of the
+`.rendered` element, never a child of it, for the same reason `EditorPane`'s notice is a sibling of
+PLAN §S9's container — the element whose children belong to `replaceChildren` cannot hold the sentence
+explaining why `replaceChildren` never ran.
