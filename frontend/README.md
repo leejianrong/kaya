@@ -35,10 +35,13 @@ src/
   lib/router.ts              / and /notes/:ref, hand-written, no dependency
   lib/types.ts               the wire shapes, mirroring backend/app/api/schemas.py
   lib/conflict.ts            ADR 0009's resolution rule + the side-by-side comparison (KAN-556)
+  lib/backlinks.ts           the rail's five states + its identity guard, as pure functions (KAN-568)
   components/EditorPane.svelte CodeMirror 6, mounted once per note (KAN-553); owns the write path
   components/ConflictBanner.svelte keep mine / keep theirs / side by side (KAN-556)
   components/Landing.svelte    the no-credential state and the one-time PAT paste (KAN-555)
-  components/Sidebar.svelte    → KAN-554 (folder tree, real list, preview)
+  components/Sidebar.svelte    the folder tree over `path`, the flat list, the search box (KAN-554/559/962)
+  components/PreviewPane.svelte live preview, a sibling of the editor (KAN-554, KAN-836)
+  components/BacklinksPanel.svelte what links to the open note — the fourth region (KAN-568)
 ```
 
 Three rules that are decisions rather than layout, each argued in the file that holds it:
@@ -510,3 +513,115 @@ making rather than the total: this card touches one component that was already i
 anything moving in `codemirror-*.js` or `dist-*.js` would mean an import had migrated. A landing page
 fetches **27,968 B gzip** against 27,861 (2 requests either way, **+107 B / +0.4%**); a signed-in load
 fetches **130,362 B** against 130,255 across the same 5 requests.
+
+## KAN-568: the backlinks rail
+
+`GET /api/v1/notes/{ref}/backlinks` (KAN-566) reaches the browser as `components/BacklinksPanel.svelte`:
+every note whose body links to the one that is open, in the shell's **fourth** region.
+
+Four decisions, each argued in the file that holds it.
+
+**It is a region of the shell, not a third column of `.split`.** `App.svelte` was three layout regions
+"and nothing else", so the fourth is a deliberate exception rather than drift. A rail inside `main`
+would be a sibling of `{#if previewing}`, and KAN-554 and KAN-962 both paid for the rule that a command
+about one pane must not disturb another's state. Outside `main` the preview toggle **cannot reach it at
+all** — the structural form of the property rather than the carefully-placed one. It also is not a pane
+of the document, so it does not want one of `.split`'s `minmax(0, 1fr)` tracks; the grid becomes
+`minmax(12rem,18rem) 1fr minmax(11rem,16rem)`, and under 60rem the rail moves *below* the document
+rather than becoming a third cramped column. `{#if railed}` and `class:railed` are **one expression**,
+because a column with no rail is an empty stripe and a rail with no column overlaps `main`.
+
+**Its state is a closed union, because the bug this card would otherwise ship is "nothing links here"
+and "the request failed" sharing a sentence.** `lib/backlinks.ts`'s `panelState` returns one of
+`closed | loading | failed | empty | listed`, so collapsing two of them into an `{:else}` stops
+type-checking instead of merely reading badly, and the precedence — `closed` beats `loading` beats
+`failed` beats the rows — is a pure function with a test naming each step rather than a chain of
+`{#if}`s in markup. `empty` and `failed` **name the ref**, because the fetch is asynchronous and the
+prop moves first, so a zero state that does not name its note is indistinguishable from the previous
+note's left on screen. Same care as `Sidebar.svelte`'s `No notes match "…"`.
+
+**`needsFetch` is the identity guard, and it is `lib/editor.ts`'s `needsRemount` one component over.**
+Reading the `note` prop in an effect registers the *whole* prop, so a parent handing down a new object
+re-runs that effect whichever field is read — `note.ref` and `note.body` are one signal. So the rail
+compares the incoming ref against the ref it already asked about, and that comparison is a pure
+function in `node`. Two consequences that are not obvious:
+
+- **The abort is not in that effect's cleanup.** Svelte runs a cleanup before every re-run, and the
+  re-run is the no-op the guard returns out of, so an `AbortController` cancelled there kills a live
+  request nobody replaced and the panel sits on `Loading…` for ever. The supersede is in `load()`,
+  beside the request it replaces; the per-component abort is the second effect, which reads nothing.
+  **That was found by a mutation coming back green** — every assertion in the file waited for the
+  request to settle before touching the prop, so nothing stood in the window. It has its own test now.
+- **There is deliberately no automatic refresh.** Inbound links change when *another* note's body
+  changes — in another tab, another session, or an agent's `kaya note edit` — and this app is not told.
+  A panel refetching on save would be right about exactly one of the ways it goes stale (the open note
+  linking to its own title, which `app/api/links.py` documents as a real backlink) and silently wrong
+  about the rest, while *looking* live. A **Refresh** button that says what it does is the honest
+  version, and it doubles as the way out of `failed`.
+
+**A backlink's title is prose somebody else wrote, so the rail is the app's second user-content
+surface.** It reaches the DOM through Svelte text interpolation and nothing else: no `{@html}`, no
+attribute value derived from the payload — the only `href` in the rail is a route built from a ref, so
+the preview's protocol allow-list has no analogue to need here. Driven in a real browser against a note
+whose title concatenates a `<script>` element, an `<img src=x onerror=…>` and a markdown link with a `javascript:` target: **0** elements created from the
+payload, the title in exactly **one** `Text` node holding it byte for byte, **0** attributes whose name
+starts with `on`, the serialized HTML carrying `&lt;script&gt;` and not `<script>`, and
+`globalThis.KAYA_XSS === false`.
+
+**What a click does about unsaved changes: nothing, on purpose.** Clicking a backlink navigates through
+`interceptClick`, exactly as a sidebar row does — and, exactly as a sidebar row does, it discards an
+unsaved edit silently (driven and confirmed: typed text gone, no dialog). That is a **pre-existing
+property of every link surface in this app**, not something this card introduces, and guarding only the
+rail would make one of three navigation surfaces behave differently from the other two. Guarding all of
+them is a router-level card with a `beforeunload` in it.
+
+Two things this rail is deliberately **not**. It does not show `/links`: outbound wikilinks are
+KAN-567's, rendered as pills *in the document* where the resolved title and column decorate the link a
+person typed, and a second listing here would be that card's data with worse words. It also matters for
+what this panel demonstrates — `/links` resolves `KAN-`/`EPIC-` refs against pandan and degrades when
+pandan is away, `/backlinks` is a join over two of kaya's own tables and cannot, and one heading over
+both is how R5.1 stops being observable. And it does **not** shape a payload (ADR 0004): the number
+beside the heading is `panel.notes.length`, a label on rows already on screen, which is the call
+`Sidebar.svelte` already made for its `no path` group. Worth being exact about, because it would be easy
+to assume the count came over the wire: it did not and could not — `NoteList` is `{"notes": [...]}` and
+`backend/app/api/schemas.py` records that `summary` is deliberately absent, since the aggregate is
+attached inside `render()` and is therefore `kaya-client`'s.
+
+### The bundle
+
+Measured the same way as every table above (`npm run build`, then `gzip -9`), against `origin/main` at
+`fcc09ec`:
+
+| | before | after | delta |
+|---|---|---|---|
+| Entry JS raw | 67,918 B | 71,138 B | +3,220 B (+4.7%) |
+| Entry JS gzip -9 | 25,477 B | 26,329 B | **+852 B (+3.3%)** |
+| CSS raw | 11,270 B | 13,219 B | +1,949 B (+17.3%) |
+| CSS gzip -9 | 2,491 B | 2,708 B | **+217 B (+8.7%)** |
+| Editor chunk raw / gzip -9 | 248,644 / 79,553 B | 248,644 / 79,553 B | 0, **same content hash** |
+| Grammar chunk raw / gzip -9 | 62,042 / 20,362 B | 62,042 / 20,362 B | 0, **same content hash** |
+| Preview chunk raw / gzip -9 | 6,220 / 2,479 B | 6,220 / 2,479 B | 0, **same content hash** |
+
+**The three unchanged content hashes are the check worth making, more than the totals.**
+`codemirror-BTCbquzj.js`, `dist-BF334o2X.js` and `markdown-CaOVSkpt.js` are byte-identical filenames
+before and after, which is what says no import migrated: a stray `import { EditorView } from
+'@codemirror/view'` anywhere in `src/` re-merges ~80 kB gzip with every test still green, and the hash
+is the only witness that does not depend on somebody re-reading this table.
+
+What the two page states actually fetch:
+
+| Page | before | after | delta |
+|---|---|---|---|
+| **Landing** (no credential) — entry + CSS | 79,188 raw / **27,968** gzip -9, 2 requests | 84,357 / **29,037**, 2 requests | +5,169 raw / **+1,069 gzip (+3.8%)** |
+| **Signed-in note** — entry + CSS + all three chunks | 396,094 / **130,362**, 5 requests | 401,263 / **131,431**, 5 requests | +5,169 / **+1,069 (+0.8%)** |
+
+Both rows move by the same 1,069 B because only the entry chunk and the stylesheet changed. CSS moves
+proportionally more than JS for the reason the banner's and the preview's did — the rail is a fourth grid
+region with a responsive fallback, and the baseline stylesheet is small.
+
+**The rail is not its own chunk, and that is a measurement rather than an omission.** It is 852 B gzip in
+the entry, paid by a visitor with no credential. KAN-767 measured the standing cost of one more chunk
+boundary at **+1,272 B gzip** on the page that fetches it (a second module preamble, plus the
+cross-module minification a split gives up), so a chunk here would cost the signed-in page more than it
+saves the landing page. The thresholds that justified `lib/codemirror.ts` (79,553 B) and
+`lib/markdown.ts` (20,362 B) are two orders of magnitude away.
