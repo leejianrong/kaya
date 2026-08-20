@@ -27,6 +27,22 @@ than by a ``KAN-``/``EPIC-`` prefix — are KAN-563's syntax, not this one's, an
 here. The two forms may end up sharing one regex alternation eventually; until KAN-563 exists,
 keeping them apart is one call to make later rather than one call to unmake.
 
+**KAN-563's answer: stay apart, deliberately.** ``find_note_title_links``/``NoteTitleLink`` below
+are a sibling of ``find_wikilinks``/``WikilinkRef``, not a case added to it, because the two shapes
+have nothing in common past "a bracket pair": a pandan reference is a closed two-word vocabulary
+plus a number, a note title is unbounded text, and forcing ``WikilinkRef.number: int`` to also mean
+"no number, this is a title" would turn a clean field into an optional one for every existing
+caller. What *does* have to be shared is exclusion: the two parsers run as two independent scans
+over the same body, so ``NOTE_TITLE_PATTERN`` carries its own negative lookahead refusing any
+bracket pair that is itself a syntactically valid ``KAN-n``/``EPIC-n`` form. Without it,
+``[[KAN-1]]`` would be reported twice — once as a pandan reference and once as a literal note title
+"KAN-1" — and ``app/note_links.py`` would record a phantom edge to a note nobody meant to name. The
+lookahead's
+notion of "syntactically valid" is exactly ``WIKILINK_PATTERN``'s own (ASCII digits, optional
+horizontal whitespace), so a form that ``find_wikilinks`` itself refuses — ``[[KAN-]]``,
+``[[KAN-123-old]]``, a non-ASCII digit — is free to fall through and be read as a literal title
+instead, the same way it already falls through to plain prose today.
+
 ## The edge cases this file was asked to get right
 
 **The prefix vocabulary is closed and literal.** ``KAN`` and ``EPIC``, nothing else — not ``PAN``,
@@ -187,5 +203,91 @@ def find_wikilinks(body: str) -> list[WikilinkRef]:
                 start=match.start(),
                 end=match.end(),
             )
+        )
+    return refs
+
+
+# KAN-563. `[[`, optional horizontal whitespace, then any run of one or more characters that are
+# neither a bracket nor a newline (lazy, so it stops at the first spot the tail can match — see the
+# nesting argument below), optional horizontal whitespace, `]]`. The negative lookahead immediately
+# inside the opening `[[` is what keeps this pattern from ever claiming a pair `WIKILINK_PATTERN`
+# already owns — see the module docstring's "KAN-563's answer" paragraph for why that matters and
+# why the lookahead's digit class is `[0-9]`, not `\d`: it must agree with `WIKILINK_PATTERN`'s own
+# `re.ASCII`-gated notion of a valid ref regardless of what flags this pattern carries.
+#
+# No wildcard spans a bracket (the content class excludes `[`/`]`), which is what makes nesting
+# resolve to the innermost well-formed pair here too, for the identical structural reason
+# `WIKILINK_PATTERN` does — see that docstring paragraph; it is not re-argued twice.
+#
+# `[^\[\]\n]` rather than `[^\[\]]`: a wikilink is written on one line, mirroring
+# `WIKILINK_PATTERN`'s `[ \t]*` choice over `\s*` for the same reason (no editor produces a bracket
+# pair spanning a hand-typed newline).
+NOTE_TITLE_PATTERN = re.compile(
+    r"\[\[(?![ \t]*(?:KAN|EPIC)-[0-9]+[ \t]*\]\])[ \t]*([^\[\]\n]+?)[ \t]*\]\]",
+    re.IGNORECASE,
+)
+
+NOTE_TITLE_MAX = 255
+"""Byte-for-byte ``app/models/note_link.py``'s ``TARGET_REF_MAX``, duplicated rather than imported:
+this module is pure text-in-refs-out and does not reach into the persistence layer for a constant,
+the same direction ``app/models/note_link.py`` itself draws against ``app/api/schemas.py``'s
+``TITLE_MAX``. A bracket span longer than this cannot name a real note (``Note.title`` is
+``String(255)``) and would overflow ``note_link.target_ref``'s own column if it ever reached an
+INSERT unfiltered — refusing it here is what keeps an over-long, almost certainly accidental
+``[[...]]`` span from turning into a `500` on save, the same posture ``_FENCE_DELIMITER`` and
+`WIKILINK_PATTERN` already take toward "not a link" over "a value nothing downstream expects"."""
+
+
+@dataclass(frozen=True)
+class NoteTitleLink:
+    """One ``[[Some Note Title]]`` found in a note's body (KAN-563) — the note-to-note sibling of
+    ``WikilinkRef``. Not the same dataclass: see the module docstring's "KAN-563's answer" for why
+    the two shapes don't share a field list. ``kind`` is always ``"NOTE"`` and exists so
+    ``app/note_links.py``'s diff can walk a list of these and a list of ``WikilinkRef`` through the
+    one attribute pair the diff actually needs, ``(kind, canonical)``.
+    """
+
+    title: str
+    """The target title exactly as typed, with only the whitespace immediately inside the brackets
+    trimmed — never case-folded. Resolution (``app/note_links.py``) matches this against
+    ``Note.title`` exactly, case included; see that module for the argument."""
+    raw: str
+    """The exact matched substring, brackets and all — same contract as ``WikilinkRef.raw``."""
+    start: int
+    end: int
+    kind: Literal["NOTE"] = "NOTE"
+
+    @property
+    def canonical(self) -> str:
+        """The diff key's second half, for the same reason ``WikilinkRef.canonical`` is one — here
+        it is simply the title, since a title has no bracket-free/case-normalised spelling to
+        collapse onto the way a pandan reference does."""
+        return self.title
+
+
+def find_note_title_links(body: str) -> list[NoteTitleLink]:
+    """Every ``[[Some Note Title]]`` in `body`, left to right, code fences excluded, and any pair
+    that ``find_wikilinks`` would itself recognise as a ``KAN-``/``EPIC-`` reference excluded too
+    (``NOTE_TITLE_PATTERN``'s own lookahead, not a post-filter against `find_wikilinks`'s output —
+    see the module docstring for why a post-filter would be the wrong shape).
+
+    Pure, exactly like `find_wikilinks`: no session, no owner, no notion of which titles actually
+    exist. Whether a title names a real note is `app/note_links.py`'s question, against a database
+    this function never touches.
+
+    A whitespace-only bracket pair (``[[   ]]``) and a span longer than `NOTE_TITLE_MAX` are both
+    reported as *no* link rather than as a link with a hollow or truncated title — the same "not a
+    link" treatment `WIKILINK_PATTERN` gives `[[KAN-]]`'s missing digits.
+    """
+    fenced = _fenced_ranges(body)
+    refs: list[NoteTitleLink] = []
+    for match in NOTE_TITLE_PATTERN.finditer(body):
+        if _inside_a_fence(match.start(), fenced):
+            continue
+        title = match.group(1).strip()
+        if not title or len(title) > NOTE_TITLE_MAX:
+            continue
+        refs.append(
+            NoteTitleLink(title=title, raw=match.group(0), start=match.start(), end=match.end())
         )
     return refs

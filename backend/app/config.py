@@ -88,6 +88,74 @@ class Settings(BaseSettings):
     a retry loop must not become one pandan round trip per request. Kept well under the positive
     TTL so a token that was rejected because it hadn't been minted yet becomes usable quickly."""
 
+    card_resolution_connect_timeout_seconds: float = Field(
+        default=3.0,
+        validation_alias="KAYA_CARD_RESOLUTION_CONNECT_TIMEOUT_SECONDS",
+    )
+    """Per-request connect budget for resolving `[[KAN-n]]`/`[[EPIC-n]]` wikilinks against pandan
+    (KAN-564, spike 0001). Deliberately **not** `pandan_connect_timeout_seconds`: this budget
+    protects a note *render*, which must return promptly with an unresolved link rather than wait
+    out identity's much longer cold-start allowance (ADR 0003's "slow is worse than down" — a
+    render blocking for 30s on a decoration is worse than the decoration simply not showing up).
+    Sized off spike 0001's measured 1.3-1.7s page fetch, connect phase only."""
+
+    card_resolution_read_timeout_seconds: float = Field(
+        default=3.0,
+        validation_alias="KAYA_CARD_RESOLUTION_READ_TIMEOUT_SECONDS",
+    )
+    """Per-request read budget for the same calls. ~3s, per spike 0001's recommendation — enough
+    headroom over the measured 1.3-1.7s page fetch without being generous, because this budget can
+    be spent several times over inside one render (see `card_resolution_max_upstream_requests`)."""
+
+    card_resolution_total_deadline_seconds: float = Field(
+        default=8.0,
+        validation_alias="KAYA_CARD_RESOLUTION_TOTAL_DEADLINE_SECONDS",
+    )
+    """Wall-clock budget for one `CardEpicResolver.resolve()` call, across every request it makes.
+    Refs still unresolved when this elapses render unresolved rather than the render hanging — the
+    partial-resolution degradation spike 0001 calls for. This bounds when a **new** request may
+    *start*; it does not cancel one already in flight, so worst-case wall time is this plus one
+    request's own timeout, not a hard ceiling on its own (ADR 0001: no async engine, no cancellation
+    primitive to reach for here)."""
+
+    card_resolution_max_upstream_requests: int = Field(
+        default=5,
+        validation_alias="KAYA_CARD_RESOLUTION_MAX_UPSTREAM_REQUESTS",
+    )
+    """Hard cap on upstream requests inside one `resolve()` call, regardless of elapsed time —
+    spike 0001's "five-page cap" carried over to a request-count cap. The mechanism changed (see
+    `app/integrations/card_resolution.py`'s module docstring: pandan's `refs=`/`ids=` batch
+    parameter, issue #254, shipped after the spike was written, so this is no longer a page walk),
+    but the reason for a cap did not: a huge note or a huge board must degrade to partially
+    resolved rather than to a long wait, deterministically rather than only via the deadline
+    clock."""
+
+    card_resolution_max_selectors_per_request: int = Field(
+        default=100,
+        validation_alias="KAYA_CARD_RESOLUTION_MAX_SELECTORS_PER_REQUEST",
+    )
+    """How many `KAN-n` refs go in one `GET /api/v1/cards?refs=...` request before the resolver
+    chunks into a second one. Must not exceed pandan's own combined-selector cap
+    (`MAX_CARD_SELECTORS`) or every ref in an over-sized chunk gets a `422` instead of an answer.
+    Verified live against `GET /openapi.json` and the endpoint itself on 2026-08-18: pandan's
+    default cap is 100, and this mirrors it rather than guessing a smaller, safer number, because a
+    smaller chunk size only costs more requests for no benefit — the cap is enforced server-side
+    either way. Epic refs never chunk: `GET /api/v1/epics` takes no `refs` parameter at all and
+    returns every epic the caller can see in one unpaginated call (confirmed live), so there is
+    nothing to chunk."""
+
+    card_resolution_cache_ttl_seconds: float = Field(
+        default=300.0,
+        validation_alias="KAYA_CARD_RESOLUTION_CACHE_TTL_SECONDS",
+    )
+    """How long a resolved (or confirmed-absent) card/epic is trusted before `CardEpicResolver`
+    asks pandan again. Separate from `principal_cache_ttl_seconds` by requirement (ADR 0003, spike
+    0001, SLICES.md V5): a stale card title or column is cosmetic, unlike a stale identity, so this
+    is generous — 5 minutes against identity's 60 seconds. One TTL rather than
+    `PrincipalCache`'s positive/negative split: unlike a rejected credential, "this ticket doesn't
+    exist or isn't yours" is not the kind of fact that flips back within minutes, so there is no
+    argument here for two different half-lives."""
+
     log_level: str = Field(
         default="INFO",
         validation_alias="KAYA_LOG_LEVEL",
