@@ -20,8 +20,13 @@ Four things to notice, because all four are load-bearing:
 - **No route decides what an empty ``?q=`` means.** ``app/api/search.py`` does, before this module
   is reached, and hands the list route ``None`` or a term that is known to be non-blank.
 
-Deliberately absent, with the card that owns each: `/links` + `/backlinks` (KAN-566, which will
-depend on ``NoteFromRef`` and inherit ADR 0008 for free), and paging of any shape.
+`/links` and `/backlinks` landed in KAN-566 and are **not** in this file: see ``app/api/links.py``,
+which argues the split. The short version is that they are the only routes under ``app/api/`` that
+take a bearer and an upstream client as well as a session, so the three-phase body that follows from
+that reads as what it is in its own module and as an exception here. They did depend on
+``NoteFromRef`` and inherit ADR 0008 for free, exactly as this docstring predicted.
+
+Deliberately absent: paging of any shape.
 """
 
 from typing import Annotated

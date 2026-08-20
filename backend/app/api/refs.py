@@ -156,8 +156,10 @@ def note_from_ref(
     """The dependency every ref-taking route uses, and the reason none of them parse anything.
 
     V5's `/links` and `/backlinks` (KAN-566) get ADR 0008's guarantee by depending on this, without
-    a line of ref handling of their own. That is what "resolve centrally" buys, and it is why this
-    takes a bare ``ref: str`` path parameter rather than anything route-specific.
+    a line of ref handling of their own — they landed, and they did. That is what "resolve
+    centrally" buys, and it is why this takes a bare ``ref: str`` path parameter rather than
+    anything route-specific. Both inherited the `400` for ``#NOTE-12``, the byte-identical `404` for
+    either spelling and the `403`/`404` split, and ``app/api/links.py`` mentions none of them.
     """
     return resolve_note(session, principal, ref)
 

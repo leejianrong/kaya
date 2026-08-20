@@ -8,8 +8,8 @@ cross-linked to the board.
 > **Status: the product works from a checkout and has nowhere to live.** A pandan PAT creates,
 > reads, edits and deletes notes over `/api/v1/notes`, and the whole stack ships as one container
 > image serving the SPA and the API from a single origin. **`kaya` drives all of it from a shell** —
-> `note {list,get,create,edit,move,delete}` and `config {set,show,path}`, in `human`, `json` or
-> `toon`. The SPA is a browsable app: a CodeMirror 6 editor, a folder tree, a live preview, a PAT
+> `note {list,get,create,edit,move,delete}`, `links <ref>`, `backlinks <ref>` and
+> `config {set,show,path}`, in `human`, `json` or `toon`. The SPA is a browsable app: a CodeMirror 6 editor, a folder tree, a live preview, a PAT
 > paste to get in, and a conflict banner when two writers collide. The MCP server registers six
 > tools and five of them work. Full-text search runs end to end: a ranked `?q=` in the API, `--q` on
 > `note list`, a box in the sidebar. What has no answer at all is **where to point any of it: there
@@ -49,9 +49,9 @@ is deliberately no second console script.
 
 **That version number is the current release, and it reads only.** `v0.5.0` predates the write verbs:
 its own `--help` says *"Reads only: `note list` and `note get`"*, and `config`, `--fields`, `--full`
-and bare `kaya` are all unrecognised words to it. Everything this README describes below is on `main`
-and reaches a binary at the next tag; until then the download is a read-only client and the checkout
-is the whole tool.
+`links`, `backlinks` and bare `kaya` are all unrecognised words to it. Everything this README
+describes below is on `main` and reaches a binary at the next tag; until then the download is a
+read-only client and the checkout is the whole tool.
 
 ### Where to point it
 
@@ -86,9 +86,9 @@ kaya note get NOTE-12 --format json
 
 `kaya config set --api-url …` writes those to a config file instead, and `kaya config show`
 reports what resolved and from which tier — it never prints the token, only whether there is one.
-All nine verbs are live on `main`, so the origin is the one thing standing between the CLI and a
-usable product; [`kaya-cli/README.md`](kaya-cli/README.md) has the formats, the error contract and
-the exit codes.
+Every verb is live on `main`, so the origin is the one thing standing between the CLI and a usable
+product; [`kaya-cli/README.md`](kaya-cli/README.md) has the formats, the error contract and the exit
+codes.
 
 ## What it will do
 
