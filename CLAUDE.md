@@ -172,6 +172,42 @@ with the model's, plus asserting the `Computed` construct exists, is `persisted`
 same string. Same technique as `test_client_deadline_outlasts_auth.py`: put the alarm where the
 breaking change gets made.
 
+**A generated revision is reflowed by `ruff format`, wired into `alembic.ini`'s
+`[post_write_hooks]`, and it is `format` rather than `check --fix` for a measured reason** (KAN-692,
+`backend/alembic.ini`, `backend/tests/unit/test_alembic_post_write_hooks.py`,
+`backend/tests/integration/test_alembic_autogenerate.py`). KAN-665 made the *template* lint-clean;
+autogenerate's renderer emits each `sa.Column(...)`, `sa.ForeignKeyConstraint(...)` and
+`sa.UniqueConstraint(...)` on **one line**, which no template edit can reach — measured through the
+real command, **nine E501s** in a revision nobody had typed a character into, which is why 0001's and
+0003's columns are hand-wrapped. Four things the next person would otherwise get wrong. **`ruff
+check --fix` does not fix E501 and `ruff format` does**: E501 has no autofix, so `--fix` reports the
+long line and rewrites nothing — the operation whose name contains "fix" is the wrong one. **One
+hook, not two**: a `check --fix` pass beside it would silently sort or delete the imports
+`script.py.mako` *guesses* at, and that template's comments say in as many words that ruff
+*reporting* a wrong guess (I001/F401/F821) is the wanted outcome. **`type = module`, because ruff
+ships no `console_scripts` entry point at all** — no `entry_points.txt` in its dist-info, the binary
+is a script in the venv's `bin/` — so `console_scripts` cannot resolve it, and `module` runs
+`sys.executable -m ruff`, which resolves in the interpreter alembic is already running under rather
+than in whatever `PATH` holds (`exec`'s dependency). And **alembic swallows a hook that exits
+non-zero**: `write_hooks._run_hook` calls `subprocess.run` with no `check=`, so a wrong sub-command
+or a bad flag prints ruff's complaint and generates the revision anyway, indistinguishable from no
+hook at all. A missing *module* is the loud case (`CommandError`, before any subprocess starts). That
+asymmetry is why the guard is behavioural rather than "assert the section exists" — the fast one runs
+the hooks the real `alembic.ini` declares over a rendered wide revision, the integration one drives
+`alembic revision --autogenerate` against a real Postgres in **its own database** and asserts the
+un-hooked generation fails E501 *first*, because "clean with the hook" is a green test about nothing
+unless the before is dirty. **The honest limit: no formatter can break a long string literal.**
+`note.search_vector` renders as a 224-character `sa.Computed("setweight(to_tsvector(…)) || …",
+persisted=True)` whose excess is one string; `ruff format` reflows the call around it and E501 still
+names it, so that revision wants a hand wrap. Pinned against a verbatim fixture, never against the
+live expression, so the guard's verdict is not a function of how long somebody's SQL is. Two
+findings worth not rediscovering: KAN-665 predicted that wiring this hook would empty
+`test_alembic_template.py`'s `== {"E501"}` boundary and that the test should then be deleted — it
+**stayed green**, because `template_to_file` sits a layer below the `ScriptDirectory` that runs
+hooks, so that test is now the hook's positive control rather than dead; and the hook normalises the
+template's `repr()` single quotes to double, so the *shipped* revision matches repo style even though
+`script.py.mako` deliberately still emits upstream's.
+
 **`search_vector` must never reach the wire, and that guard is a unit test on purpose** (KAN-557,
 `backend/tests/unit/test_note_payload_keys.py`). `NoteRead` is `from_attributes=True`, so a model
 column not leaking is a property of pydantic's explicitness rather than of a decision anybody here
