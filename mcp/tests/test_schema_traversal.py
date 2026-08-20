@@ -175,12 +175,15 @@ def test_a_nullable_enum_is_left_uncollapsed() -> None:
     returned with both branches intact — a few bytes not saved, against a schema that would have
     started rejecting a call it used to accept.
     """
-    assert "enum" not in NULL_INERT_SIBLINGS
     compacted = compact_schema(NULLABLE_ENUM)
     choice = compacted["properties"]["choice"]
     assert "anyOf" in choice, "a nullable enum was collapsed; the collapsed form rejects null"
     assert choice["anyOf"] == [{"enum": ["a", "b"], "type": "string"}, {"type": "null"}]
     assert "type" not in choice, "the branch form carries no top-level `type`; a collapse added one"
+    # Last, and deliberately: watching mutation (b) fail showed this assertion first, where it
+    # short-circuited the three above and reported a set membership instead of the behaviour. A
+    # guard whose message is about an implementation detail is a weaker guard.
+    assert "enum" not in NULL_INERT_SIBLINGS
     # The generated annotation still goes, because that half is unconditional.
     assert "title" not in choice
 
