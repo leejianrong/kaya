@@ -241,6 +241,38 @@ describe('the identity guard, which is what stops a request per keystroke', () =
     })
   })
 
+  it('survives the prop churning while its request is still in flight', async () => {
+    // **This test exists because a mutation came back green.** Moving the abort into the guarded
+    // effect's *cleanup* — the obvious place for it, and where KAN-552 rehearsed the editor's
+    // teardown — passed every other assertion in this file, because they all wait for the request to
+    // settle before touching the prop again. Svelte runs a cleanup before every re-run, and the
+    // re-run here is a no-op the guard returns out of, so the abort lands on a live request nobody
+    // replaced: the panel sits on `Loading…` for ever, with nothing in the DOM to explain it. Hence
+    // the abort is in `load()`, beside the request it supersedes, and the per-component one is the
+    // second effect. The window has to be stood inside for that to be observable at all.
+    let release: (value: Response) => void = () => {}
+    answer = () => new Promise<Response>((resolve) => (release = resolve))
+    const panel = render(note('NOTE-1'))
+    await settledOn('backlinks-loading')
+
+    // A new object per keystroke, same note — exactly the parent `needsFetch` is written for, but
+    // now arriving *during* the round trip rather than after it.
+    for (const body of ['a', 'ab', 'abc']) {
+      panel.open(note('NOTE-1', { body }))
+    }
+
+    release(
+      new Response(JSON.stringify({ notes: [note('NOTE-5', { title: 'Still arrived' })] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    await settledOn('backlinks')
+    expect(rail().textContent).toContain('Still arrived')
+    // And still exactly one request: the churn neither refetched nor cancelled.
+    expect(asked).toEqual(['/api/v1/notes/NOTE-1/backlinks'])
+  })
+
   it('asks again, exactly once, when the ref moves', async () => {
     answer = ok([note('NOTE-9')])
     const panel = render(note('NOTE-1'))
