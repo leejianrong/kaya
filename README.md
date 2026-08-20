@@ -118,7 +118,7 @@ Between them they carry most of what makes this project different from a generic
 
 ## Development
 
-Needs `uv` (Python 3.12), Node 20.19+ and Docker.
+Needs `uv` (Python 3.12), Node 24.15+ and Docker.
 
 ```bash
 make hooks         # install the pre-push gate (do this once)
