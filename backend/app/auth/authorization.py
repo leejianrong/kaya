@@ -18,6 +18,10 @@ someone else's, seven returned for a page of ten) and it would still have pulled
 the wire. ``notes_matching`` (KAN-558) is the first thing to take that composition up — a search is
 where an unscoped list query looks most convincing, and it is in this module rather than in
 ``app/api/`` so that "another user's matching note never appears" is that same ``WHERE``.
+``notes_linking_to`` (KAN-566) is the second, and it is the case
+``tests/unit/test_no_unscoped_note_query.py``'s docstring named in advance: a backlinks query is a
+list endpoint that reads most naturally *from the other table*, and started that way it has no
+owner column to filter on at all.
 
 ``note_addressed_as_ref`` / ``note_addressed_as_id`` decide about **neither**. They are the two
 unscoped single-row fetches ADR 0008 needs, one per spelling of a note's name, and they are as
@@ -47,6 +51,7 @@ from sqlalchemy import Select, func, select
 from app.auth.principal import Principal
 from app.auth.resolver import error_body
 from app.models import Note
+from app.models.note_link import TARGET_KIND_NOTE, NoteLink
 
 
 def note_addressed_as_ref(ref: str) -> Select[tuple[Note]]:
@@ -222,3 +227,87 @@ def note_ids_owned_by(owner_id: uuid.UUID) -> Select[tuple[int]]:
     reveal, indirectly, that another person has a note by some particular title.
     """
     return select(Note.id).where(Note.owner_id == owner_id)
+
+
+def notes_linking_to(principal: Principal, note_id: int) -> Select[tuple[Note]]:
+    """The caller's own notes whose body links to note ``note_id`` — KAN-566's `/backlinks`.
+
+    Composed onto ``notes_owned_by``, so "another user's note never appears in my backlinks" is the
+    ``WHERE owner_id = :caller`` already on the statement. That clause is doing more work here than
+    it does for a plain list: a `note_link` row carries no owner of its own (see
+    ``app/models/note_link.py``), so the *only* thing scoping this query is the join to a table that
+    does. A backlinks query written the obvious way — start from ``note_link``, collect
+    ``source_note_id``, fetch those notes — reaches the same JSON for the only user on a developer's
+    machine and tells everyone else who links to their notes.
+
+    It lives in this module for the reason ``tests/unit/test_no_unscoped_note_query.py`` gives, and
+    it is the case that file's own docstring predicted in as many words: "a second list endpoint
+    (search, backlinks, a folder tree) that copies the first and skips the one clause that
+    mattered".
+
+    **The match key is ``resolved_id``, never ``target_ref``, and that is the whole of SLICES §V5's
+    "renaming a note leaves existing backlinks to it intact".** ``target_ref`` holds the title *as
+    it was typed* in the linking note's body (``app/wikilinks.py``'s ``NoteTitleLink.title``, "never
+    case-folded"); ``resolved_id`` holds the id KAN-563 recorded when the edge first found its
+    target, and an id survives a rename by construction (ADR 0008: identity is never the title).
+    Keyed on the title string this query would return a note's backlinks right up until somebody
+    renamed it and then return none — the exact failure Q19 recorded the id *for*, arriving at the
+    one layer that reads it back.
+
+    **An edge whose ``resolved_id`` is still ``NULL`` is deliberately not a backlink to anything.**
+    It is a link to a *title*, and a title is not a note until something resolves it —
+    ``app/note_links.py``'s ``resolve_pending_note_links`` is the thing that does, on create and on
+    rename, so "a link written before its target existed" becomes a backlink the moment the target
+    lands rather than by being guessed at here. Matching an unresolved edge against
+    ``Note.title`` as a fallback would reintroduce the rename bug through the back door: the
+    fallback would fire for exactly the rows the id was recorded to protect.
+
+    **The ``target_kind`` filter is not redundant, even though it is unreachable today.**
+    ``resolved_id`` is not a ``ForeignKey`` precisely because which table it references depends on
+    ``target_kind`` (``app/models/note_link.py``), so an id is only meaningful *within* a kind.
+    Nothing writes a KAN-kind ``resolved_id`` at the moment — KAN-564 resolves per caller, per TTL,
+    and `app/api/links.py` says why that must not be persisted — but the day something does, a card
+    whose pandan id collides with this note's id would otherwise arrive as a backlink from a note
+    that never mentioned it. Two columns, one namespace each.
+
+    ``updated_at DESC, id DESC``: the same order and the same tie-break as the unfiltered list in
+    ``app/api/notes.py``, for the same reason (``now()`` is transaction start time, so two notes
+    written in one transaction share a stamp). A relevance order would be meaningless here — nothing
+    was searched for — so this is the list order, not ``notes_matching``'s.
+    """
+    return (
+        notes_owned_by(principal)
+        .join(NoteLink, NoteLink.source_note_id == Note.id)
+        .where(NoteLink.target_kind == TARGET_KIND_NOTE, NoteLink.resolved_id == note_id)
+        .order_by(Note.updated_at.desc(), Note.id.desc())
+    )
+
+
+def notes_named_by_id(owner_id: uuid.UUID, note_ids: Iterable[int]) -> Select[tuple[int, str, str]]:
+    """``owner_id``'s own notes among ``note_ids``, projected to ``(id, ref, title)`` — KAN-566's
+    `/links` reading the *other* end of a resolved NOTE-kind edge.
+
+    ``note_link.resolved_id`` is an internal id and must not reach the wire (``app/api/links.py``
+    pins the payload's keys), so `/links` has to turn it into the two things a caller can act on:
+    ADR 0008's ``ref``, and the target's **current** title. Current rather than stored, which is the
+    visible half of the rename criterion — a link typed as ``[[Old Name]]`` after the rename shows
+    ``target_ref: "Old Name"`` beside ``title: "New Name"``, so the payload says what happened
+    instead of quietly disagreeing with itself.
+
+    Owner-scoped like everything else in this module, and here that is a real filter rather than a
+    formality: ``resolved_id`` is not a ``ForeignKey`` and nothing in the schema stops a row from
+    naming a note somebody else owns. ``app/note_links.py`` never writes one that does — both of its
+    resolution passes are scoped — but a query that only *inherits* that property from another
+    module's care is one edit away from leaking a stranger's title. A row this statement declines to
+    answer for renders as an unresolved link, which is also the correct answer for the case that
+    genuinely happens: ``resolved_id`` pointing at a note that has since been **deleted**. Nothing
+    cleans those up, because ``ondelete="CASCADE"`` covers a deleted *source* and there is no
+    constraint to cover a deleted target, so a dangling id has to degrade rather than raise.
+
+    Keyed on a raw ``owner_id`` for the same reason ``notes_titled`` is: the caller already holds
+    the column, and manufacturing a ``Principal`` to satisfy a signature would be the tail wagging
+    the dog.
+    """
+    return select(Note.id, Note.ref, Note.title).where(
+        Note.owner_id == owner_id, Note.id.in_(note_ids)
+    )

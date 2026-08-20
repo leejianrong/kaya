@@ -62,7 +62,7 @@ name = "kaya-notes"
 # 0.2.0 — KAN-543 gives the CLI argument parsing and ADR 0007's build-stamped `--version`. A
 # behavioural change to a shipped package bumps it in the same PR (ADR 0007 §3, CLAUDE.md
 # §Conventions §Versioning).
-version = "0.11.0"
+version = "0.12.0"
 description = "kaya — the notes CLI"
 readme = "README.md"
 license = "Apache-2.0"

@@ -68,8 +68,9 @@ through B and asserting the upstream sees a second call rather than the cache an
 ## Why this is not reachable by an unauthenticated caller, and why it still needs a bound
 
 `resolve()` is only ever called with a bearer that has already cleared ADR 0002's principal
-resolution on the request it is serving (KAN-566 wires this in; this module has no route of its
-own), so unlike `PrincipalCache`'s negative half — built specifically to shed load from a stranger
+resolution on the request it is serving — KAN-566 wired that in, at `GET /api/v1/notes/{ref}/links`,
+whose `NoteFromRef` dependency resolves a principal from the same header before the route body runs
+— so unlike `PrincipalCache`'s negative half — built specifically to shed load from a stranger
 sending garbage `Authorization` headers with no request past that — this cache is not a surface a
 caller can reach without a credential that already worked. It still needs `DEFAULT_MAX_ENTRIES`:
 the key space here is *per (caller, ticket)* rather than per-caller, so one authenticated caller
@@ -92,8 +93,10 @@ policy `PrincipalCache` uses and the same reasoning for it (see `cache.py`).
   request-count cap all collapse into the same outward signal as a ref pandan genuinely does not
   have: an entry mapped to `None` in the returned dict. That is this card's job per its brief —
     "this card's job is to expose that outcome cleanly … not to raise" — and it is what keeps ADR
-  0003's line ("nothing in kaya may block on pandan") true one layer past the HTTP boundary: KAN-566
-  can call `resolve()` from inside a note-render path with no `try/except` of its own.
+  0003's line ("nothing in kaya may block on pandan") true one layer past the HTTP boundary:
+  `app/api/links.py` calls `resolve()` from inside a note-render path with no `try/except` of its
+  own, and that absence is deliberate rather than incidental — a handler there would be a second
+  opinion about a decision made here, and the first thing a second opinion does is disagree.
 """
 
 import threading
@@ -474,7 +477,7 @@ class CardEpicResolver:
         return result
 
 
-# --- Wiring helpers (KAN-566 owns the FastAPI Depends() lifecycle; these just build objects) ------
+# --- Wiring helpers (`app/integrations/dependencies.py` owns the Depends() lifecycle) ------------
 
 
 def default_upstream(settings: Settings) -> CardEpicUpstream:

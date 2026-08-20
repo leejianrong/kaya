@@ -4,7 +4,13 @@ Two read methods in V2a — ``list_notes`` and ``get_note`` — matching SLICES 
 minimal verb set, because the slice is about the layer and not the breadth. **KAN-551 adds the four
 writes**, one per route in `backend/app/api/notes.py`, and there are four rather than five because
 ``move_note`` is not a route: ADR 0008 makes moving a note a `PATCH` to one column, so it delegates
-to ``update_note`` and issues a byte-identical request.
+to ``update_note`` and issues a byte-identical request. **KAN-566 adds two more reads**, ``links``
+and ``backlinks``, one per route in `backend/app/api/links.py` — and the pair is worth reading
+together, because they are the clearest illustration in this file of what attaching schema knowledge
+at the call actually buys. ``links`` returns a collection of a **new** noun with its own envelope,
+its own columns and an empty prose allow-list; ``backlinks`` returns a collection of *notes*,
+because the API answers it with the very same ``NoteList`` a plain list does, so it is
+``list_notes`` at a different URL and inherits every shaping decision that one already made.
 
 **Every method returns a ``Payload``, never a response body.** That is ADR 0004 applied at its
 sharpest point. Pandan's client returns a raw dict, its CLI shapes that dict, and its MCP adapter —
@@ -169,6 +175,45 @@ next to it invites a caller to store the wrong one."""
 DELETED_KEY = "deleted"
 NOTE_DELETED_COLUMNS = ("ref", DELETED_KEY)
 """What a `204` renders as. See ``delete_note`` for why it is a record rather than nothing."""
+
+LINKS_SEGMENT = "/links"
+BACKLINKS_SEGMENT = "/backlinks"
+"""KAN-566's two sub-resources of a note, appended to ``_note_path``'s single encoded segment.
+
+Written as suffixes rather than as two more path templates so that every ref-taking method still
+goes through ``_note_path`` — the reason that helper exists is that a ref interpolated raw reaches a
+*different endpoint* than the caller named, and a second URL builder here would be the first place
+to forget it."""
+
+LINK_NOUN = "link"
+LINK_ENVELOPE = "links"
+"""The API's own key for `/links` (``{"links": [...]}``), the same PLAN §Implementation decisions
+shape ``notes`` has. ``noun`` and ``envelope_key`` together are what `aggregates.summary_line`
+renders as ``1 link`` / ``3 links``, so neither needs any English written here."""
+
+LINK_PROSE_FIELDS: frozenset[str] = frozenset()
+"""**Empty, and argued rather than defaulted.** ADR 0005 makes truncation an allow-list of prose
+fields and never a length heuristic, so the question is which of a link record's five fields is
+unbounded ``TEXT``. None of them are. ``target_kind`` is ``String(16)`` and ``target_ref`` is
+``String(255)`` in migration ``0003``; ``title`` and ``column`` are a pandan card's own bounded
+columns, or a note's ``String(255)`` title. Cutting a title is what KAN-547 already refuses to do to
+``note.title`` for exactly this reason — the schema bounds it, so a cut would only ever mangle a
+value a `422` already caps.
+
+It has a second, mechanical effect worth knowing about: `kaya_cli.__main__` skips resolving
+``KAYA_MAX_TEXT_CHARS`` entirely for a payload with no prose fields, so a broken value in the config
+file cannot lock a caller out of `kaya links`. That is inherited, not arranged — see the comment on
+``text_limit`` there."""
+
+LINK_COLUMNS = ("target_kind", "target_ref", "resolved_ref", "title", "column")
+"""The default human row for `/links`: every key the payload has, in the API's own order.
+
+The one payload in this package whose default row is **not** narrower than the record, and the
+reason is that ADR 0005 §contract 2's argument for a narrow row does not apply. A note's row is
+narrow because a note carries its whole ``body`` and showing it in a table would be unreadable; a
+link record has five short fields and no prose at all, so a narrower row would hide the two things
+a reader opened `kaya links` to see (did it resolve, and to what). ``--fields`` still narrows it,
+uniformly, for every format."""
 
 TITLE_FIELD = "title"
 BODY_FIELD = "body"
@@ -388,6 +433,71 @@ class KayaClient:
             envelope_key=NOTE_ENVELOPE,
             record={"ref": ref, DELETED_KEY: True},
             columns=NOTE_DELETED_COLUMNS,
+            prose_fields=NOTE_PROSE_FIELDS,
+        )
+
+    def links(self, ref: str) -> Payload:
+        """``GET /api/v1/notes/{ref}/links`` — the wikilinks in this note's body, resolved.
+
+        A **collection of links**, not of notes: the records are edges, one per distinct ``[[...]]``
+        the body contains, each carrying what it points at (``resolved_ref``, ``title``, ``column``)
+        or three ``null``s when nothing could resolve it. Q26 makes the unresolved case a rendering
+        rather than an error, so there is no failure here for a caller to branch on — an outage and
+        a ticket that does not exist arrive identically, which is ADR 0003's degrade-to-unresolved
+        posture reaching the output layer intact.
+
+        **The order is the API's** (``target_kind``, then ``target_ref``) and this method does not
+        re-sort. The backend's own docstring explains why it cannot be insertion order — the
+        reconciler builds its inserts from a ``set``, and Python randomises string hashing per
+        process — so a client-side sort would be a second opinion about a decision made where the
+        rows are, and only one of the two adapters could stay consistent with it.
+
+        **No hints are registered for this payload, deliberately** (`hints.py` predicted exactly
+        this, by name). A links row's ``resolved_ref`` is a ``NOTE-n`` only for the NOTE-kind rows,
+        so ``note get <ref>`` would be advice that applies to some rows and not others, and
+        ``backlinks <ref>`` restates the sibling of the command the caller just typed. An unknown
+        ``(kind, noun)`` emits nothing, which is the behaviour that keeps a new envelope silent
+        instead of wrong.
+        """
+        body = self._request("GET", f"{self._note_path(ref)}{LINKS_SEGMENT}")
+        return Payload.collection(
+            noun=LINK_NOUN,
+            envelope_key=LINK_ENVELOPE,
+            records=body.get(LINK_ENVELOPE, []),
+            columns=LINK_COLUMNS,
+            prose_fields=LINK_PROSE_FIELDS,
+        )
+
+    def backlinks(self, ref: str) -> Payload:
+        """``GET /api/v1/notes/{ref}/backlinks`` — the notes whose body links to this one.
+
+        **A collection of *notes*, with the note noun, the note columns and the note prose fields**,
+        because that is what the API returns: `/backlinks` answers with the very same ``NoteList`` a
+        plain `note list` does. So this method is `list_notes` at a different URL, and that identity
+        is the point rather than a coincidence — ``--fields ref,title``, ``--full``, the ``{"count":
+        n}`` aggregate and the two ``help:`` templates all arrive with nothing added anywhere, and
+        V6's MCP server gets them for free (ADR 0004).
+
+        The alternative — a link-shaped record naming which edge pointed here — would have cost a
+        second noun, a second column set and a second hint row to publish a fact the caller can
+        already read off the notes. Nothing has asked for it; SLICES §V5's own wording is "lists
+        every note linking to it", and KAN-568's panel lists notes.
+
+        **This read never touches pandan**, and that is the card's headline sentence rather than an
+        implementation note: "which notes mention this one" is a join over two of kaya's own tables,
+        so it is answerable with pandan stopped and a cold cache. Nothing in this method could
+        change that — it makes one request to kaya — which is exactly why the guarantee is asserted
+        in `backend/tests/integration/test_note_links_api.py` against the route, where an upstream
+        call could actually be added.
+
+        The order is the API's ``updated_at DESC, id DESC``, the same one `list_notes` documents.
+        """
+        body = self._request("GET", f"{self._note_path(ref)}{BACKLINKS_SEGMENT}")
+        return Payload.collection(
+            noun=NOTE_NOUN,
+            envelope_key=NOTE_ENVELOPE,
+            records=body.get(NOTE_ENVELOPE, []),
+            columns=NOTE_LIST_COLUMNS,
             prose_fields=NOTE_PROSE_FIELDS,
         )
 
