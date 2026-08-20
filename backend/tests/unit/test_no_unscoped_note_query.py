@@ -451,9 +451,16 @@ def test_the_owner_scoping_probe_catches_every_shape_of_the_bug() -> None:
     )
 
     # And it stays quiet about nothing that is genuinely scoped, however the clause got there.
-    assert owner_predicates(select(Note).where(Note.owner_id == ALICE.id)) != []
-    assert owner_predicates(authorization.notes_owned_by(ALICE)) != []
-    assert owner_predicates(authorization.notes_matching(ALICE, "runbook")) != []
+    scoped = select(Note).where(Note.owner_id == ALICE.id)
+    assert owner_predicates(scoped) != []
+    assert owner_predicates(scoped.where(Note.path == "proj").limit(50)) != [], (
+        "composing onto a scoped statement cannot remove the clause, and the probe has to see that"
+    )
+
+    # Every statement here is built locally on purpose: a control that called
+    # `authorization.notes_owned_by` would go red for the *production* code being mutated, which is
+    # the one thing a control must not do — it is how "the probe works" and "the code is correct"
+    # become one failure that neither of them proves. Rule 2 is what reads the real statements.
 
 
 def test_the_factory_sweep_reports_an_unscoped_factory_it_has_never_seen() -> None:
@@ -470,7 +477,9 @@ def test_the_factory_sweep_reports_an_unscoped_factory_it_has_never_seen() -> No
         return select(Note).where(Note.path == "proj").order_by(Note.updated_at.desc())
 
     def notes_in_folder_scoped(principal: Principal) -> Select[tuple[Note]]:
-        return authorization.notes_owned_by(principal).where(Note.path == "proj")
+        # Its own scoped base rather than `authorization.notes_owned_by`, for the reason the probe's
+        # control gives: a control that moves when production moves is not one.
+        return select(Note).where(Note.owner_id == principal.id).where(Note.path == "proj")
 
     def users_seen(principal: Principal) -> Select[tuple[uuid.UUID]]:
         return select(Note.owner_id.distinct()).where(Note.owner_id == principal.id)
