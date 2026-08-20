@@ -283,9 +283,17 @@ def test_backlinks_omit_another_users_note_rather_than_returning_an_empty_list(
     """The scoping property, over rows, with somebody else's linking note actually present.
 
     Bob's note links to a title Alice also uses. Two notes exist with that title — one per owner —
-    so Bob's link resolves to *Bob's* note and could only reach Alice's answer through a query that
-    forgot the owner clause. Asserting Bob's own backlinks are non-empty is the positive control: a
-    scoping test against rows that were never written passes for the wrong reason.
+    so Bob's link resolves to *Bob's* note. Asserting Bob's own backlinks are non-empty is the
+    positive control: a scoping test against rows that were never written passes for the wrong
+    reason.
+
+    **What this test does not prove, stated because the mutation said so.** Dropping the owner
+    clause
+    from `notes_linking_to` leaves it green. `app/note_links.py` scopes both of its resolution
+    passes, so the `resolved_id` values here are already partitioned by owner and an unscoped query
+    returns the same rows. This is the *shape* a reader expects to see and it is worth keeping;
+    `test_a_cross_owner_resolved_id_is_still_not_a_backlink` below is the one that actually holds
+    the clause down.
     """
     alice_target = create(client, ALICE_TOKEN, title="Shared Title", body="alice's")
     create(client, ALICE_TOKEN, title="Alice links", body="[[Shared Title]]")
@@ -299,6 +307,57 @@ def test_backlinks_omit_another_users_note_rather_than_returning_an_empty_list(
     assert [n["title"] for n in backlinks(client, bob_target["ref"], BOB_TOKEN)] == ["Bob links"], (
         "bob's linking note must actually exist, or the assertion above proves nothing"
     )
+
+
+def test_a_cross_owner_resolved_id_is_still_not_a_backlink(client: Any) -> None:
+    """The owner clause, tested against a row that makes it **load-bearing**.
+
+    The test above it is honest but vacuous for this mutation, and finding that out was worth more
+    than the test was. `app/note_links.py` scopes *both* of its resolution passes — `notes_titled`
+    forward, `note_ids_owned_by` backward — so a `resolved_id` written by that module never crosses
+    an owner boundary in the first place. Which means dropping `notes_owned_by` from
+    `notes_linking_to` entirely leaves every assertion up there green: the ids were already
+    partitioned by owner, so an unscoped query returns exactly the same rows. Watched failing to
+    confirm it (see the PR body).
+
+    So this manufactures the state the *schema* permits and nothing prevents: `resolved_id` is
+    deliberately not a `ForeignKey` (`app/models/note_link.py`), so a row can name a note somebody
+    else owns, and the only thing standing between that and Alice learning who links to her notes is
+    the clause under test. Written directly, because the API has no route that produces one — which
+    is the point: a defence that is currently unreachable through the front door is exactly the
+    defence a later card removes as dead weight.
+    """
+    from sqlalchemy import text as sql
+
+    from app.db import get_sessionmaker
+
+    alices = create(client, ALICE_TOKEN, title="Alice's target", body="target")
+    bobs = create(client, BOB_TOKEN, title="Bob's private note", body="[[Alice's target]]")
+
+    with get_sessionmaker()() as session:
+        alice_id = session.execute(
+            sql("SELECT id FROM note WHERE ref = :ref"), {"ref": alices["ref"]}
+        ).scalar_one()
+        bob_id = session.execute(
+            sql("SELECT id FROM note WHERE ref = :ref"), {"ref": bobs["ref"]}
+        ).scalar_one()
+        updated = session.execute(
+            sql(
+                "UPDATE note_link SET resolved_id = :target "
+                "WHERE source_note_id = :source AND target_kind = 'NOTE'"
+            ),
+            {"target": alice_id, "source": bob_id},
+        )
+        session.commit()
+        assert updated.rowcount == 1, (
+            "the cross-owner row this test is about must exist, or the assertion below passes "
+            "because there was nothing to leak"
+        )
+
+    found = backlinks(client, alices["ref"], ALICE_TOKEN)
+
+    assert found == [], "a note_link row naming another owner's note is not a backlink to it"
+    assert "Bob's private note" not in str(found)
 
 
 def test_a_note_that_links_to_its_own_title_appears_in_its_own_backlinks(client: Any) -> None:
