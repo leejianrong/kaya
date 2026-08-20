@@ -67,6 +67,10 @@ db-down: ## Stop Postgres (keeps the volume)
 image: ## Build the container image with TRUE provenance labels
 	@scripts/image-build.sh
 
+.PHONY: mcp-image
+mcp-image: ## Build the MCP server image (TRUE provenance labels), then prove it serves stdio
+	@scripts/mcp-image-build.sh
+
 .PHONY: up
 up: image ## Whole stack on :8000 from the image the manifests deploy (db, migrate, app)
 	@docker compose up -d --wait db app

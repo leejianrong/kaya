@@ -78,6 +78,11 @@ not_behavioural() {
     *.md | docs/*) return 0 ;;                            # prose
     LICENSE* | NOTICE*) return 0 ;;
     tests/*) return 0 ;;                                  # not in the wheel
+    # KAN-573: every package's `[tool.hatch.build.targets.wheel]` packages only `src/<name>` (see
+    # each pyproject.toml), so a Dockerfile and a dev/measurement script under `scripts/` cannot
+    # reach a wheel's consumer any more than a test can — the same "not in the wheel" argument as
+    # the line above, for the two path shapes mcp/Dockerfile's own card introduced.
+    Dockerfile | scripts/*) return 0 ;;
     pyproject.toml) return 0 ;;                           # classified per table, below
     *) return 1 ;;
   esac
