@@ -911,7 +911,7 @@ spends the long number discovering that nothing is listening.
 ## Commands
 
 `make help` is the source of truth. Python packages use **`uv`** (3.12), the SPA uses **`npm`**
-(Node 20.19+). Every target runs from the repo root.
+(Node 24.15+). Every target runs from the repo root.
 
 ```bash
 make hooks             # install the pre-push gate; run this once after cloning
