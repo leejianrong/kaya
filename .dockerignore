@@ -41,10 +41,15 @@ frontend/dist
 # --- tests and docs: not shipped, and their absence keeps the runtime layer honest about what it
 #     contains. The image is the product, not the workshop. ---
 backend/tests
+mcp/tests
+kaya-client/tests
 docs
 **/*.md
-# pyproject.toml names it as the project readme, and uv will not read the metadata without it.
+# Each package's own pyproject.toml names its README as the project readme, and uv will not read
+# the metadata without it — true of backend's image and, since KAN-573, of mcp's.
 !backend/README.md
+!mcp/README.md
+!kaya-client/README.md
 
 # --- deployment inputs, which describe the image and are not part of it ---
 deploy
