@@ -13,6 +13,12 @@ backlinks``), so the refusal became a false statement about the repository rathe
 gap, and the module went with it. Every failure a tool can raise is now a ``kaya_client`` one,
 which is what ADR 0004's arrow predicts of a thin adapter.
 
+``kaya_mcp.schema`` is ADR 0006 §3's schema compaction (KAN-571): generated ``title``
+annotations stripped and ``anyOf: [{T}, {null}]`` collapsed, applied where the schemas are
+*advertised* and nowhere near where a call is *validated*. It raises nothing, so the sentence above
+survives it — a schema the rule cannot reason about is returned unchanged, which is an answer rather
+than an error.
+
 ``TOOL_NAMES`` below is ADR 0006's frozen set, declared before there were any tools so that the
 tools were written against a list that already existed rather than the list being
 reverse-engineered from whatever got implemented. ``kaya_mcp.server``'s registrations are checked
