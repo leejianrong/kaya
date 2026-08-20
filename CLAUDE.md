@@ -67,8 +67,8 @@ sidebar's search box, one flag and one input because the API returns the same `N
 does. What is still open against V4 is KAN-962, a bug rather than a gap: a ranked result rendered in
 the folder tree loses the ranking, and TREE is the default view. **`/links` and `/backlinks` are
 in** (KAN-566): `GET /api/v1/notes/{ref}/links` is a note's outbound wikilinks, each resolved as far
-as it can be — a `NOTE` edge through the `resolved_id` KAN-563 recorded, a `KAN-`/`EPIC-` edge through KAN-564's
-resolver with the caller's own PAT — and `GET /api/v1/notes/{ref}/backlinks` is every note whose
+as it can be — a `NOTE` edge through the `resolved_id` KAN-563 recorded, a `KAN-`/`EPIC-` edge
+through KAN-564's resolver with the caller's own PAT — and `GET /api/v1/notes/{ref}/backlinks` is every note whose
 body links to this one, which is a **join over two of kaya's own tables and therefore answerable
 with pandan stopped**. `kaya links <ref>` and `kaya backlinks <ref>` are the two verbs, and they are
 **top-level words rather than `note` subcommands**, because SLICES §V5 spells them that way and
