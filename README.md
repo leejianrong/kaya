@@ -48,7 +48,7 @@ pasting into any bug report. Want a shorter name? `ln -sf ~/.local/bin/kaya ~/.l
 is deliberately no second console script.
 
 **That version number is the current release, and it reads only.** `v0.5.0` predates the write verbs:
-its own `--help` says *"Reads only: `note list` and `note get`"*, and `config`, `--fields`, `--full`
+its own `--help` says *"Reads only: `note list` and `note get`"*, and `config`, `--fields`, `--full`,
 `links`, `backlinks` and bare `kaya` are all unrecognised words to it. Everything this README
 describes below is on `main` and reaches a binary at the next tag; until then the download is a
 read-only client and the checkout is the whole tool.
