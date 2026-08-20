@@ -19,13 +19,24 @@ three-region app — a router over `/` and `/notes/:ref`, a typed API layer and 
 driven against a real stack with a real PAT, and still without an editor in it.
 
 **There is no hosted kaya, so `make up` is the only origin that exists** (ADR 0010, and KAN-722 is
-where the choice gets made). That matters less than it sounds for correctness work: `make up`
-already points `KAYA_PANDAN_URL` at the **live** pandan, so a local stack plus a real PAT exercises
-the genuine authentication path. All nine V2b verbs were driven that way on 2026-08-09 and every one
-works — including ADR 0009's precondition surviving a real Postgres `timestamptz` round trip to the
+where that was **decided** rather than deferred: no deploy, and the honest README paragraph
+instead). That matters less than it sounds for correctness work: `make up` already points
+`KAYA_PANDAN_URL` at the **live** pandan, so a local stack plus a real PAT exercises the genuine
+authentication path. All nine V2b verbs were driven that way on 2026-08-09 and every one works —
+including ADR 0009's precondition surviving a real Postgres `timestamptz` round trip to the
 microsecond, which no fixture could have proven. What is still unproven is only what needs a remote
-origin: TLS on the CLI hop, kaya's own cold start, and the manifests on non-k3d infra. If `5432` or
-`8000` are busy on your machine, `KAYA_DB_PORT=5434 KAYA_APP_PORT=8010 make up`.
+origin, and **[ADR 0010 §Amendment (2026-08-20)](docs/adr/0010-no-hosted-deploy-until-the-homelab.md)
+is the one place that list lives** — three items, with the argument for each; do not restate it here
+or in the README, and do not rediscover it. If `5432` or `8000` are busy on your machine,
+`KAYA_DB_PORT=5434 KAYA_APP_PORT=8010 make up`.
+
+**The published binary is `v0.5.0` and `kaya-cli` is at `0.11.0`, so the download is a V2a
+read-only client** — `note list` and `note get`, no `config`, no `--fields`, no bare `kaya`; its own
+`--help` epilogue says so. Verified against the real asset on 2026-08-20 (KAN-722). Everything the
+table below describes is on `main` and reaches an artifact at the next `v*` tag. Nothing on board 18
+tracks that lag as of that date, which is a cadence question rather than a deploy one; what KAN-722
+fixed is only that `README.md` no longer describes the checkout's CLI as though it were the file it
+tells a reader to `curl`.
 
 | Package | What's in it |
 |---|---|
@@ -39,30 +50,33 @@ origin: TLS on the CLI hop, kaya's own cold start, and the manifests on non-k3d 
 Now: **V3, the editor, is complete** — KAN-552 landed the skeleton, KAN-553 the editor, KAN-555 the
 way in, KAN-556 the conflict banner, KAN-554 the sidebar and the preview, and KAN-767 the chunk
 split, so `frontend/` is a browsable app with a router, a typed API layer, a credential seam, a real
-landing page that takes a **one-time PAT paste** (and walks a `401` out rather than reloading through
-it), a CodeMirror 6 pane that opens a note, edits it, saves it under ADR 0009's precondition and
-offers **keep mine / keep theirs / side by side** when that precondition fails, a **folder tree over
-the `path` column** beside the flat list, and a **live preview** that follows the document without
-the editor's `$effect` re-running — all driven against a real stack and a real PAT. KAN-767 closed
-the slice by moving the editor's ~80 kB gzip onto **its own chunk**, so the visitor who has not
-signed in yet no longer downloads one, and **KAN-836** did the same for the live preview's
+landing page that takes a **one-time PAT paste** (and walks a `401` out rather than reloading
+through it), a CodeMirror 6 pane that opens a note, edits it, saves it under ADR 0009's precondition
+and offers **keep mine / keep theirs / side by side** when that precondition fails, a **folder tree
+over the `path` column** beside the flat list, and a **live preview** that follows the document
+without the editor's `$effect` re-running — all driven against a real stack and a real PAT. KAN-767
+closed the slice by moving the editor's ~80 kB gzip onto **its own chunk**, so the visitor who has
+not signed in yet no longer downloads one, and **KAN-836** did the same for the live preview's
 `@lezer/markdown` grammar, which was 43% of what KAN-767 left in the entry: a landing page is now
-**27,861 B gzip** against 50,351. **V4 is two thirds in** (KAN-557, KAN-558):
+**27,861 B gzip** against 50,351. **V4, search, is complete** (KAN-557, KAN-558, KAN-559):
 `note.search_vector` is a stored generated `tsvector` over `title` + `body` with a GIN index, and
 `GET /api/v1/notes?q=` is the query over it — owner-scoped in SQL, ranked by `ts_rank` with `id` as
-the documented tie-break, and refusing a present-but-blank `q`. What is left of the slice is **`--q`
-and the search box** (KAN-559), which are one flag and one input because the API returns the same
-`NoteList` a plain list does. **`/links` and `/backlinks` are in** (KAN-566): `GET
-/api/v1/notes/{ref}/links` is a note's outbound wikilinks, each resolved as far as it can be — a
-`NOTE` edge through the `resolved_id` KAN-563 recorded, a `KAN-`/`EPIC-` edge through KAN-564's
-resolver with the caller's own PAT — and `GET /api/v1/notes/{ref}/backlinks` is every note whose
-body links to this one, which is a **join over two of kaya's own tables and therefore answerable
-with pandan stopped**. `kaya links <ref>` and `kaya backlinks <ref>` are the two verbs, and they are
-**top-level words rather than `note` subcommands**, because SLICES §V5 spells them that way and
-because `backlinks` is the one verb whose namespace is still open (the demo's `kaya backlinks
-KAN-501` is a `400 invalid_note_ref` today — the note case is what shipped). `/backlinks` returns the
-same `NoteList` a plain list does, so `--fields`, `--full`, the `{"count": n}` aggregate and the
-`help:` templates all arrived with nothing written for them. **V6
+the documented tie-break, and refusing a present-but-blank `q`. **KAN-559 closed the slice**: `--q`
+on `note list` (`parsing.QUERY_FLAG`, on that verb alone rather than on `output_flags()`) and the
+sidebar's search box, one flag and one input because the API returns the same `NoteList` a plain
+list does. What is still open against V4 is KAN-962, a bug rather than a gap: a ranked result
+rendered in the folder tree loses the ranking, and TREE is the default view. **`/links` and
+`/backlinks` are in** (KAN-566): `GET /api/v1/notes/{ref}/links` is a note's outbound wikilinks,
+each resolved as far as it can be — a `NOTE` edge through the `resolved_id` KAN-563 recorded, a
+`KAN-`/`EPIC-` edge through KAN-564's resolver with the caller's own PAT — and `GET
+/api/v1/notes/{ref}/backlinks` is every note whose body links to this one, which is a **join over
+two of kaya's own tables and therefore answerable with pandan stopped**. `kaya links <ref>` and
+`kaya backlinks <ref>` are the two verbs, and they are **top-level words rather than `note`
+subcommands**, because SLICES §V5 spells them that way and because `backlinks` is the one verb whose
+namespace is still open (the demo's `kaya backlinks KAN-501` is a `400 invalid_note_ref` today — the
+note case is what shipped). `/backlinks` returns the same `NoteList` a plain list does, so
+`--fields`, `--full`, the `{"count": n}` aggregate and the `help:` templates all arrived with
+nothing written for them. **V6
 is most of the way in** (KAN-569, KAN-964): the MCP server is real, six tools registered against ADR
 0006's frozen set, each calling the `render()` seam V2a and V2b built, and **all six now work**.
 KAN-964 closed the last one: `get_backlinks` had refused every call since KAN-569, which stopped
