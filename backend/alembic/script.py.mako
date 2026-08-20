@@ -23,16 +23,23 @@
 ##
 ##  What this template CANNOT fix, so that nobody spends an afternoon trying: E501. Autogenerate
 ##  renders each `sa.Column(...)` onto a single line and a wide one runs past 100 characters — see
-##  revision 0001, whose columns are hand-wrapped for precisely that reason. That text arrives from
-##  alembic's renderer already formatted and this file only interpolates it. The real fix is a
-##  formatter wired into `[post_write_hooks]` in `alembic.ini`, which KAN-665 left alone; the
-##  boundary is pinned by `tests/unit/test_alembic_template.py`.
+##  revisions 0001 and 0003, whose columns are hand-wrapped for precisely that reason. That text
+##  arrives from alembic's renderer already formatted and this file only interpolates it. KAN-692
+##  fixed it one layer out, in `alembic.ini`'s `[post_write_hooks]`: `ruff format` runs over the
+##  written file, so the hand wrap is no longer anybody's job. Read that section before touching
+##  this one — the reason it is `ruff format` and not `ruff check --fix`, and the reason there is
+##  exactly one hook rather than two, are both arguments about *this* file's import heuristic.
+##  `tests/unit/test_alembic_template.py` still renders the wide case and pins that the overrun is
+##  in the renderer's text rather than in the template; it is the positive control the hook's own
+##  test consumes.
 ##
 ##  What follows is, near enough, what `ruff check --fix` makes of the stock template: we deviate
 ##  only where a selected rule forces it. In particular the string literals are still `repr()`'s
 ##  single quotes even though the rest of the repo writes double, because no selected rule cares
 ##  and every line kept identical to upstream is one line less to reconcile when alembic's own
-##  template eventually moves.
+##  template eventually moves. Since KAN-692 the *shipped* revision is double-quoted anyway,
+##  because `ruff format` normalises them after this file has had its say — which is why the
+##  divergence stays cost-free rather than becoming a style the repo has to defend.
 ##
 ##  Note the annotations keep alembic's full `str | Sequence[str] | None` rather than narrowing to
 ##  the `str | None` that revision 0001 happens to spell. `alembic merge` renders a *tuple* into
