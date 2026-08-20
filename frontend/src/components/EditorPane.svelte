@@ -4,10 +4,11 @@
   import type { EditorView } from '@codemirror/view'
 
   import { ApiError } from '../lib/api'
+  import { needsFetch } from '../lib/backlinks'
   import { type ConflictVersions, keepMinePatch } from '../lib/conflict'
   import { conflictVersions, needsRemount, syncDocument } from '../lib/editor'
-  import { updateNote } from '../lib/notes'
-  import type { Note, NoteUpdate } from '../lib/types'
+  import { listLinks, updateNote } from '../lib/notes'
+  import type { Link, Note, NoteUpdate } from '../lib/types'
   import ConflictBanner from './ConflictBanner.svelte'
 
   /**
@@ -187,6 +188,95 @@
   let unavailable: string | null = $state(null)
 
   /**
+   * KAN-567: the open note's outbound wikilinks, as `/links` last answered — what
+   * `lib/codemirror.ts`'s pill decoration reads.
+   *
+   * **This component fetches `/links` itself, keyed on the `note` prop, exactly as
+   * `BacklinksPanel.svelte` fetches its own data about the same prop** — a sibling state machine
+   * rather than a value threaded down from `App.svelte`, which stays the shell that owns layout and
+   * routing and nothing about one pane's data. `linksFor` and `linksInflight` are plain `let`s for
+   * the reason `mountedRef` and `view` are: bookkeeping an effect both reads and writes must stay
+   * outside the reactivity graph or the effect retriggers itself. `links` is `$state` because the
+   * mount effect below reads it as a dependency, which is what pushes a later answer into an
+   * already-live view via `setWikilinks`.
+   *
+   * **The reconciliation window this leaves, stated rather than left implicit**: `/links` reflects
+   * the note's last *saved* body (`note_link` reconciles on save, KAN-562), never what is currently
+   * typed. So a `[[...]]` typed since the last save has no row here yet and renders as an unresolved
+   * pill — indistinguishable, from this component's side, from a link the API genuinely could not
+   * resolve. That is deliberate rather than a gap: guessing a resolution kaya's own database does
+   * not have would show a caller something it cannot back up (`lib/wikilinks.ts`'s
+   * `matchingLink`). The window narrows itself on every successful save, below, which is exactly
+   * the moment a fresh answer becomes available.
+   */
+  let links: Link[] = $state([])
+  let linksFor: string | null = null
+  let linksInflight: AbortController | undefined
+  /**
+   * The last `links` array actually pushed into the live view — `appliedBody`'s sibling for the same
+   * reason. Compared by **identity**: a re-render that hands down a new `note` object for the same
+   * ref and body still re-runs the mount effect below, and without this the same array would be
+   * dispatched to CM6 again on every such re-render, a transaction with nothing in it to justify one.
+   * `links` only ever changes to a genuinely new array (a fresh `/links` answer), so identity is
+   * exactly the right comparison — unlike the echo guard's, which has to compare *content* because a
+   * new string can legitimately equal the old one.
+   */
+  let appliedLinks: Link[] = []
+
+  /** Ask `/links` again for `ref`, replacing whatever request was already in flight. */
+  function loadLinks(ref: string): void {
+    linksInflight?.abort()
+    const abort = new AbortController()
+    linksInflight = abort
+    linksFor = ref
+    listLinks(ref, { signal: abort.signal }).then(
+      (found) => {
+        if (linksInflight === abort) {
+          links = found
+        }
+      },
+      () => {
+        // A failed `/links` fetch degrades to "no pill looks resolved" rather than an error banner —
+        // the pill is decoration, not the note, and ADR 0003 already makes the route itself resilient
+        // to a down pandan; a transport failure reaching *this* request is rarer still and no more
+        // deserving of interrupting an edit than a slow decoration would be.
+        if (linksInflight === abort) {
+          links = []
+        }
+      },
+    )
+  }
+
+  /**
+   * Fetch `/links` when the **note** changes, and never when its content does — `BacklinksPanel`'s
+   * `needsFetch` one component over, reused rather than duplicated because the comparison it makes
+   * (identity of the ref, not of the object) is exactly the same question asked about the same prop.
+   */
+  $effect(() => {
+    const opened = note
+    const incoming = opened?.ref ?? null
+    if (!needsFetch(linksFor, incoming)) {
+      return
+    }
+    if (incoming === null) {
+      linksInflight?.abort()
+      linksInflight = undefined
+      linksFor = null
+      links = []
+      return
+    }
+    loadLinks(incoming)
+  })
+
+  /** The component's own once-per-lifetime job for this fetch: let go of it on the way out. */
+  $effect(() => {
+    return () => {
+      linksInflight?.abort()
+      linksInflight = undefined
+    }
+  })
+
+  /**
    * Mount CodeMirror once per note, and hand it every later document as a transaction.
    *
    * **Reading the `note` prop registers it as a dependency**, so this effect re-runs whenever the
@@ -207,11 +297,19 @@
    * All three dependencies are read *before* the early return, because that is what registers them:
    * returning above the `note` read would leave this effect unsubscribed from the note and the pane
    * would never open a second one.
+   *
+   * **KAN-567 added `links` to the reads, for the same reason `kit` was added and nothing else.**
+   * `links` is `$state`, written by the fetch effect above whenever a `/links` answer arrives — the
+   * very first one (racing this effect's own build), and every later one after a save reconciles
+   * `note_link` server-side. Reading it here means a fresh answer reaches the pill decoration
+   * whichever branch below runs: `needsRemount`'s "same note" branch pushes it onto the view that is
+   * already live, and a rebuild seeds the new view with it directly.
    */
   $effect(() => {
     const parent = host
     const opened = note
     const loaded = kit
+    const currentLinks = links
     if (parent === undefined || loaded === null) {
       return
     }
@@ -227,13 +325,18 @@
         appliedBody = incomingBody
         syncDocument(view as EditorView, incomingBody)
       }
+      if (currentLinks !== appliedLinks) {
+        appliedLinks = currentLinks
+        loaded.setWikilinks(view as EditorView, currentLinks)
+      }
       return
     }
 
     view?.destroy()
-    view = build(loaded, parent, opened)
+    view = build(loaded, parent, opened, currentLinks)
     mountedRef = incomingRef
     appliedBody = incomingBody
+    appliedLinks = currentLinks
     basedOn = opened?.updated_at ?? null
     dirty = false
     saved = null
@@ -298,15 +401,22 @@
    * What is left here is only what is about the *note*: whether there is one to edit, which words the
    * zero state says, and the four runes a document change moves. The extension set and the theme are
    * `lib/codemirror.ts`, because they cannot be written without a CodeMirror value in scope and that
-   * value is the thing KAN-767 defers.
+   * value is the thing KAN-767 defers. `links` (KAN-567) seeds the pill decoration's first paint;
+   * `setWikilinks` is how a later `/links` answer reaches this same view afterwards.
    */
-  function build(loaded: EditorKit, parent: HTMLElement, opened: Note | null): EditorView {
+  function build(
+    loaded: EditorKit,
+    parent: HTMLElement,
+    opened: Note | null,
+    currentLinks: Link[],
+  ): EditorView {
     const editable = opened !== null
     return loaded.createView({
       parent,
       doc: opened?.body ?? '',
       editable,
       placeholder: editable ? 'Write markdown…' : 'No note open.',
+      links: currentLinks,
       onSave: onSaveKey,
       onChange: (document) => {
         dirty = true
@@ -442,6 +552,10 @@
       saved = `saved · now at ${stored.updated_at}`
       conflict = null
       movedAgain = false
+      // KAN-562 reconciles `note_link` against the body a save just wrote, so this is the moment a
+      // `[[...]]` typed since the last fetch can first have an answer — re-fetch rather than wait for
+      // the note prop to change (it may not: saving the open note does not navigate away from it).
+      loadLinks(stored.ref)
     } catch (failure) {
       if (failure instanceof ApiError && failure.isConflict) {
         const versions = conflictVersions(failure.details)

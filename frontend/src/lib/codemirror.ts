@@ -28,15 +28,56 @@
  * Out: every decision that is about *the note*. The two guards stay in `lib/editor.ts` as pure
  * predicates over an erased `import type` (so they still load in vitest's `node` environment), the
  * save path and ADR 0009's precondition stay in `EditorPane.svelte`, and the runes stay there too.
- * This file takes a document, a flag and two callbacks; it has never heard of a `Note`.
+ *
+ * **KAN-567 widened this file's own claim about itself.** It used to take a document, a flag and two
+ * callbacks and "never heard of a `Note`"; it now also takes the open note's resolved wikilinks
+ * (`EditorSpec.links`) and fetches note titles for `[[` completion. Both stay inside the boundary the
+ * paragraph above draws, for two different reasons. The **pill** needs `Decoration` and `ViewPlugin`
+ * to turn a `/links` answer into a highlighted span, which — like the guards above — is a decision
+ * that only becomes a CodeMirror concern at the point it is rendered; the *data* is still fetched by
+ * `EditorPane.svelte`, keyed on the `note` prop exactly as `BacklinksPanel.svelte` fetches its own
+ * data, and handed in here as a plain value ({@link setWikilinks}) rather than fetched from inside a
+ * decoration extension — a `ViewPlugin`'s `update` runs synchronously on every view update, and an
+ * extension that went and fetched from inside one would be exactly the kind of side effect this
+ * file's guards exist to keep out of an `$effect`. The **autocomplete** source is different: CM6's
+ * own `autocompletion()` is built for an async source, `context.aborted` is how it tells a stale
+ * request from a live one, and `lib/notes.ts`'s `listNotes` is already the side-effect-free,
+ * unshaped call every other reader of `/api/v1/notes` makes (ADR 0004 exempts the SPA from shaping
+ * entirely) — so calling it directly from the source is the idiomatic use of the API CM6 offers,
+ * not a rule bent to fit a card.
  */
 
+import {
+  autocompletion,
+  type Completion,
+  type CompletionContext,
+  type CompletionResult,
+} from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap, isolateHistory } from '@codemirror/commands'
 import { markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown'
-import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { defaultHighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language'
 import type { Annotation } from '@codemirror/state'
-import { EditorState } from '@codemirror/state'
-import { EditorView, keymap, placeholder } from '@codemirror/view'
+import { EditorState, StateEffect, StateField } from '@codemirror/state'
+import {
+  Decoration,
+  type DecorationSet,
+  EditorView,
+  keymap,
+  placeholder,
+  ViewPlugin,
+  type ViewUpdate,
+} from '@codemirror/view'
+
+import { listNotes } from './notes'
+import type { Link } from './types'
+import {
+  excludeFenced,
+  findWikilinkSpans,
+  isResolved,
+  matchingLink,
+  wikilinkTooltip,
+  wikilinkTrigger,
+} from './wikilinks'
 
 /** What a caller has to say to get an editor, and the whole of what this module knows about it. */
 export interface EditorSpec {
@@ -52,6 +93,12 @@ export interface EditorSpec {
   onSave: () => boolean
   /** Every `docChanged` transaction, as the document it produced. */
   onChange: (document: string) => void
+  /**
+   * KAN-567: the open note's outbound wikilinks, as `/links` last answered — the initial paint
+   * only. A later answer (the fetch resolving after mount, or a re-fetch after a save) reaches the
+   * live view through {@link setWikilinks}, not through a second `createView` call.
+   */
+  links: readonly Link[]
 }
 
 /**
@@ -87,7 +134,143 @@ const theme = EditorView.theme({
   '.cm-activeLine': { backgroundColor: 'color-mix(in srgb, var(--accent) 6%, transparent)' },
   '&.cm-focused': { outline: 'none' },
   '.cm-placeholder': { color: 'var(--muted)' },
+  // KAN-567's pill, `Decoration.mark` over the raw `[[...]]` span — the text stays exactly what the
+  // caret can edit, and only the styling changes. The two states mirror the app's existing visual
+  // language rather than inventing a new one: `.cm-wikilink-resolved` is the same accent-tinted
+  // rounded badge `App.svelte`'s `.toggle.on` already uses, and `.cm-wikilink-unresolved` is
+  // `lib/markdown.ts`'s `.unlinked` span — muted, monospace, a dotted underline — so a link that
+  // could not be confirmed reads the same way in the editor as it does in the preview beside it.
+  '.cm-wikilink': { borderRadius: '0.25rem', padding: '0 0.15rem' },
+  '.cm-wikilink-resolved': {
+    backgroundColor: 'color-mix(in srgb, var(--accent) 14%, transparent)',
+    color: 'var(--accent)',
+  },
+  '.cm-wikilink-unresolved': {
+    color: 'var(--muted)',
+    borderBottom: '1px dotted var(--muted)',
+  },
 })
+
+/** KAN-567: what {@link setWikilinks} carries into a live view, outside any transaction the caller
+ *  already has in flight. */
+const setWikilinksEffect = StateEffect.define<readonly Link[]>()
+
+/** The open note's resolved wikilinks, as the pill decoration reads them on every rebuild. */
+const wikilinksField = StateField.define<readonly Link[]>({
+  create: () => [],
+  update(value, transaction) {
+    for (const effect of transaction.effects) {
+      if (effect.is(setWikilinksEffect)) {
+        return effect.value
+      }
+    }
+    return value
+  },
+})
+
+/**
+ * Hand the view a fresh `/links` answer, outside any transaction the caller already has.
+ *
+ * `createView`'s `EditorSpec.links` seeds the very first paint; this is how a *later* answer
+ * reaches an already-live view — the initial fetch resolving after mount, or a re-fetch after a
+ * save reconciles `note_link` server-side — without a remount. `EditorPane.svelte` is the only
+ * caller, right after its own fetch settles.
+ */
+export function setWikilinks(view: EditorView, links: readonly Link[]): void {
+  view.dispatch({ effects: setWikilinksEffect.of(links) })
+}
+
+/** Every fenced-code-block range in `state`'s parsed document — the one thing `lib/wikilinks.ts`
+ *  cannot compute itself, because it has no CodeMirror value to ask (see that module's header). */
+function fencedRanges(state: EditorState): { from: number; to: number }[] {
+  const ranges: { from: number; to: number }[] = []
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (node.name === 'FencedCode') {
+        ranges.push({ from: node.from, to: node.to })
+        return false
+      }
+      return undefined
+    },
+  })
+  return ranges
+}
+
+function wikilinkDecorations(state: EditorState): DecorationSet {
+  const links = state.field(wikilinksField)
+  const visible = excludeFenced(findWikilinkSpans(state.doc.toString()), fencedRanges(state))
+  const marks = visible.map((span) => {
+    const link = matchingLink(span, links)
+    const resolved = isResolved(link)
+    return Decoration.mark({
+      class: resolved ? 'cm-wikilink cm-wikilink-resolved' : 'cm-wikilink cm-wikilink-unresolved',
+      attributes: { title: wikilinkTooltip(span, link) },
+    }).range(span.start, span.end)
+  })
+  return Decoration.set(marks, true)
+}
+
+/**
+ * SLICES §V5 build-plan step 7's pill: `Decoration.mark` over every `[[...]]` span, recomputed
+ * whenever the document or {@link wikilinksField} changes.
+ *
+ * A mark rather than a widget that replaces the raw text — the underlying `[[KAN-501]]` stays
+ * exactly what a person can select and edit, and the pill is styling plus a native tooltip carrying
+ * the resolved `KAN-501 · in_progress · "…"` string, the same convention `lib/markdown.ts`'s
+ * `unlinked()` uses for a refused preview link.
+ */
+const wikilinkPills = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet
+    constructor(view: EditorView) {
+      this.decorations = wikilinkDecorations(view.state)
+    }
+    update(update: ViewUpdate): void {
+      if (
+        update.docChanged ||
+        update.state.field(wikilinksField) !== update.startState.field(wikilinksField)
+      ) {
+        this.decorations = wikilinkDecorations(update.state)
+      }
+    }
+  },
+  { decorations: (instance) => instance.decorations },
+)
+
+/** Where on the current line `[[` completion should trigger, as a **document** offset. */
+function triggerAt(context: CompletionContext): { from: number; query: string } | null {
+  const line = context.state.doc.lineAt(context.pos)
+  const found = wikilinkTrigger(line.text, context.pos - line.from)
+  return found === null ? null : { from: line.from + found.from, query: found.query }
+}
+
+/**
+ * `[[` autocomplete over **existing note titles** (SLICES §V5 build-plan step 7), `GET
+ * /api/v1/notes?q=` through `lib/notes.ts`'s already-unshaped `listNotes`.
+ *
+ * Deliberately narrow: there is no browser-reachable search over pandan's `KAN-`/`EPIC-` cards, so a
+ * `[[KAN-501]]` reference is still hand-typed and only pill-decorated once `/links` resolves it —
+ * this source only ever offers a note title, and selecting one inserts `Title]]` after the `[[` the
+ * person already typed.
+ */
+async function completeWikilink(context: CompletionContext): Promise<CompletionResult | null> {
+  const trigger = triggerAt(context)
+  if (trigger === null) {
+    return null
+  }
+  const found = await listNotes({ q: trigger.query === '' ? undefined : trigger.query }).catch(
+    () => [],
+  )
+  if (context.aborted) {
+    return null
+  }
+  const options: Completion[] = found.map((candidate) => ({
+    label: candidate.title === '' ? candidate.ref : candidate.title,
+    detail: candidate.ref,
+    apply: `${candidate.title}]]`,
+  }))
+  return { from: trigger.from, options, validFor: /^[^[\]\n]*$/ }
+}
 
 /** The extension set, and the one place a new CodeMirror package would have to earn its bytes. */
 export function createView(spec: EditorSpec): EditorView {
@@ -135,6 +318,12 @@ export function createView(spec: EditorSpec): EditorView {
           }
         }),
         theme,
+        // KAN-567. `wikilinksField.init` seeds the field from this specific note's initial
+        // `/links` answer, which may still be `[]` if `EditorPane.svelte`'s own fetch has not
+        // settled yet — `setWikilinks` is how a later answer reaches this same view.
+        wikilinksField.init(() => spec.links),
+        wikilinkPills,
+        autocompletion({ override: [completeWikilink] }),
       ],
     }),
   })
