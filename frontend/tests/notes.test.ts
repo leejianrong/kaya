@@ -7,7 +7,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import * as auth from '../src/lib/auth'
-import { deleteNote, listNotes, moveNote, notePath, updateNote } from '../src/lib/notes'
+import {
+  deleteNote,
+  listBacklinks,
+  listNotes,
+  moveNote,
+  notePath,
+  updateNote,
+} from '../src/lib/notes'
 import { FAKE_TOKEN } from './token'
 
 function recorder(body: unknown, status = 200) {
@@ -123,5 +130,39 @@ describe('deleteNote', () => {
     const [url, init] = vi.mocked(fetchImpl).mock.calls[0] as [string, RequestInit]
     expect(init.method).toBe('DELETE')
     expect(url).toBe('/api/v1/notes/NOTE-1')
+  })
+})
+
+describe('listBacklinks (KAN-568)', () => {
+  it('reads the same envelope a plain list does, from the /backlinks suffix', async () => {
+    // The whole reason there is no `Backlink` type anywhere in `frontend/`: the API answers this
+    // route with the very same `NoteList` (`backend/app/api/links.py`), so this is `listNotes` at a
+    // different URL and the rows are notes.
+    const fetchImpl = recorder({ notes: [{ ref: 'NOTE-2' }, { ref: 'NOTE-5' }] })
+
+    await expect(listBacklinks('NOTE-1', { fetchImpl })).resolves.toHaveLength(2)
+
+    const [url] = vi.mocked(fetchImpl).mock.calls[0] as [string]
+    expect(url).toBe('/api/v1/notes/NOTE-1/backlinks')
+  })
+
+  it('encodes the ref as one segment and appends the suffix outside the encoding', async () => {
+    // Both halves matter. `notePath` percent-encodes so a `#` reaches ADR 0008's documented `400`
+    // rather than becoming a fragment; the suffix must stay a real path segment, because a
+    // `%2Fbacklinks` would address a note whose ref ends in "/backlinks" and get a `404`.
+    const fetchImpl = recorder({ notes: [] })
+    await listBacklinks('#NOTE-1', { fetchImpl })
+
+    const [url] = vi.mocked(fetchImpl).mock.calls[0] as [string]
+    expect(url).toBe('/api/v1/notes/%23NOTE-1/backlinks')
+  })
+
+  it('is a GET and sends no body', async () => {
+    const fetchImpl = recorder({ notes: [] })
+    await listBacklinks('NOTE-1', { fetchImpl })
+
+    const [, init] = vi.mocked(fetchImpl).mock.calls[0] as [string, RequestInit]
+    expect(init.method).toBe('GET')
+    expect(init.body).toBeUndefined()
   })
 })
