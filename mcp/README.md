@@ -193,9 +193,11 @@ carries the same fixed pretty-printing overhead whether the payload is narrow or
 proportionally larger against the narrow one — narrowing looks slightly less dramatic once that
 mirror is counted.
 
-`get_note` on the corpus's longest body (`NOTE-17`, 2,221 chars) — default `KAYA_MAX_TEXT_CHARS=500`
-vs `KAYA_MAX_TEXT_CHARS=0` (what `kaya note get --full` sets, and the only way to reach that state
-through an MCP call, since there is no `--full` argument on the tool itself):
+`get_note` on the corpus's longest body (`NOTE-17`, 2,221 chars) — `KAYA_MAX_TEXT_CHARS=0` (what
+`kaya note get --full` sets, and the only way to reach that state through an MCP call, since there
+is no `--full` argument on the tool itself) vs the default `KAYA_MAX_TEXT_CHARS=500`, full-side
+first so the prose order matches the table's before → after order (truncation only removes text, so
+the untruncated side is always the larger one):
 
 | what | bytes | tokens (`o200k_base`) |
 |---|---|---|

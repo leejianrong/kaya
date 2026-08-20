@@ -76,9 +76,11 @@ default with no flag.
 `get_note` is the second, complementary point: a single-entity read, where KAN-548's aggregate does
 not apply (`attach_summary` never runs for one record) and truncation is the whole story. There is
 no CLI-style `--full` flag on an MCP call, so the two arms are two **subprocess environments**
-instead of two arguments — `KAYA_MAX_TEXT_CHARS` unset (the shipped default, 500) against
-`KAYA_MAX_TEXT_CHARS=0` (what `--full` sets it to) — against the corpus's longest body, so the
-truncation this measures is one that actually fires.
+instead of two arguments — `KAYA_MAX_TEXT_CHARS=0` (what `--full` sets it to) against
+`KAYA_MAX_TEXT_CHARS` unset (the shipped default, 500) — against the corpus's longest body, so the
+truncation this measures is one that actually fires. Reported full-first, matching the printed
+before → after order below: truncation only removes text, so the untruncated side is always the
+larger one, and the saving is the same "complete → narrowed" framing `list_notes`' row uses.
 
 Prints markdown with `--markdown`, matching the other two measurement scripts so a PR body can
 paste the tables directly.
@@ -473,13 +475,15 @@ async def _measure(args: argparse.Namespace, base_url: str, token: str) -> None:
         encoding_name=encoding_name,
     )
 
-    # get_note on the longest body: default 500-char truncation vs KAYA_MAX_TEXT_CHARS=0 (--full).
+    # get_note on the longest body: KAYA_MAX_TEXT_CHARS=0 (--full) vs the default 500-char
+    # truncation — full first, so the title's word order matches the printed before → after order
+    # below (full is always the larger side; truncation only removes text).
     truncated = await _call(base_url, token, "get_note", {"ref": longest_ref}, max_text_chars=None)
     full = await _call(base_url, token, "get_note", {"ref": longest_ref}, max_text_chars="0")
     trunc_structured, trunc_whole = _rows_for(truncated)
     full_structured, full_whole = _rows_for(full)
     _print_table(
-        f"get_note {longest_ref} (longest body in corpus) — default 500 chars vs --full equivalent",
+        f"get_note {longest_ref} (longest body in corpus) — --full equivalent vs default 500 chars",
         [
             ("structuredContent only", full_structured, trunc_structured),
             ("whole tool result", full_whole, trunc_whole),
