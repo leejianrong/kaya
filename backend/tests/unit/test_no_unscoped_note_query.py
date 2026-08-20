@@ -267,11 +267,10 @@ SAMPLE_ARGUMENTS: dict[object, object] = {
 }
 """One sample value per parameter annotation the scoping module's factories use.
 
-Keyed on the annotation rather than on the parameter name, so a new factory taking a familiar type
-is
-callable with nothing written for it, and a factory taking an unfamiliar one is a **failure naming
-the parameter** rather than a skip. The values are deliberately uninteresting: this sweep asks what
-the statement's ``WHERE`` clause is *shaped* like, never what it would return.
+Keyed on the annotation rather than on the parameter name, so a new factory taking a familiar
+type is callable with nothing written for it, and a factory taking an unfamiliar one is a **failure
+naming the parameter** rather than a skip. The values are deliberately uninteresting: this sweep
+asks what the statement's ``WHERE`` clause is *shaped* like, never what it would return.
 """
 
 UNSCOPED_BY_DESIGN: dict[str, str] = {
@@ -285,7 +284,7 @@ UNSCOPED_BY_DESIGN: dict[str, str] = {
         "ADR 0008 spelling two — the one `session.get(Note, …)` would also serve, and which this "
         "file's rule-1 carve-out already sanctions in that form. Same reason as "
         "`note_addressed_as_ref`; it exists as a statement rather than a `get` so both spellings "
-        "a note's name run down one code path instead of two that have to agree."
+        "of a note's name run down one code path instead of two that have to agree."
     ),
 }
 """The whole allow-list, one written reason each. Two entries because ADR 0008 has two spellings.
@@ -302,10 +301,9 @@ def note_selector_factories(module: types.ModuleType = authorization) -> dict[st
     """Every function ``module`` defines that hands back a ``Select``, keyed on its name.
 
     Discovery is by **return annotation**, which is what makes the sweep cover a factory written
-    after this file. ``typing.get_type_hints`` erases SQLAlchemy's subscript
-    (``Select[tuple[Note]]``
-    evaluates to bare ``Select`` at runtime), so the annotation cannot say *which* table the
-    statement is over — which is why the caller asks the built statement instead.
+    after this file. SQLAlchemy's subscript is erased at runtime — a ``Select[tuple[Note]]``
+    annotation evaluates to the bare ``Select`` class — so the annotation cannot say *which* table
+    the statement is over, which is why the caller asks the built statement instead.
     """
     found: dict[str, object] = {}
     for name, function in inspect.getmembers(module, inspect.isfunction):
@@ -402,7 +400,7 @@ def test_every_note_selector_in_the_scoping_module_is_owner_scoped_or_argued_for
 
     assert offenders == [], (
         "SLICES §V1: every note query is scoped with `WHERE owner_id = :caller`. These factories "
-        "app/auth/authorization.py build a statement over `note` with no such clause: "
+        "in app/auth/authorization.py build a statement over `note` with no such clause: "
         + ", ".join(offenders)
         + ". Compose onto `notes_owned_by` (or `note_ids_owned_by`), or — if the read is genuinely "
         "meant to be unscoped, the way ADR 0008's two single-row fetches are — add it to "
@@ -438,8 +436,11 @@ def test_the_allow_list_is_consulted_rather_than_decorative() -> None:
 def test_the_owner_scoping_probe_catches_every_shape_of_the_bug() -> None:
     """The positive control. An emptiness assertion proves nothing until the probe is shown firing.
 
-    Each of these is a real statement built here rather than a string, so what is being exercised is
-    the same code path the sweep runs.
+    Each of these is a real statement, so what runs is the same code path the sweep runs — and each
+    is built **locally**. A control that called ``authorization.notes_owned_by`` would go red for
+    the production code being mutated, which is the one thing a control must not do: it is how "the
+    probe works" and "the code is correct" become one failure that proves neither. Reading the real
+    statements is rule 2's job, above.
     """
     assert owner_predicates(select(Note)) == []
     assert owner_predicates(select(Note).order_by(Note.updated_at.desc())) == []
@@ -456,11 +457,6 @@ def test_the_owner_scoping_probe_catches_every_shape_of_the_bug() -> None:
     assert owner_predicates(scoped.where(Note.path == "proj").limit(50)) != [], (
         "composing onto a scoped statement cannot remove the clause, and the probe has to see that"
     )
-
-    # Every statement here is built locally on purpose: a control that called
-    # `authorization.notes_owned_by` would go red for the *production* code being mutated, which is
-    # the one thing a control must not do — it is how "the probe works" and "the code is correct"
-    # become one failure that neither of them proves. Rule 2 is what reads the real statements.
 
 
 def test_the_factory_sweep_reports_an_unscoped_factory_it_has_never_seen() -> None:
