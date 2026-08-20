@@ -169,9 +169,9 @@ queries in that module; never widen the allow-list.
 `tests/unit/test_no_unscoped_note_query.py` is now **three rules**, and knowing which is which is the
 difference between reading it as protection and having it. **Rule 1** is KAN-535's and unchanged:
 `Note` reaches a `select()` in `app/auth/authorization.py` and nowhere else under `app/`. That is a
-guard about a query's *place*, not its *scoping*, and for two years those were read as the same
-thing — its own scope is "every module **except** `authorization.py`", i.e. everywhere the rule is
-not needed and nowhere it is. Measured twice (KAN-566, KAN-965): replacing `notes_owned_by(principal)`
+guard about a query's *place*, not its *scoping*, and from KAN-535 to KAN-965 those were read as
+the same thing — its own scope is "every module **except** `authorization.py`", i.e. everywhere the
+rule is not needed and nowhere it is. Measured twice (KAN-566, KAN-965): replacing `notes_owned_by(principal)`
 with a bare `select(Note)` inside `notes_linking_to` left the whole file **green**. **Rule 2** closes
 that, and does it against the **statements** rather than the source — every function in that module
 returning a `Select` is discovered by its return annotation, *called*, and its `whereclause` read for
@@ -198,6 +198,19 @@ necessary condition over the AST across all of `app/`, with `update`, `delete` a
 builder list because this table is reached by all three and `Note` never is; rules 1 and 2 cover the
 sufficient half, since any `Note` query the constraint leans on is itself under them. Necessary and
 not sufficient is stated in the file rather than implied.
+
+**Three of the six factories had no owner-scoping assertion in the unit layer and two had none
+anywhere, so KAN-965 also added the two behavioural tests those greens named.** A structural guard
+does not cover a behavioural claim (see the section of that name), and the new rules are structural,
+so each honest green got the manufactured-row integration test KAN-566 set the precedent for.
+`test_the_backward_pass_never_crosses_an_owner_boundary_either`: Bob creating a note titled "Shared
+Title" must not resolve Alice's pending link to it — the claim `resolve_pending_note_links`'
+docstring makes, which was green under *both* dropping `note_ids_owned_by` from its `update` and
+unscoping `note_ids_owned_by` itself, because the forward pass' cross-owner test is about a
+different query. `test_a_cross_owner_resolved_id_never_names_the_other_owners_note_in_links`: with
+`notes_named_by_id` unscoped, `/links` hands back another owner's **title** — the leak that
+function's docstring calls "one edit away", read from the opposite end of the same manufactured row
+`test_a_cross_owner_resolved_id_is_still_not_a_backlink` builds.
 
 **Postgres maintains `note.search_vector`, and nothing else may** (KAN-557, migration `0002`,
 `app/models/note.py`). `GENERATED ALWAYS AS (setweight(to_tsvector('english', coalesce(title,'')),
