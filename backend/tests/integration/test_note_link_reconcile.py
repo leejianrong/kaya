@@ -434,6 +434,45 @@ def test_resolution_never_crosses_an_owner_boundary(
     assert link_row(engine, linker["id"]).resolved_id is None
 
 
+def test_the_backward_pass_never_crosses_an_owner_boundary_either(
+    client: Any, engine: Any, upstream: Any
+) -> None:
+    """The other direction of the same property, and it was **untested until KAN-965**.
+
+    `resolve_pending_note_links` is the only thing that ever revisits somebody else's pending row,
+    and its owner scoping is a subquery — `note_ids_owned_by` — rather than a clause on the note it
+    is resolving. Two mutations came back green across the whole repository before this test
+    existed: dropping the subquery from that `update`, and unscoping `note_ids_owned_by` itself.
+    Either one lets *Bob* creating a note claim Alice's pending link, which is the leak that
+    function's docstring names in as many words and which the forward pass' own cross-owner test
+    (above) cannot reach, because it is about a different query.
+
+    Positive control at the end: Alice's own note with that title must resolve the link, or this
+    would pass against a link nothing could ever have resolved.
+    """
+    from app.auth.principal import Principal
+
+    upstream.known[BOB_TOKEN] = Principal(id=BOB_ID, email="bob@example.com")
+
+    linker = create(client, title="linker", body="blocked on [[Shared Title]]")
+    pending = link_row(engine, linker["id"])
+    assert pending.resolved_id is None, (
+        "the row has to start unresolved, or there is nothing for the backward pass to fill"
+    )
+
+    create(client, token=BOB_TOKEN, title="Shared Title", body="bob's own")
+
+    assert link_row(engine, linker["id"]).resolved_id is None, (
+        "another owner's note landing on that title must not resolve Alice's link to it"
+    )
+
+    alices = create(client, title="Shared Title", body="alice's own")
+
+    assert link_row(engine, linker["id"]).resolved_id == alices["id"], (
+        "and Alice's own note must, or the assertion above proves nothing"
+    )
+
+
 def test_an_ambiguous_title_resolves_to_the_newest_matching_note(
     client: Any, engine: Any
 ) -> None:

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import BacklinksPanel from './components/BacklinksPanel.svelte'
   import EditorPane from './components/EditorPane.svelte'
   import Landing from './components/Landing.svelte'
   import PreviewPane from './components/PreviewPane.svelte'
@@ -22,6 +23,15 @@
    * losing one is discovered by a `401` on a request the landing state never made. So `authed`,
    * `accept()` and `discard()` live in this file, and `Landing.svelte` is still the only thing that
    * ever holds a token — it calls `setToken` and then a callback, and hands nothing back.
+   *
+   * KAN-568 added the **fourth** region, and it is a deliberate exception to the sentence above
+   * rather than a drift past it. `BacklinksPanel` could have been a third column of `.split`, and
+   * that placement is the one thing this file gets to decide: it would make the rail a sibling of
+   * `{#if previewing}`, so a toggle about the editor's preview would be one edit away from
+   * reflowing or discarding a panel that is about neither pane. KAN-554 and KAN-962 both paid for
+   * that rule. Outside `main` the preview toggle cannot reach the rail at all, which is the
+   * structural version of the property rather than the carefully-placed one — and the rail is not a
+   * pane of the document, so it does not want one of `.split`'s `minmax(0, 1fr)` tracks either.
    *
    * There is deliberately no build-status table here. KAN-723: the one this replaced hard-coded
    * `done: false` against `kaya-client` and `kaya-cli`, both of which shipped in V2a/V2b, and the
@@ -96,6 +106,20 @@
   function publishDocument(document: string): void {
     liveDocument = document
   }
+
+  /**
+   * Whether the backlinks rail is on the screen — which is exactly "a note route is open" (KAN-568).
+   *
+   * Not a preference and deliberately not a toggle: the rail answers one question about one note, so
+   * there is nothing for it to say on `/` or on an unknown path, and a fourth region standing empty
+   * beside the note list reads as a broken app rather than as an idle one. The same call
+   * `.unauthenticated` already makes about the sidebar.
+   *
+   * The `{#if}` in the template and this class have to agree, so they are one expression: a rail
+   * with no grid column would overlap `main`, and a grid column with no rail would be a stripe of
+   * empty page.
+   */
+  const railed = $derived(authed && route.name === 'note')
 
   /**
    * `set` or `not set`, and this file does not get to spell either word.
@@ -221,7 +245,7 @@
   }
 </script>
 
-<div class="shell" class:unauthenticated={!authed}>
+<div class="shell" class:unauthenticated={!authed} class:railed>
   <header class="topbar">
     <a class="brand" href="/" onclick={(event) => interceptClick(event, '/')}>kaya</a>
     <span class="tagline">markdown notes, API-first</span>
@@ -277,6 +301,15 @@
         </div>
       {/if}
     </main>
+    {#if railed}
+      <!--
+        KAN-568's backlinks rail — the fourth region, and **outside `main` on purpose** (see
+        `railed`). It takes the note rather than the route's ref, so it never asks about a ref the
+        note fetch has not confirmed exists, and it hands a `401` back to `discard()` because this
+        file owns the credential lifecycle and no region may absorb one.
+      -->
+      <BacklinksPanel {note} onexpired={discard} />
+    {/if}
   {:else}
     <!-- KAN-555's landing state, which owns everything about the paste including the credential
          itself: this file hands it `rejected` and gets back a callback, and never sees a token. -->
@@ -291,6 +324,14 @@
     grid-template-columns: minmax(12rem, 18rem) 1fr;
     grid-template-rows: auto 1fr;
     height: 100dvh;
+  }
+
+  /* KAN-568's fourth region, present only while a note route is open (see `railed`). The rail is
+     a fixed-ish rail rather than a `1fr` pane, because it holds one column of titles and giving it
+     a third of the width would take that width from the document. */
+  .shell.railed {
+    grid-template-areas: 'topbar topbar topbar' 'sidebar main rail';
+    grid-template-columns: minmax(12rem, 18rem) 1fr minmax(11rem, 16rem);
   }
 
   /* No sidebar without a credential: there is nothing to list, and an empty rail beside a
@@ -333,6 +374,10 @@
     grid-area: sidebar;
   }
 
+  .shell > :global(.rail) {
+    grid-area: rail;
+  }
+
   /* Same door as `.sidebar` above: the child component owns its own element, so the parent places
      it by class rather than by wrapping it in a div that exists only to be positioned. */
   .shell > :global(.landing) {
@@ -363,6 +408,15 @@
     .split {
       grid-template-columns: minmax(0, 1fr);
       height: auto;
+    }
+
+    /* Three columns is one too many here, so the rail goes *below* the document rather than beside
+       it. It keeps its own region either way, which is what stops the narrow layout from being a
+       second place the toggle-cannot-reach-it property has to be re-established. */
+    .shell.railed {
+      grid-template-areas: 'topbar topbar' 'sidebar main' 'sidebar rail';
+      grid-template-columns: minmax(12rem, 18rem) 1fr;
+      grid-template-rows: auto 1fr auto;
     }
   }
 
