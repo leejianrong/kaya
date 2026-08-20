@@ -87,13 +87,19 @@ title kept every one of their backlinks across a rename of that target (`resolve
 and with card resolution starved to a 1 ms connect and a 1 ms read `/backlinks` answered `200` in a
 median **8.5 ms** with every row present while `/links` degraded to a present-but-unresolved KAN row —
 R5.1 measured at the layer a person looks at. What is left of the slice is **KAN-567**, the editor's
-wikilink pills and the `[[` autocomplete. **V6
-is one card from complete** (KAN-569, KAN-964, KAN-570, KAN-571): the MCP server is real, six tools
-registered against ADR 0006's frozen set, each calling the `render()` seam V2a and V2b built, **all
-six work**, the freeze and the `MCP ⊆ CLI` direction are both **tests** rather than inspection, and
-the advertised schemas are compacted. What is left is SLICES §V6 item 7, the per-read payload
-measurement, which is **KAN-574's** — so a claim that the slice is finished is premature until a
-number lands in that card's PR. KAN-964 closed the
+wikilink pills and the `[[` autocomplete. **V6 is complete** (KAN-569, KAN-964, KAN-570, KAN-571,
+KAN-574): the MCP server is real, six tools registered against ADR 0006's frozen set, each calling
+the `render()` seam V2a and V2b built, **all six work**, the freeze and the `MCP ⊆ CLI` direction are
+both **tests** rather than inspection, and the advertised schemas are compacted. **KAN-574 closed the
+slice's last open item**, SLICES §V6 item 7, the per-read payload measurement — the number ADR 0006
+§3 and `mcp/README.md` both named as still owed, because the 84% those docs quoted was pandan's own
+(`list_cards` against pandan's board), inherited into kaya's ADR only as the argument for shipping
+`fields` on day one. Driven over a real `kaya-mcp` stdio subprocess against an isolated stack and a
+real PAT, kaya's own `list_notes` call — complete vs `fields=["ref","title","path"]` — goes
+**7,701 → 1,156 tokens (−85.0%, `o200k_base`)** on the shaped payload, within a point of the borrowed
+figure and now kaya's own measured number rather than a citation; `mcp/README.md` has the full
+tables, the corpus shape (40 notes, mean body 1,382 chars) and the complementary `get_note`
+truncation figure (**−61.7%** at the default 500-character limit against `--full`). KAN-964 closed the
 last broken tool: `get_backlinks` had refused every call since KAN-569, which stopped being an honest
 sequencing gap the moment KAN-566 landed the route, the client method and the two CLI verbs, and
 became a false claim in the one canonical place `MCP ⊆ CLI` is stated. It was deliberately left for
