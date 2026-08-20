@@ -166,12 +166,59 @@ one place, so a missing note is the same `404` byte for byte whichever spelling 
 `#NOTE-12` is a `400`. A route never sees a string: it depends on `NoteFromRef` and is handed a
 `Note`. Parsing an identifier inside a route is the bug ADR 0008 exists to prevent.
 
-**A note list is scoped in SQL.** Compose onto `app.auth.notes_owned_by`, which already carries
-`WHERE owner_id = :caller`. `tests/unit/test_no_unscoped_note_query.py` fails if `Note` reaches a
-`select()` anywhere else under `app/`. A *single* note is fetched unscoped on purpose, because
-`authorize_note` cannot answer `403` for someone else's note if the fetch never found it, which is
-why `note_addressed_as_ref` and `note_addressed_as_id` also live in `app/auth/authorization.py`. Put
-new queries in that module; never widen the allow-list.
+**A note list is scoped in SQL, and since KAN-965 the guard says so about the module where the
+queries live.** Compose onto `app.auth.notes_owned_by`, which already carries `WHERE owner_id =
+:caller`. A *single* note is fetched unscoped on purpose, because `authorize_note` cannot answer
+`403` for someone else's note if the fetch never found it, which is why `note_addressed_as_ref` and
+`note_addressed_as_id` also live in `app/auth/authorization.py`. Put new queries in that module;
+never widen the allow-list.
+
+`tests/unit/test_no_unscoped_note_query.py` is now **three rules**, and knowing which is which is
+the difference between reading it as protection and having it. **Rule 1** is KAN-535's and
+unchanged: `Note` reaches a `select()` in `app/auth/authorization.py` and nowhere else under `app/`.
+That is a guard about a query's *place*, not its *scoping*, and from KAN-535 to KAN-965 those were
+read as the same thing — its own scope is "every module **except** `authorization.py`", i.e.
+everywhere the rule is not needed and nowhere it is. Measured twice (KAN-566, KAN-965): replacing
+`notes_owned_by(principal)` with a bare `select(Note)` inside `notes_linking_to` left the whole file
+**green**. **Rule 2** closes that, and does it against the **statements** rather than the source —
+every function in that module returning a `Select` is discovered by its return annotation, *called*,
+and its `whereclause` read for an `==` between `note.owner_id` and a **bound** value, so a clause
+built and never applied cannot pass and `Note.owner_id == Note.owner_id` is reported unscoped
+because it is. Discovery by signature is the load-bearing half: a factory added later is covered the
+day it is written, and a parameter annotation with no sample value is a failure naming it rather
+than a skip. `UNSCOPED_BY_DESIGN` is the allow-list — **two** entries, ADR 0008's two spellings,
+each with its reason written out and each checked to *still* be unscoped, so an entry cannot outlive
+its function or quietly excuse a rule it no longer needs excusing from. **Rule 2b** is the AST
+leftover: rule 2 can only check a function it can call, so every `select(… Note …)` in that module
+must sit inside one the sweep covers — a helper returning *rows* would otherwise be invisible to
+rule 2 and exempt from rule 1 by address.
+
+**Rule 3 guards `note_link`, and the meaning of "scoped" had to be argued rather than copied**
+(KAN-965; KAN-566 found the hole and correctly declined to plug it this way round). Rule 1 matches
+the name `Note` only, so `NoteLink` was unguarded entirely — and widening the name list is the
+**wrong** fix, because `note_link` has no owner column, so a blunt ban on `select(NoteLink)` outside
+`authorization.py` reddens two correct queries (`app/note_links.py`'s reconciler read and
+`app/api/links.py`'s `outbound_edges`). What is true instead: `source_note_id` is that table's
+**only** path to an owner — `target_kind`/`target_ref` are strings a body typed, `resolved_id` is
+deliberately not a `ForeignKey`, `id`/`created_at` say nothing about anybody — so a `note_link`
+query that does not constrain it has *nothing* that could scope it, whatever else it filters on.
+Rule 3 asserts that necessary condition over the AST across all of `app/`, with `update`, `delete`
+and `join` added to the builder list because this table is reached by all three and `Note` never is;
+rules 1 and 2 cover the sufficient half, since any `Note` query the constraint leans on is itself
+under them. Necessary and not sufficient is stated in the file rather than implied.
+
+**Three of the six factories had no owner-scoping assertion in the unit layer and two had none
+anywhere, so KAN-965 also added the two behavioural tests those greens named.** A structural guard
+does not cover a behavioural claim (see the section of that name), and the new rules are structural,
+so each honest green got the manufactured-row integration test KAN-566 set the precedent for.
+`test_the_backward_pass_never_crosses_an_owner_boundary_either`: Bob creating a note titled "Shared
+Title" must not resolve Alice's pending link to it — the claim `resolve_pending_note_links`'
+docstring makes, which was green under *both* dropping `note_ids_owned_by` from its `update` and
+unscoping `note_ids_owned_by` itself, because the forward pass' cross-owner test is about a
+different query. `test_a_cross_owner_resolved_id_never_names_the_other_owners_note_in_links`: with
+`notes_named_by_id` unscoped, `/links` hands back another owner's **title** — the leak that
+function's docstring calls "one edit away", read from the opposite end of the same manufactured row
+`test_a_cross_owner_resolved_id_is_still_not_a_backlink` builds.
 
 **Postgres maintains `note.search_vector`, and nothing else may** (KAN-557, migration `0002`,
 `app/models/note.py`). `GENERATED ALWAYS AS (setweight(to_tsvector('english', coalesce(title,'')),
