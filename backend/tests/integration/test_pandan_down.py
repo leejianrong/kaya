@@ -27,14 +27,23 @@ convention against slow, eventually-flaky tests.
 
 Wikilink reconciliation (`app/note_links.py`, `app/wikilinks.py`) and full-text search
 (`app/auth/authorization.py`'s `notes_matching`, `app/api/search.py`) make **no network call at
-all**, today or ever, by design (see both modules' docstrings) —
-`app/integrations/card_resolution.py` exists and is fully wired to a cache and a resolver, but
-nothing in `app/api/notes.py` or `app/api/search.py` calls it yet (that wiring is KAN-566, not this
-card). So the honest claim this file can make is narrower than "kaya never depends on pandan for
-anything": it is "the code paths
-that exist today, and are meant to survive KAN-566 landing beside them, do not call pandan a second
-time once the caller is known" — which is exactly SLICES §V4/§V5's promise and exactly what a future
-card wiring a blocking call into `create_note`, `get_note` or `notes_matching` would break first.
+all**, today or ever, by design (see both modules' docstrings). So the honest claim this file can
+make is narrower than "kaya never depends on pandan for anything": it is "the code paths this file
+drives do not call pandan a second time once the caller is known" — which is exactly SLICES
+§V4/§V5's promise, and exactly what a future card wiring a blocking call into `create_note`,
+`get_note` or `notes_matching` would break first.
+
+**KAN-566 has since landed, and it is the card this paragraph used to say had not.**
+`app/integrations/card_resolution.py` now has a caller: `GET /api/v1/notes/{ref}/links` resolves the
+pandan-shaped wikilinks in a note's body. That is the one route in kaya that may talk to pandan
+outside identity, it is allowed to (ADR 0003 forbids *blocking* on pandan, and a resolution that
+fails renders unresolved rather than failing the read), and it is deliberately **not** driven from
+this file. `tests/integration/test_note_links_api.py` owns it, because the property to assert there
+is different in kind: not "no call happened" but "the call happened, failed, and cost the response
+nothing but three nulls". What is still asserted *here*, and is the thing KAN-566 could have broken,
+is that a note save, a note read, a reconcile and a search make no such call — and
+`test_backlinks_are_answered_from_kayas_own_database_with_pandan_down` extends the same claim to
+`/backlinks`, which is a join over two of kaya's own tables and has no upstream at all.
 
 **No `import app.*` at module top** — see the package docstring, and pandan's PR #17 trap: a
 top-level `app` import runs at collection, before the `database_url` fixture sets `DATABASE_URL`.

@@ -1,6 +1,6 @@
 [project]
 name = "kaya-mcp"
-version = "0.2.0"
+version = "0.4.0"
 description = "kaya's MCP server — a thin adapter over kaya-client"
 readme = "README.md"
 license = "Apache-2.0"
@@ -10,13 +10,25 @@ dependencies = [
     "mcp>=1.2.0",
 ]
 # KAN-569 lands the MCP SDK: the six tools ADR 0006 froze are now real, so the dependency that
-# stands the server up finally has tools behind it.
+# stands the server up finally has tools behind it. KAN-964 (0.3.0) made the sixth one work — it had
+# refused every call since KAN-569, because ADR 0006 froze the name before KAN-566 built the layers
+# behind it. A behavioural change to a shipped package, hence the minor bump (ADR 0007 §3).
+# KAN-571 (0.4.0) compacts the advertised tool schemas (ADR 0006 §3). No tool, argument, default or
+# required-ness moved — but what a host is *told* did, which is behaviour a consumer can see, so it
+# is a bump for the same reason and not a cosmetic exemption. ADR 0006 §3's own lesson: "cosmetic is
+# a claim requiring proof, not a category exempt from it".
 
 [project.optional-dependencies]
 dev = [
+    "jsonschema>=4.23",
     "pytest>=8.3",
     "ruff>=0.9",
 ]
+# `jsonschema` is a *test* dependency and stays one: KAN-571's guards are claims about what a schema
+# admits ("the collapsed nullable-enum form rejects null"), and asserting that against a real
+# validator is worth more than restating the ADR in an assert. It arrives transitively via `mcp`
+# already; declared here so the suite does not depend on somebody else's transitive tree. Nothing
+# under `src/` imports it, and the runtime dependency list above is unchanged.
 
 [project.scripts]
 kaya-mcp = "kaya_mcp.__main__:main"

@@ -30,6 +30,26 @@ same section's literal scope: a `fields` argument on a write would have nothing 
 the request is made, and the note it echoes back is exactly the note the caller just wrote, so
 omitting `fields` there costs nothing a caller is likely to want trimmed.
 
+### The advertised schemas are compacted, and that is not the big win
+
+ADR 0006 §3's free hygiene, landed by KAN-571: `SchemaCompactingServer` below applies
+`kaya_mcp.schema.compact_schema` at `list_tools`, so a host is told
+`{"type": ["string", "null"]}` where pydantic wrote `{"anyOf": [{"type": "string"}, {"type":
+"null"}], "title": "Body"}`. Measured on these six tools with `o200k_base`: the input schemas alone
+go **428 → 265 tokens (−38.1%)**, and the whole `tools/list` reply — descriptions included, which is
+what a host actually holds resident — goes **948 → 785 (−17.2%)**, landing on the ~16% ADR 0006 §3
+predicted. Read that number beside the other one in the same section: **narrowing a read to five
+useful fields saves 84%**, and the tools above have taken that since KAN-569. This is the small
+half, and the ADR's Finding 1 is that trimming the resident surface optimises the ~4% line item
+while the 22% one sits beside it.
+
+Two traps make this less cosmetic than it sounds, both named in the ADR and both tested next door
+(`tests/test_schema_traversal.py`, `tests/test_schema_compaction.py`): a nullable **enum** must not
+be collapsed, because the collapsed form rejects `null`; and `title` is an annotation *and* an
+argument name — `create_note` and `edit_note` each take one — so the traversal is driven by JSON
+Schema keywords rather than by the spelling of a key. `kaya_mcp.schema`'s docstring is where that
+argument lives.
+
 ### Truncation, resolved the same way a CLI session resolves it
 
 There is no `--full` flag surface here, but truncation is not optional: `_text_limit()` reads
@@ -67,14 +87,49 @@ from typing import Any, NoReturn
 from kaya_client import KayaError, config, render, render_error
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp_types import Tool as AdvertisedTool
 
 from kaya_mcp import __version__, tools
+from kaya_mcp.schema import compact_schema
 
 SERVER_NAME = "kaya"
 """The MCP server's advertised name — a fact about the server, never one of ADR 0006's tool
 names."""
 
-server: MCPServer = MCPServer(name=SERVER_NAME, version=__version__)
+
+class SchemaCompactingServer(MCPServer):
+    """An `MCPServer` that advertises ADR 0006 §3's compacted schemas (KAN-571).
+
+    `list_tools` is the **one place** a tool's input schema leaves this process. Read from the
+    installed package while writing this: `MCPServer.list_tools` is the only consumer of
+    `Tool.parameters`, and the object that *validates* an incoming call is a different one —
+    `Tool.fn_metadata.arg_model`, built by `func_metadata` at registration, from which
+    `Tool.parameters` was derived once and never again. `MCPServer._handle_list_tools` reaches the
+    listing through `self.list_tools()`, so a host over stdio and a test calling the method see the
+    same bytes.
+
+    That is why the compaction is applied *here* rather than by rewriting the registration:
+    ADR 0006 §3's saving is a fact about what a host is **told**, and doing it at the advertisement
+    makes "compaction cannot change what is accepted" structural — the validating model is not
+    reachable from this method — instead of a promise the traversal has to keep. It also leaves
+    pydantic's own schema in place beside the compacted one, which is what
+    `tests/test_schema_compaction.py` diffs to assert the two still agree on the argument names,
+    their required-ness and their nullability.
+
+    Public rather than private for one reason: kaya's six tools contain **no nullable enum**, so
+    GUARD 1 has to be asserted over a *constructed* tool, and a test builds one of these to drive
+    that tool through the real SDK rather than hand-writing the schema it would have produced.
+    """
+
+    async def list_tools(self) -> list[AdvertisedTool]:
+        """The advertised listing, each input schema compacted (ADR 0006 §3)."""
+        return [
+            tool.model_copy(update={"input_schema": compact_schema(tool.input_schema)})
+            for tool in await super().list_tools()
+        ]
+
+
+server: SchemaCompactingServer = SchemaCompactingServer(name=SERVER_NAME, version=__version__)
 """The one server instance. `kaya_mcp.__main__.main` runs it over stdio, the transport an MCP host
 launches a server subprocess with; nothing here assumes a particular one."""
 
@@ -166,12 +221,17 @@ def search_notes(q: str, fields: list[str] | None = None) -> dict[str, Any]:
 
 @server.tool()
 def get_backlinks(ref: str, fields: list[str] | None = None) -> dict[str, Any]:
-    """Notes linking to `ref`. **Not available yet** — see `kaya_mcp.errors` and KAN-566.
+    """Notes whose body links to `ref` — the same shape `list_notes` returns.
 
-    Registered with the same shape a working version will need (a ref, and `fields` like every
-    other read) so that landing KAN-566 changes this tool's body and not its signature. Every call
-    raises a structured refusal rather than returning an empty list — see `kaya_mcp.tools.
-    get_backlinks` and `kaya_mcp.errors` for why.
+    `/backlinks` answers with the very same `NoteList` a plain list does, so `fields`, truncation
+    and the `{"count": n}` aggregate arrive here with nothing written for them (ADR 0004).
+
+    **KAN-569 predicted that landing KAN-566 would change this tool's body and not its signature,
+    and the prediction held with room to spare: neither moved.** The parameters are what they were
+    (`ref`, and `fields` like every other read), and so is every line of this function — the whole
+    change is one body in `kaya_mcp.tools`, which is what "the adapter is thin" is supposed to
+    mean. Recorded here rather than deleted because a prediction that held is only worth having
+    made if somebody checks it (KAN-964).
     """
     try:
         payload = tools.get_backlinks(ref)

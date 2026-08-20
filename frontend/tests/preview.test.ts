@@ -21,6 +21,12 @@
  * What is observable, and asserted below, is the *harm* an effect re-run would do: a remount, or a
  * `syncDocument` replace that moves the caret and clears the undo history. Same `EditorView` instance,
  * same `.cm-editor` element, caret where you left it, undo still working.
+ *
+ * **Since KAN-836 the renderer is on its own chunk too**, so a mounted preview is not a rendered one
+ * until the module lands: every test below awaits `previewRendered()` at the first point a non-empty
+ * document has reached a preview, and is synchronous from there. `tests/preview-arrival.ts` says why
+ * that is one await rather than one per assertion, and `tests/preview-lazy-render.test.ts` owns the
+ * behaviour inside the gap.
  */
 
 import { EditorView } from '@codemirror/view'
@@ -33,6 +39,7 @@ import PreviewPane from '../src/components/PreviewPane.svelte'
 import * as auth from '../src/lib/auth'
 import type { Note } from '../src/lib/types'
 import { editorArrived } from './editor-arrival'
+import { previewRendered } from './preview-arrival'
 import { box, type Box } from './reactive.svelte'
 import { FAKE_TOKEN } from './token'
 
@@ -169,6 +176,7 @@ describe('the preview follows the document', () => {
     // ran, and the preview would be blank if `EditorPane` did not publish once after building.
     const opened = box<Note | null>(note({ body: '# Hello\n\nA paragraph.' }))
     const { region } = await mountPair(opened)
+    await previewRendered(region)
 
     expect(preview(region).querySelector('h1')?.textContent).toBe('Hello')
     expect(preview(region).querySelector('p')?.textContent).toBe('A paragraph.')
@@ -177,6 +185,7 @@ describe('the preview follows the document', () => {
   it('updates as the document changes, without the change passing through `note`', async () => {
     const opened = box<Note | null>(note({ body: '# One' }))
     const { region } = await mountPair(opened)
+    await previewRendered(region)
     const before = opened.value
 
     typeInto(editor(region), '## Two\n\n- a\n- b')
@@ -203,6 +212,10 @@ describe('the preview follows the document', () => {
       ['`three`', 'three'],
     ] as const) {
       typeInto(view, source)
+      // The note starts empty, so the renderer's arrival is awaited here rather than after the mount.
+      // Only the first turn actually waits: from then on the render effect just reads a rune, so a
+      // keystroke lands inside its own `flushSync` and the poll returns on its first check.
+      await previewRendered(region)
       expect(preview(region).textContent).toBe(expected)
     }
   })
@@ -210,6 +223,7 @@ describe('the preview follows the document', () => {
   it('empties when the note is closed', async () => {
     const opened = box<Note | null>(note({ body: '# Something' }))
     const { region } = await mountPair(opened)
+    await previewRendered(region)
     expect(preview(region).textContent).toContain('Something')
 
     opened.value = null
@@ -224,6 +238,7 @@ describe('the preview follows the document', () => {
     // note's text is the failure this pins.
     const opened = box<Note | null>(note({ body: '# First' }))
     const { region } = await mountPair(opened)
+    await previewRendered(region)
 
     opened.value = note({ ref: 'NOTE-7', body: '# Second' })
     flushSync()
@@ -237,6 +252,7 @@ describe('the preview follows the document', () => {
     // never `note.body`, so a re-render handing down the server's version cannot win.
     const opened = box<Note | null>(note({ body: '# Saved' }))
     const { region } = await mountPair(opened)
+    await previewRendered(region)
     typeInto(editor(region), '# Typed, not saved')
 
     // A new object with the *old* body — exactly what `EditorPane`'s `appliedBody` guard exists for.
@@ -255,6 +271,9 @@ describe('the preview follows the document', () => {
     typeInto(editor(pair.region), '# Typed with no preview mounted')
 
     pair.mountPreview()
+    // A second `PreviewPane` instance, so a second loader effect and a second wait — the module is in
+    // the worker's registry by now, but `import()` still resolves a promise rather than a value.
+    await previewRendered(pair.region)
 
     expect(preview(pair.region).querySelector('h1')?.textContent).toBe(
       'Typed with no preview mounted',
@@ -282,6 +301,7 @@ describe('the document seam costs the editor nothing', () => {
     // and an undo that still works are together the evidence that neither happened.
     const opened = box<Note | null>(note({ body: 'hello' }))
     const { region } = await mountPair(opened)
+    await previewRendered(region)
     const view = editor(region)
 
     view.dispatch({ changes: { from: 5, insert: ' world' }, selection: { anchor: 8 } })
@@ -359,6 +379,10 @@ describe('a note body is rendered inert in the live preview', () => {
       const opened = box<Note | null>(note({ body: '' }))
       const { region } = await mountPair(opened)
       typeInto(editor(region), payload)
+      // The note starts empty, so this is where the renderer's arrival is awaited — and it is also the
+      // positive control's precondition: `toContain(witness)` below is only meaningful once something
+      // has been rendered at all.
+      await previewRendered(region)
 
       const rendered = preview(region)
       expect(rendered.querySelectorAll('script, iframe, svg, style, object, embed, form')).toHaveLength(
@@ -421,6 +445,9 @@ describe('the preview toggle', () => {
     expect(host.querySelector('[data-testid="preview"]')).toBeNull()
     click('toggle-preview')
     await settle()
+    // The re-shown preview is a *new* component instance, so it loads the chunk again (from the
+    // registry) before it can render.
+    await previewRendered(host)
 
     expect(editor(host)).toBe(view)
     expect(host.querySelector('.cm-editor')).toBe(element)

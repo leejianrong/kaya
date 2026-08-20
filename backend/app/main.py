@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from app import __version__
-from app.api import install_error_handlers, meta_router
+from app.api import install_error_handlers, links_router, meta_router
 from app.api import router as api_router
 from app.observability import install_observability
 from app.spa import mount_spa
@@ -36,6 +36,13 @@ install_observability(app)
 # Before the router, so a refusal raised while resolving a dependency is shaped too.
 install_error_handlers(app)
 app.include_router(api_router)
+
+# KAN-566's `/notes/{ref}/links` and `/notes/{ref}/backlinks`. A second router under the same
+# `/api/v1` prefix rather than two more routes on `api_router`, for the reason `app/api/links.py`
+# argues: they are the only routes that reach an upstream as well as the database. Registration
+# order is immaterial between the two — `/notes/{ref}` cannot match `/notes/NOTE-3/links`, because a
+# path parameter never spans a `/` — so this is composition, not precedence.
+app.include_router(links_router)
 
 # KAN-555. Separate from `api_router` because it is the one route under `/api/v1` with no credential
 # in front of it, and that difference should be visible where the surface is composed rather than

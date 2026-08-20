@@ -1,4 +1,5 @@
-"""The verbs. `note {list,get,create,edit,move,delete}`, `config {set,show,path}`, and bare `kaya`.
+"""The verbs: `note {list,get,create,edit,move,delete}`, `config {set,show,path}`, `links`,
+`backlinks`, and bare `kaya`.
 
 ### What a verb is allowed to be
 
@@ -39,14 +40,22 @@ on the machine where it is needed.
 disjoint, so a word cannot be added to one table, forgotten in the other, and silently dispatch to
 whichever was checked first.
 
-### The ref is passed through untouched
+### The ref is passed through untouched, on six verbs now
 
 `kaya note get note-12` sends ``note-12``. ADR 0008 puts every spelling through one resolver in
 `backend/app/api/refs.py`, so a missing note is the same `404` byte for byte whichever spelling
 asked for it, and ``#NOTE-12`` is a `400` rather than a silent success. Normalising here would be a
 second resolver, and the first thing a second resolver does is disagree with the first. That now
-applies to four verbs rather than one, and none of them may grow an opinion: `edit`, `move` and
-`delete` hand ``args.ref`` to the client exactly as `get` does.
+applies to six verbs rather than one, and none of them may grow an opinion: `edit`, `move`,
+`delete` and KAN-566's `links` and `backlinks` hand ``args.ref`` to the client exactly as
+`get` does.
+
+`backlinks` is the verb where that discipline earns the most. `kaya backlinks KAN-501` is a `400`
+``invalid_note_ref`` from the API — SLICES §V5's demo asks for it and this card ships the note case
+only — and it has to *stay* a refusal rather than becoming something clever here. A CLI that noticed
+the ``KAN-`` prefix and reached for a different endpoint would be a second ref parser in the one
+place ADR 0008 forbids one, and the `400`'s own message ("Use NOTE-12, note-12 or 12") is a better
+answer than an empty list.
 
 ### The transport seam
 
@@ -97,6 +106,25 @@ CREATE = "create"
 EDIT = "edit"
 MOVE = "move"
 DELETE = "delete"
+
+LINKS = "links"
+BACKLINKS = "backlinks"
+"""KAN-566's two verbs, and they are **top-level words rather than ``note`` subcommands**.
+
+SLICES §V5 build-plan step 6 spells them ``kaya links`` and ``kaya backlinks``, and the wording is
+worth following rather than tidying into ``note links``, because there is an argument behind it. A
+``note`` subcommand asserts that its positional is a note — that is what the group *means*, and
+`--help` says so — and `backlinks` is the one verb in this CLI whose namespace is genuinely still
+open: SLICES §V5's demo asks for ``kaya backlinks KAN-501``, which is not a note ref and cannot be
+one (ADR 0008). Today the answer to that is a `400` from the ref resolver, because this card ships
+the note case only and says so; the day a ticket case lands it is a wider vocabulary for *this*
+word, not a word that has to move out of a group it was never true of.
+
+They are also the first rows in ``VERBS`` whose key is ``(word, None)``. The pair is
+``(command, subcommand)`` and a top-level verb has no subcommand, so the ``None`` is argparse's own
+answer rather than a sentinel — the same ``None`` ``build_parser``'s ``set_defaults`` leaves for a
+bare `kaya`, and the reason both dispatch through one lookup with no branch.
+"""
 
 CONFIG = "config"
 SET = "set"
@@ -176,6 +204,21 @@ def _note_delete(client: KayaClient, args: Namespace) -> Payload:
     return client.delete_note(args.ref)
 
 
+def _links(client: KayaClient, args: Namespace) -> Payload:
+    return client.links(args.ref)
+
+
+def _backlinks(client: KayaClient, args: Namespace) -> Payload:
+    """`kaya backlinks <ref>`: the notes linking to this one. One client call, like every other.
+
+    Nothing here knows that the payload it returns is a *note* collection while `links`' is a
+    ``link`` collection — that difference is `KayaClient`'s, attached at the call, which is why
+    ``--fields``, ``--full``, the aggregate and the ``help:`` templates all come out right for both
+    words without a line in this file distinguishing them (ADR 0004).
+    """
+    return client.backlinks(args.ref)
+
+
 # ----------------------------------------------------------------------------- config
 
 
@@ -211,6 +254,8 @@ VERBS: Mapping[tuple[str | None, str | None], Verb] = {
     (NOTE, EDIT): _note_edit,
     (NOTE, MOVE): _note_move,
     (NOTE, DELETE): _note_delete,
+    (LINKS, None): _links,
+    (BACKLINKS, None): _backlinks,
 }
 """``(command, subcommand)`` → the client method that answers it, for the verbs that need a session.
 

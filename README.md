@@ -5,13 +5,17 @@ half of the `kayatoast` suite, sibling to [pandan](https://github.com/leejianron
 board. Where pandan tracks *work*, kaya holds the *knowledge*: specs, notes, runbooks, meeting notes,
 cross-linked to the board.
 
-> **Status: the CLI is finished; the product has no interface and nowhere to live.** A pandan PAT
-> creates, reads, edits and deletes notes over `/api/v1/notes`, and the whole stack ships as one
-> container image serving the SPA and the API from a single origin. **`kaya` drives all of it from a
-> shell** — `note {list,get,create,edit,move,delete}` and `config {set,show,path}`, in `human`,
-> `json` or `toon` — and ships as a downloadable binary. What is missing is the two ends: the SPA is
-> still a shell page, the MCP adapter is still empty, and **there is no hosted deployment to point
-> anything at** (see *Where to point it*, below).
+> **Status: the product works from a checkout and has nowhere to live.** A pandan PAT creates,
+> reads, edits and deletes notes over `/api/v1/notes`, and the whole stack ships as one container
+> image serving the SPA and the API from a single origin. **`kaya` drives all of it from a shell** —
+> `note {list,get,create,edit,move,delete}`, `links <ref>`, `backlinks <ref>` and
+> `config {set,show,path}`, in `human`, `json` or `toon`. The SPA is a browsable app: a CodeMirror 6
+> editor, a folder tree, a live preview, a PAT paste to get in, and a conflict banner when two
+> writers collide. The MCP server registers six
+> tools and five of them work. Full-text search runs end to end: a ranked `?q=` in the API, `--q` on
+> `note list`, a box in the sidebar. What has no answer at all is **where to point any of it: there
+> is no hosted deployment** (see *Where to point it*, below), and the published binary is older than
+> most of the above.
 > See [`docs/PLAN.md`](docs/PLAN.md) for what is being built,
 > [`docs/SLICES.md`](docs/SLICES.md) for the order, and [`CLAUDE.md`](CLAUDE.md) for what is
 > genuinely in each package today. Work is tracked on pandan board 18.
@@ -35,7 +39,7 @@ actually got:
 
 ```console
 $ kaya --version
-kaya 0.9.0 (a1b2c3d)
+kaya 0.5.0 (6694657)
 ```
 
 The sha is the commit it was built from, and a build that did *not* come from the release pipeline
@@ -44,20 +48,31 @@ says `source checkout, not a released build` instead of staying quiet — that i
 pasting into any bug report. Want a shorter name? `ln -sf ~/.local/bin/kaya ~/.local/bin/ky`; there
 is deliberately no second console script.
 
+**That version number is the current release, and it reads only.** `v0.5.0` predates the write verbs:
+its own `--help` says *"Reads only: `note list` and `note get`"*, and `config`, `--fields`, `--full`,
+`links`, `backlinks` and bare `kaya` are all unrecognised words to it. Everything this README
+describes below is on `main` and reaches a binary at the next tag; until then the download is a
+read-only client and the checkout is the whole tool.
+
 ### Where to point it
 
-**There is no hosted kaya, so you have to run one.** This is [ADR
-0010](docs/adr/0010-no-hosted-deploy-until-the-homelab.md) on purpose, not an omission: the image
-and the Kubernetes manifests are built and exercised locally, and the k8s homelab is kaya's first
-real deploy. Until then the only origin that exists is one you start yourself, from a checkout with
-Docker:
+**There is no hosted kaya, so the binary has no origin until you start one yourself.** This is
+[ADR 0010](docs/adr/0010-no-hosted-deploy-until-the-homelab.md) on purpose, not an omission: the
+image and the Kubernetes manifests are built and exercised locally, and the k8s homelab is kaya's
+first real deploy. A published artifact with nowhere to point it is the open end that ADR names,
+now reached, and it was answered with this paragraph rather than with infrastructure — see that
+ADR's §Amendment (2026-08-20) for the decision and for the three things a remote origin would still
+prove that a local one cannot. The limit that leaves is a real one and worth naming: **running kaya
+means a repository checkout and a working Docker, so no checkout or no Docker means no kaya**,
+whatever the download suggests.
 
 ```bash
 make up                                     # db + migrate + the app image, one origin on :8000
 ```
 
-If ports `5432` or `8000` are already taken on your machine, pass your own:
-`KAYA_DB_PORT=5434 KAYA_APP_PORT=8010 make up`.
+If ports `5432` or `8000` are already taken on your machine, pass your own —
+`KAYA_DB_PORT=5434 KAYA_APP_PORT=8010 make up` — and remember that `KAYA_API_URL` below has to
+name the port you chose, not `8000`.
 
 Then give the CLI an origin and a credential:
 
@@ -72,8 +87,9 @@ kaya note get NOTE-12 --format json
 
 `kaya config set --api-url …` writes those to a config file instead, and `kaya config show`
 reports what resolved and from which tier — it never prints the token, only whether there is one.
-All nine verbs are live; [`kaya-cli/README.md`](kaya-cli/README.md) has the formats, the error
-contract and the exit codes.
+Every verb is live on `main`, so the origin is the one thing standing between the CLI and a usable
+product; [`kaya-cli/README.md`](kaya-cli/README.md) has the formats, the error contract and the exit
+codes.
 
 ## What it will do
 
@@ -102,7 +118,7 @@ Between them they carry most of what makes this project different from a generic
 
 ## Development
 
-Needs `uv` (Python 3.12), Node 20.19+ and Docker.
+Needs `uv` (Python 3.12), Node 24.15+ and Docker.
 
 ```bash
 make hooks         # install the pre-push gate (do this once)
@@ -115,9 +131,8 @@ make check         # everything pre-push runs
 make help          # every target, including the one still stubbed
 ```
 
-There is no hosted deployment, on purpose: the image and the Kubernetes manifests are built and
-exercised locally, and the k8s homelab is kaya's first and only deploy
-([ADR 0010](docs/adr/0010-no-hosted-deploy-until-the-homelab.md)).
+`make up` is the only origin there is; *Where to point it* above says why and what it costs, and
+[ADR 0010](docs/adr/0010-no-hosted-deploy-until-the-homelab.md) is the decision behind it.
 
 Five packages in one repo (`backend/`, `frontend/`, `kaya-client/`, `kaya-cli/`, `mcp/`) with the
 dependency arrow pointing one way: adapters depend on the client, and nothing depends on an adapter

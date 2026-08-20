@@ -6,6 +6,11 @@ here formats, projects, truncates or counts anything, and `kaya_mcp.server` is t
 `render()` is called — the same split `kaya_cli.verbs` (returns a `Payload`) and
 `kaya_cli.__main__.main` (calls `render` on it) make.
 
+"Every function below is one client call" is **true without exception as of KAN-964**, and was not
+before it: `get_backlinks` raised instead, because ADR 0006 froze the name while `/links` and
+`/backlinks` had landed nowhere. KAN-566 landed them, so the exception is gone and so is the module
+that held it (`kaya_mcp.errors`, deleted — see `get_backlinks` below).
+
 `open_client` is imported into this module's namespace and called by name — the same seam
 `kaya_cli.verbs` exposes — so a test replaces it with `monkeypatch.setattr(tools, "open_client",
 …)` and drives a tool end to end against an `httpx.MockTransport`: no network and no PAT anywhere
@@ -13,8 +18,6 @@ near this repository.
 """
 
 from kaya_client import Payload, open_client
-
-from kaya_mcp.errors import ARG, MESSAGE, BacklinksNotAvailable
 
 
 def list_notes() -> Payload:
@@ -61,11 +64,23 @@ def search_notes(q: str) -> Payload:
 
 
 def get_backlinks(ref: str) -> Payload:
-    """`get_backlinks`: refuses, every time. See `kaya_mcp.errors` for why this is a refusal
-    rather than a stub returning an empty list, and this module's own docstring for why the
-    refusal lives here and not in `kaya_client` or `kaya-cli`.
+    """`get_backlinks`: the notes whose body links to this one.
 
-    `ref` is accepted and unused: it documents the shape this tool will need once KAN-566 lands,
-    so that landing is a change to this function's body and not to its signature or registration.
+    **KAN-964 replaced a refusal with this line, and the line is all it took.** KAN-569 registered
+    this tool against ADR 0006's frozen six with nothing behind it — no backend route, no
+    `KayaClient` method, no CLI verb — and every call raised `kaya_mcp.errors.BacklinksNotAvailable`
+    so a caller could not mistake "not built yet" for "this note has no backlinks". KAN-566 landed
+    all three layers (`backend/app/api/links.py`, `KayaClient.backlinks`, `kaya backlinks <ref>`),
+    which made the refusal a false statement rather than an honest gap, so `kaya_mcp/errors.py` is
+    **gone**: it existed for this one refusal and nothing else ever referenced it, and this package
+    now invents no failure of its own.
+
+    Nothing here knows that the payload is a *note* collection — `KayaClient.backlinks` attaches
+    the note noun, the note columns and the note prose fields at the call, because `/backlinks`
+    answers with the very same `NoteList` a plain list does. That is why `fields`, truncation and
+    the `{"count": n}` aggregate all came out right for this tool with **no** line written for them
+    anywhere in `mcp/` (ADR 0004), and why `kaya_cli.verbs._backlinks` says the same thing about
+    itself one adapter over.
     """
-    raise BacklinksNotAvailable(MESSAGE, arg=ARG)
+    with open_client() as client:
+        return client.backlinks(ref)

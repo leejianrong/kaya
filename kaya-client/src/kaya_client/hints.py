@@ -43,6 +43,17 @@ which is what ``noun`` answers.
 back to a note's, so KAN-566's ``/links`` and ``/backlinks`` arrive with no hints instead of with
 wrong ones, and adding them is adding a row here.
 
+**KAN-566 landed and the prediction held for one of the two, which is the more interesting
+outcome.** ``kaya links`` is a collection of ``link``, a key this table has no row for, so it emits
+nothing — and `KayaClient.links` argues that it should stay that way rather than gain one: a links
+row's ``resolved_ref`` is a ``NOTE-n`` for the NOTE-kind rows only, so ``note get <ref>`` would be
+advice that applies to some rows and not others. ``kaya backlinks`` gets the *note* collection's two
+templates, and not because an exception was made — the API answers `/backlinks` with the same
+``NoteList`` a plain list returns, so the payload's ``noun`` genuinely is ``note`` and the rows
+genuinely are notes that ``note get <ref>`` addresses. That is the derivation working: the table is
+keyed on what a result *is*, so a new endpoint returning an old shape inherits the old advice
+without a row, and a new endpoint returning a new shape says nothing until somebody argues for one.
+
 **What that derivation costs, stated rather than hidden.** `note delete` returns an *entity* with
 ``noun="note"`` (a ``{ref, deleted}`` record — see `client.delete_note`), so it is handed the same
 single template a `note get` is. A caller who has just deleted a note is told how to edit *a* note,

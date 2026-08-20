@@ -260,7 +260,8 @@ def test_the_two_dispatch_tables_are_disjoint() -> None:
 
 
 def test_the_published_verb_set_is_pinned() -> None:
-    """SLICES §V2b step 6's list, written out so that adding a verb is a visible edit here.
+    """SLICES §V2b step 6's list plus §V5 step 6's two, written out so that adding a verb is a
+    visible edit here.
 
     The same discipline as `kaya-client`'s pin on ``CLI_FORMATS``: a verb reaching a shell is a
     published contract, and the way one arrives unnoticed is as a side effect of a refactor that
@@ -276,16 +277,36 @@ def test_the_published_verb_set_is_pinned() -> None:
         ("config", "set"),
         ("config", "show"),
         ("config", "path"),
+        ("links", None),
+        ("backlinks", None),
     }
 
 
-def _parser_words(parser) -> set[tuple[str, str]]:
-    """``{(command, subcommand)}`` as the parser actually accepts them, two levels deep."""
-    return {
-        (command, word)
-        for command, child in _subparsers(parser).items()
-        for word in _subparsers(child)
-    }
+def _parser_words(parser) -> set[tuple[str, str | None]]:
+    """``{(command, subcommand)}`` as the parser actually accepts them, at either depth.
+
+    **KAN-566 widened this, and the widening is the point rather than an accommodation.** Until
+    then every word lived under a group, so "two levels deep" and "every word" were the same set
+    and this helper could assume it. `links` and `backlinks` are top-level verbs (see
+    ``__main__._add_link_verbs`` for why), and a top-level verb's key is ``(word, None)`` —
+    argparse leaves ``subcommand`` at the top-level default because only the two groups declare
+    that ``dest``.
+
+    Written as "a command with subparsers contributes its children, a command without contributes
+    itself" rather than as a union of two hard-coded shapes, so the guard covers a third shape
+    nobody has thought of: a group that gains a sub-subcommand, or a top-level verb added later.
+    The alternative — leaving the two-level walk alone and naming the new words on the other side of
+    the assertion, the way ``verbs.BARE`` is named — would have made the drift guard blind to
+    exactly the words it was widened for.
+    """
+    words: set[tuple[str, str | None]] = set()
+    for command, child in _subparsers(parser).items():
+        children = _subparsers(child)
+        if children:
+            words |= {(command, word) for word in children}
+        else:
+            words.add((command, None))
+    return words
 
 
 def _subparsers(parser) -> dict:
@@ -335,8 +356,14 @@ def test_a_verb_that_has_not_landed_is_still_refused(capsys) -> None:
     those words now fails for a *different* reason (a missing positional). That is the failure mode
     it was written to catch, so the list is now the words that genuinely do not exist. `search` is
     KAN-558/559's and `archive` is nobody's.
+
+    KAN-566 added `links` and `backlinks` to this list rather than removing anything from it,
+    which reads backwards until you notice the group: they exist at the **top level**, so
+    `kaya note links` is still a usage error and must stay one. A `note` subgroup that quietly
+    accepted them would be a second spelling of a published verb, which is the class of thing
+    `test_the_published_verb_set_is_pinned` exists to keep visible.
     """
-    for word in ("search", "archive", "link"):
+    for word in ("search", "archive", "link", "links", "backlinks"):
         assert main(["note", word]) == 2
         assert capsys.readouterr().out.startswith("error\tusage\t")
 

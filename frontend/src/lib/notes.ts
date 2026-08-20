@@ -78,6 +78,39 @@ export function moveNote(ref: string, path: string, options: Options = {}): Prom
   return updateNote(ref, { path }, options)
 }
 
+/**
+ * Every note of the caller's whose body links to this one — `GET /notes/{ref}/backlinks` (KAN-568).
+ *
+ * **It returns `Note[]` because the API returns the same `NoteList` a plain list does**, so this is
+ * `listNotes` at a different URL and there is no second type, no second envelope and no `Backlink`
+ * interface anywhere in `frontend/`. `backend/app/api/links.py` argues that end of it: a backlink
+ * *is* a note, and a link-shaped record would publish a second spelling of something the caller can
+ * already read. `kaya-client` reached the same conclusion from the other side — its `backlinks()`
+ * returns the note noun and the note columns, so `--fields` and `--full` arrived with no code
+ * written for them.
+ *
+ * Two properties worth knowing before building on it, both `app.auth.notes_linking_to`'s rather than
+ * this function's:
+ *
+ * - **It makes no upstream call.** "Which notes mention this one" is a join over two of kaya's own
+ *   tables, so this request is answerable with pandan stopped and a cold cache (ADR 0003, SLICES
+ *   §V5's R5.1). Every other read in this module needs pandan for authentication and this one does
+ *   too — what it does not need is pandan for its *content*, which `/links` does.
+ * - **The match key is `resolved_id`, never the title**, so renaming a note does not break the
+ *   backlinks to it, and an edge whose `resolved_id` is still `NULL` is deliberately not a backlink
+ *   to anything.
+ *
+ * Order is `updated_at DESC, id DESC` — the list order and not a relevance one, because nothing was
+ * searched for. Nothing here re-sorts it.
+ *
+ * The ref goes through `notePath`, so it is one percent-encoded segment exactly as it is for every
+ * other ref-taking call, and the suffix is appended outside the encoding.
+ */
+export async function listBacklinks(ref: string, options: Options = {}): Promise<Note[]> {
+  const payload = await apiRequest<NoteList>(`${notePath(ref)}/backlinks`, options)
+  return payload.notes
+}
+
 /** Delete the note. `204`, no body. The ref is never reused (ADR 0008). */
 export async function deleteNote(ref: string, options: Options = {}): Promise<void> {
   await apiRequest<null>(notePath(ref), { ...options, method: 'DELETE' })
