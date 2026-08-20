@@ -136,7 +136,78 @@ lands on the ~16% ADR 0006 §3 predicted. That same section measured **84%** for
 five useful fields, which these tools have taken since KAN-569 by calling `render()`. Compaction is
 the 16%. ADR 0006's Finding 1 is exactly that trimming the resident surface optimises a ~4%-of-window
 line item while a 22% one sits beside it, so this is hygiene worth taking and not a win worth
-overselling. The per-read payload figure — the 22% side — is **KAN-574's** to measure.
+overselling. The per-read payload figure — the 22% side — is measured below (KAN-574).
+
+### The per-read payload figure, measured against kaya's own data
+
+The 84% quoted above is pandan's — `list_cards` against pandan's board, inherited into ADR 0006
+only as the argument for why kaya's tools take `fields` from day one. Nobody had measured what a
+real kaya tool *call* costs through kaya's own MCP server against kaya's own notes until KAN-574,
+which is the number this section reports.
+
+Unlike schema compaction, a tool call needs I/O a static `tools/list` does not: a live kaya backend,
+a real pandan PAT, and a real `kaya-mcp` subprocess talked to over stdio — the same transport
+`scripts/verify_stdio_image.py` drives against a built image, here against `python -m kaya_mcp` so
+no image is needed. `scripts/measure_read_payload.py` is that script, and its own docstring is why
+it is a script and not a test: there is no hosted kaya (ADR 0010) to run it against in CI, and no
+committed fixture corpus realistic enough to make truncation's effect honest, so wiring it into
+`make check` would mean either standing up a stack on every push for a number that does not move
+between runs, or teaching CI a secret it does not otherwise need. It follows `make measure-auth`'s
+contract instead: reads a credential (`KAYA_MCP_MEASURE_PAT`, falling back to
+`~/.config/pandan/config.toml`), never prints it, and exits 0 having done nothing when the target
+backend or the credential is absent.
+
+Measured 2026-08-20 against an isolated stack (`COMPOSE_PROJECT_NAME=kaya-measure KAYA_DB_PORT=5443
+KAYA_APP_PORT=8023 make up` — never the shared dev stack on :8010/:5434) seeded with 40 notes of
+realistic, non-uniform multi-paragraph markdown (`--seed-notes 40`; corpus shape: mean body 1,382
+chars, range 630–2,221 — close to `kaya-client/scripts/measure_toon_delta.py`'s own 40-note, 1,351-
+mean corpus, so the percentage below is not an artifact of one-line placeholders), driven with a
+real pandan PAT and re-runnable with:
+
+```bash
+KAYA_MCP_MEASURE_URL=http://localhost:8023 KAYA_MCP_MEASURE_PAT=<a real pandan PAT> \
+  uv run --with tiktoken python scripts/measure_read_payload.py --markdown
+```
+
+Two rows per call, the same reason `measure_schema_compaction.py` keeps two: **`structuredContent`
+only** is the shaped JSON `render()` produced, compact-encoded — the number comparable to ADR 0004's
+and ADR 0006's own narrowing figures. **whole tool result** is `content` (the SDK's own indented
+plain-text mirror of the same JSON) plus `structuredContent` together — what a `tools/call` response
+actually contains over the wire, and a real cost this measurement found that ADR 0006 never priced:
+the SDK sends the answer twice, once shaped and once again as an indented string for a text-only
+host.
+
+`list_notes` — complete vs `fields=["ref", "title", "path"]` (`NOTE_LIST_COLUMNS`, the same three
+columns a `human` render already shows by default):
+
+| what | bytes | tokens (`o200k_base`) |
+|---|---|---|
+| structuredContent only | 31,347 → 4,155 (−86.7%) | 7,701 → 1,156 (−85.0%) |
+| whole tool result | 67,174 → 10,420 (−84.5%) | 17,231 → 3,098 (−82.0%) |
+
+**Kaya's own number lands within a point of pandan's borrowed 84%** — 85.0% on the structured
+payload, 82.0% on the whole tool result once the SDK's indented text mirror is counted too. That
+second figure is the honest one for "what a host actually holds resident per call", and it is a few
+points lower than the first for a reason worth stating rather than rounding away: the text mirror
+carries the same fixed pretty-printing overhead whether the payload is narrow or complete, so it is
+proportionally larger against the narrow one — narrowing looks slightly less dramatic once that
+mirror is counted.
+
+`get_note` on the corpus's longest body (`NOTE-17`, 2,221 chars) — `KAYA_MAX_TEXT_CHARS=0` (what
+`kaya note get --full` sets, and the only way to reach that state through an MCP call, since there
+is no `--full` argument on the tool itself) vs the default `KAYA_MAX_TEXT_CHARS=500`, full-side
+first so the prose order matches the table's before → after order (truncation only removes text, so
+the untruncated side is always the larger one):
+
+| what | bytes | tokens (`o200k_base`) |
+|---|---|---|
+| structuredContent only | 2,458 → 790 (−67.9%) | 504 → 193 (−61.7%) |
+| whole tool result | 5,038 → 1,688 (−66.5%) | 1,069 → 432 (−59.6%) |
+
+`list_notes` is the representative read — it is where narrowing, truncation and the aggregate all
+apply at once, and it is pandan's own comparison point. `get_note` is the complementary second point
+specifically because the aggregate does not apply to one record, so what it isolates is truncation
+alone, still a ~60% saving on a single long document at the default limit.
 
 Two guards, both adopted from pandan's implementation rather than rediscovered, and both with the
 positive control that keeps them from being vacuous:
