@@ -50,47 +50,47 @@ tells a reader to `curl`.
 Now: **V3, the editor, is complete** — KAN-552 landed the skeleton, KAN-553 the editor, KAN-555 the
 way in, KAN-556 the conflict banner, KAN-554 the sidebar and the preview, and KAN-767 the chunk
 split, so `frontend/` is a browsable app with a router, a typed API layer, a credential seam, a real
-landing page that takes a **one-time PAT paste** (and walks a `401` out rather than reloading through
-it), a CodeMirror 6 pane that opens a note, edits it, saves it under ADR 0009's precondition and
-offers **keep mine / keep theirs / side by side** when that precondition fails, a **folder tree over
-the `path` column** beside the flat list, and a **live preview** that follows the document without
-the editor's `$effect` re-running — all driven against a real stack and a real PAT. KAN-767 closed
-the slice by moving the editor's ~80 kB gzip onto **its own chunk**, so the visitor who has not
-signed in yet no longer downloads one, and **KAN-836** did the same for the live preview's
+landing page that takes a **one-time PAT paste** (and walks a `401` out rather than reloading
+through it), a CodeMirror 6 pane that opens a note, edits it, saves it under ADR 0009's precondition
+and offers **keep mine / keep theirs / side by side** when that precondition fails, a **folder tree
+over the `path` column** beside the flat list, and a **live preview** that follows the document
+without the editor's `$effect` re-running — all driven against a real stack and a real PAT. KAN-767
+closed the slice by moving the editor's ~80 kB gzip onto **its own chunk**, so the visitor who has
+not signed in yet no longer downloads one, and **KAN-836** did the same for the live preview's
 `@lezer/markdown` grammar, which was 43% of what KAN-767 left in the entry: a landing page is now
 **27,861 B gzip** against 50,351. **V4, search, is complete** (KAN-557, KAN-558, KAN-559):
 `note.search_vector` is a stored generated `tsvector` over `title` + `body` with a GIN index, and
 `GET /api/v1/notes?q=` is the query over it — owner-scoped in SQL, ranked by `ts_rank` with `id` as
 the documented tie-break, and refusing a present-but-blank `q`. **KAN-559 closed the slice**: `--q`
 on `note list` (`parsing.QUERY_FLAG`, on that verb alone rather than on `output_flags()`) and the
-sidebar's search box, one flag and one input because the API returns the same `NoteList` a plain list
-does. What is still open against V4 is KAN-962, a bug rather than a gap: a ranked result rendered in
-the folder tree loses the ranking, and TREE is the default view. **`/links` and `/backlinks` are
-in** (KAN-566): `GET /api/v1/notes/{ref}/links` is a note's outbound wikilinks, each resolved as far
-as it can be — a `NOTE` edge through the `resolved_id` KAN-563 recorded, a `KAN-`/`EPIC-` edge
-through KAN-564's resolver with the caller's own PAT — and `GET /api/v1/notes/{ref}/backlinks` is every note whose
-body links to this one, which is a **join over two of kaya's own tables and therefore answerable
-with pandan stopped**. `kaya links <ref>` and `kaya backlinks <ref>` are the two verbs, and they are
-**top-level words rather than `note` subcommands**, because SLICES §V5 spells them that way and
-because `backlinks` is the one verb whose namespace is still open (the demo's `kaya backlinks
-KAN-501` is a `400 invalid_note_ref` today — the note case is what shipped). `/backlinks` returns the
-same `NoteList` a plain list does, so `--fields`, `--full`, the `{"count": n}` aggregate and the
-`help:` templates all arrived with nothing written for them. **V6
-is most of the way in** (KAN-569): the MCP server is real, six tools registered against ADR 0006's
-frozen set, each calling the `render()` seam V2a and V2b built. Five tools work; `get_backlinks`
-still refuses every call, which is now a **stale refusal rather than a missing capability** —
-KAN-566 landed the endpoint and the client method it needs, so wiring it is a one-line body change in
-`mcp/src/kaya_mcp/tools.py` plus its own tests and `mcp/README.md`; deliberately left for its own
-card rather than folded in. What's left is KAN-570's CLI-parity test — see
-[`mcp/README.md`](mcp/README.md) for the current, canonical statement of the `MCP ⊆ CLI` direction
-and exactly which half of it is tested today. PLAN §Config's
-**third** tier, the nearest `.mcp.json`, is deliberately not built and arrives once V6 closes: choosing
-which server entry in an MCP host's file is kaya's is a guess until there is a server to name, and a
-host launching one usually exports the `env` block anyway, so tier one covers the common case (see
-`config.py`). Also unbuilt: `make test-e2e` is still a stub, and **it is no longer blocked on any
-card** — KAN-552 moved its blocker off the shell and onto the behaviour SLICES §V3's demo describes,
-and every one of those cards has now landed, so what the target waits on is somebody writing it.
-ADR 0005 §Consequences defers ambient session context (pandan's V48) post-MVP.
+sidebar's search box, one flag and one input because the API returns the same `NoteList` a plain
+list does. What is still open against V4 is KAN-962, a bug rather than a gap: a ranked result
+rendered in the folder tree loses the ranking, and TREE is the default view. **`/links` and
+`/backlinks` are in** (KAN-566): `GET /api/v1/notes/{ref}/links` is a note's outbound wikilinks,
+each resolved as far as it can be — a `NOTE` edge through the `resolved_id` KAN-563 recorded, a
+`KAN-`/`EPIC-` edge through KAN-564's resolver with the caller's own PAT — and `GET
+/api/v1/notes/{ref}/backlinks` is every note whose body links to this one, which is a **join over
+two of kaya's own tables and therefore answerable with pandan stopped**. `kaya links <ref>` and
+`kaya backlinks <ref>` are the two verbs, and they are **top-level words rather than `note`
+subcommands**, because SLICES §V5 spells them that way and because `backlinks` is the one verb whose
+namespace is still open (the demo's `kaya backlinks KAN-501` is a `400 invalid_note_ref` today — the
+note case is what shipped). `/backlinks` returns the same `NoteList` a plain list does, so
+`--fields`, `--full`, the `{"count": n}` aggregate and the `help:` templates all arrived with
+nothing written for them. **V6 is most of the way in** (KAN-569): the MCP server is real, six tools
+registered against ADR 0006's frozen set, each calling the `render()` seam V2a and V2b built. Five
+tools work; `get_backlinks` still refuses every call, which is now a **stale refusal rather than a
+missing capability** — KAN-566 landed the endpoint and the client method it needs, so wiring it is a
+one-line body change in `mcp/src/kaya_mcp/tools.py` plus its own tests and `mcp/README.md`;
+deliberately left for its own card rather than folded in. What's left is KAN-570's CLI-parity test —
+see [`mcp/README.md`](mcp/README.md) for the current, canonical statement of the `MCP ⊆ CLI`
+direction and exactly which half of it is tested today. PLAN §Config's **third** tier, the nearest
+`.mcp.json`, is deliberately not built and arrives once V6 closes: choosing which server entry in an
+MCP host's file is kaya's is a guess until there is a server to name, and a host launching one
+usually exports the `env` block anyway, so tier one covers the common case (see `config.py`). Also
+unbuilt: `make test-e2e` is still a stub, and **it is no longer blocked on any card** — KAN-552
+moved its blocker off the shell and onto the behaviour SLICES §V3's demo describes, and every one of
+those cards has now landed, so what the target waits on is somebody writing it. ADR 0005
+§Consequences defers ambient session context (pandan's V48) post-MVP.
 
 **Trust the code over the docs.** When this file and the repository disagree, the repository is
 right and this file is stale. Fix it in the same PR.
