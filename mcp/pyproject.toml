@@ -1,6 +1,6 @@
 [project]
 name = "kaya-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "kaya's MCP server — a thin adapter over kaya-client"
 readme = "README.md"
 license = "Apache-2.0"
@@ -10,7 +10,9 @@ dependencies = [
     "mcp>=1.2.0",
 ]
 # KAN-569 lands the MCP SDK: the six tools ADR 0006 froze are now real, so the dependency that
-# stands the server up finally has tools behind it.
+# stands the server up finally has tools behind it. KAN-964 (0.3.0) made the sixth one work — it had
+# refused every call since KAN-569, because ADR 0006 froze the name before KAN-566 built the layers
+# behind it. A behavioural change to a shipped package, hence the minor bump (ADR 0007 §3).
 
 [project.optional-dependencies]
 dev = [
