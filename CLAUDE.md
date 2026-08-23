@@ -995,6 +995,48 @@ make audit             # npm audit + pip-audit over every lockfile (network; NOT
 make measure-auth      # re-measure introspection latency (Docker + a real PAT)
 ```
 
+**`make up` forwards exactly two environment variables into the app container, and every other
+`Settings` field silently takes its default there** (KAN-968). `docker-compose.yml`'s `app` service
+sets only `DATABASE_URL` and `KAYA_PANDAN_URL`; nothing else you export in your shell before `make
+up` reaches the container, however you spell it, because compose does not forward the parent
+process's environment into a service unless the service's `environment:` block names it. Every
+other field on `backend/app/config.py`'s `Settings` is a real, working knob with a real default —
+`pandan_connect_timeout_seconds` / `pandan_read_timeout_seconds`, `principal_cache_ttl_seconds` /
+`principal_negative_cache_ttl_seconds`, the whole `card_resolution_*` family
+(`connect_timeout_seconds`, `read_timeout_seconds`, `total_deadline_seconds`,
+`max_upstream_requests`, `max_selectors_per_request`, `cache_ttl_seconds`), `log_level` and
+`spa_dist` — so the app starts happily on the default and nothing warns you. This matters most for
+R5.1-style measurements (SLICES §V5): starving card resolution while leaving identity alone needs
+`KAYA_CARD_RESOLUTION_CONNECT_TIMEOUT_SECONDS`/`_READ_TIMEOUT_SECONDS` set to something tiny, and
+doing that in your shell before `make up` silently measures a healthy, normally-budgeted resolver
+instead — a green run that tested nothing. (`KAYA_MAX_TEXT_CHARS` is **not** on this list at all: it
+is `kaya-client`'s own env var, read by whatever process runs `kaya`/`kaya-mcp` on your side of the
+API, never by the backend container, so `make up` was never in a position to forward it.)
+
+To set one of these, run the backend directly instead of through compose — it inherits your shell's
+environment normally, which is why every measurement taken this way (including KAN-566's and
+KAN-568's R5.1 runs) is unaffected by any of the above:
+
+```bash
+cd backend && KAYA_CARD_RESOLUTION_CONNECT_TIMEOUT_SECONDS=1 KAYA_CARD_RESOLUTION_READ_TIMEOUT_SECONDS=1 \
+  uv run uvicorn app.main:app --port 8000
+```
+
+(needs `KAYA_DB_PORT`'s Postgres already up via `make db`, and `DATABASE_URL` pointed at it — see
+the direct-uvicorn recipe further down this section).
+
+Not fixed, and deliberately not: adding the missing forwards to `docker-compose.yml` would
+duplicate every default `config.py` already states, in a second file with no argument for the
+value it's copying, which is exactly the kind of drift this document warns against elsewhere. What
+*is* in place: the app logs which of its settings differ from their own declared default at
+startup (`app/observability/_log_effective_settings`, KAN-968) — not a fix for the forwarding gap
+itself (a value that never reached the process cannot be named by inspecting the process), but it
+means a value that *did* take effect, through compose or through a direct `uvicorn`, is visible in
+`kubectl logs` / `docker compose logs app` rather than requiring a `printenv` inside the container
+to discover it. It never names `DATABASE_URL`: that field embeds a plaintext password as URL
+userinfo (`postgresql+psycopg://kaya:kaya@…`), and it is excluded structurally
+(`_EXCLUDED_FROM_STARTUP_LOG`) rather than by a name pattern that could rot.
+
 The `toon` delta is re-measurable the same way, and needs no credential:
 
 ```bash
