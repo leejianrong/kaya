@@ -31,12 +31,24 @@ import { expect, vi } from 'vitest'
 /** The preview's own element — never `[class*="preview"]`, which also matches the Preview *button*. */
 const PREVIEW = '[data-testid="preview"]'
 
-/** Resolve once a preview under `root` has rendered something. */
+/**
+ * Resolve once a preview under `root` has rendered something.
+ *
+ * **KAN-967**: same fix as `tests/editor-arrival.ts`, for the same reason — this docstring already
+ * says the two share the argument, and the reproduction that found the editor's flake caught this
+ * helper's identical failure shape too (`preview-arrival.ts:40`, `expect(...).toBeGreaterThan(0)`,
+ * under three concurrent full `npm test` runs). See that file's comment for the full reasoning: the
+ * timeout below hands the only deadline to vitest's own per-test timeout rather than guessing a bigger
+ * fixed number that just asks to be doubled again next time the machine is busier.
+ */
 export async function previewRendered(root: ParentNode): Promise<void> {
-  await vi.waitFor(() => {
-    flushSync()
-    const element = root.querySelector(PREVIEW)
-    expect(element).not.toBeNull()
-    expect(element!.childNodes.length).toBeGreaterThan(0)
-  })
+  await vi.waitFor(
+    () => {
+      flushSync()
+      const element = root.querySelector(PREVIEW)
+      expect(element).not.toBeNull()
+      expect(element!.childNodes.length).toBeGreaterThan(0)
+    },
+    { timeout: 20_000 },
+  )
 }

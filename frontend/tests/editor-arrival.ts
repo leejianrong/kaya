@@ -32,10 +32,37 @@ const MOUNTED = '.editor-host > .cm-editor'
  *
  * `root` is the test's own host element, so a file mounting two panes (or a whole `App`) can wait on
  * the subtree it means rather than on the document.
+ *
+ * **KAN-967: the `timeout` below is not a bigger guess, it is a way to stop guessing.** `vi.waitFor`'s
+ * own default deadline is a hardcoded 1000ms, independent of anything in `vite.config.ts` — and this
+ * file's own docstring already predicted that the *first* `import()` in a worker is a genuine module
+ * load rather than a tick, so a fixed budget for it is a bet on how loaded the machine happens to be.
+ * Reproduced directly (three concurrent full `npm test` runs on one checkout, 16 cores): under
+ * contention that load pushes past 1000ms and this poll's own `expect(...).not.toBeNull()` fails while
+ * the chunk is still genuinely in flight — `tests/shell.test.ts` and `tests/backlinks-rail.test.ts`
+ * both did, verbatim, on `editor-arrival.ts:39`.
+ *
+ * Raising the fixed number is the fix that comes back asking to be doubled again the next time
+ * something loads the machine harder — it never stops being a guess, just a bigger one. So instead
+ * this hands the *only* deadline to vitest's own per-test timeout (5000ms by default here, and already
+ * the bound every other timing-sensitive assertion in this suite lives under): 20000ms is comfortably
+ * below Node's ~24.8-day `setTimeout` ceiling — past which a delay silently clamps to firing almost
+ * immediately, which would make "unbounded" backfire — and comfortably above any per-test timeout in
+ * this repo, so this inner deadline is never the one that fires. A chunk that genuinely never arrives
+ * (an actual regression, not contention) still fails the test: vitest's own timeout catches it, it just
+ * reports "Test timed out in Nms" at the `it()` block rather than this file's more specific assertion.
+ * That is the trade for having only one number to keep honest instead of two drifting apart — see
+ * CLAUDE.md's KAN-967 section for the fuller argument, including why a resolved-module cache primed
+ * once per file was rejected (several of these tests, e.g. `editor-lazy-mount.test.ts`, exist
+ * specifically to exercise a mount *while* the import is still in flight, and priming it away would
+ * delete the race under test) and why literal `Infinity` is not the same as "unbounded" here.
  */
 export async function editorArrived(root: ParentNode): Promise<void> {
-  await vi.waitFor(() => {
-    flushSync()
-    expect(root.querySelector(MOUNTED)).not.toBeNull()
-  })
+  await vi.waitFor(
+    () => {
+      flushSync()
+      expect(root.querySelector(MOUNTED)).not.toBeNull()
+    },
+    { timeout: 20_000 },
+  )
 }

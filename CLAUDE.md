@@ -494,6 +494,34 @@ editor in the container**, so every DOM test awaits `tests/editor-arrival.ts`'s 
 loads the module while later ones resolve from the registry. **KAN-836 repeated all of this one layer
 down for the preview's parser, and the hazard there is a different one** — see the paragraph after next.
 
+**KAN-967: the poll's own deadline was a second, hidden timeout, and it was shorter than the one
+everyone could see.** `vi.waitFor`'s default is a hardcoded 1000ms, independent of anything in
+`vite.config.ts` — a number nobody in `editor-arrival.ts` chose on purpose, just inherited from not
+passing one. Reproduced directly: three concurrent full `npm test` runs against one checkout (16
+cores) reliably pushed the lazy chunk's first `import()` in a fresh worker past 1000ms, and
+`editorArrived`'s own `expect(...).not.toBeNull()` failed on `tests/shell.test.ts` and
+`tests/backlinks-rail.test.ts` while the chunk was still genuinely loading — the poll timing out
+before the *test* had used any of its own budget. Raising that number is the fix that asks to be
+raised again the next time three worktrees share a laptop, so `editorArrived` and its twin,
+`previewRendered` (`tests/preview-arrival.ts`, KAN-836's parser chunk, same shape, same fix), now pass
+`{ timeout: 20_000 }` — not a bigger guess, but a number picked to be a no-op: comfortably above any
+per-test timeout this suite sets (the 5000ms default, nowhere overridden), and comfortably below
+Node's ~24.8-day `setTimeout` ceiling, past which a delay silently clamps to firing almost
+immediately rather than waiting longer. Vitest's own per-test timeout is now the *only* deadline that
+actually fires, so a chunk that genuinely never arrives still fails the test — as "Test timed out in
+Nms" at the `it()` block, rather than this file's own assertion, which is the one trade of picking a
+single number to trust over two that can drift apart. A resolved-module cache primed once per file was
+considered and rejected: `tests/editor-lazy-mount.test.ts` exists specifically to mount a note while
+the chunk is still in flight, and priming the import away would delete the very race under test.
+**Two failure shapes were found during reproduction and only one of them is this card's.** Under the
+same concurrent-`npm test` load, a second and separate shape also fired — vitest's own per-test
+timeout tripping on the enclosing `it()` directly (nothing to do with `editorArrived`'s poll), and
+`[vitest-pool]: Failed to start forks worker` when process-count contention stops a fork from
+spawning at all. Both are a property of running multiple full test-suite processes against a shared
+core budget, one layer below anything a poll deadline controls, and are unfixed here on purpose — see
+KAN-967's PR for the reproduction and the case for treating that as its own, larger card about test
+concurrency rather than folding it into this one.
+
 **Nothing under `frontend/src/` may value-import `@codemirror/*` except `lib/codemirror.ts`, and
 nothing may static-import that** (KAN-767, `frontend/tests/editor-chunk-is-lazy.test.ts`). This is a
 **bundle** guard and it exists because its regression is silent in every other way: one
