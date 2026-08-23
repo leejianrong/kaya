@@ -1,14 +1,20 @@
 """SLICES §V2a's failure classes, end to end, each asserting **stream, shape and exit code**.
 
     unknown flag (2) · invalid enum (2) · missing token (1) · 400 (2) · 404 (5) · 401 (3) · 403 (4)
-    · 409 (6)
+    · 409 (6) · 422 (2)
 
-Eight, not the six SLICES planned. KAN-718 added the `400`: ADR 0008 makes a malformed ref a
+Nine, not the six SLICES planned. KAN-718 added the `400`: ADR 0008 makes a malformed ref a
 *designed* outcome of the central ref resolver, so `kaya note get '#NOTE-12'` is a refusal the CLI
 meets routinely, and it was reporting as exit `1` — "something went wrong on kaya's side" — for a
 mistake the caller made and can fix. KAN-724 added the `409` for the mirror-image reason: nobody
 made a mistake at all, and `1` was equally wrong because it told a script the *command* had failed
-when what had happened was that the note moved and a retry after a re-read would succeed.
+when what had happened was that the note moved and a retry after a re-read would succeed. KAN-839
+added the `422`: it had been left at the unmapped `1` on the theory that a body the API validated
+and rejected had no action a number could name better than its `code` string already did, but that
+was never checked against what actually raises a `422` in `backend/` — it is exclusively
+`app/api/errors.py::handle_validation_error`, wired only to `RequestValidationError`, i.e. a
+caller's request body failing schema validation. That makes it the same *kind* of event `400` is,
+not the kind `409` is, so it joined `400` under `2` rather than getting a number of its own.
 
 KAN-542 built the error contract with no verbs to produce it, so it could only prove these at the
 unit seam — `kaya-client/tests/test_error_contract.py` owns the shape and
@@ -55,6 +61,8 @@ REFUSALS = [
     (400, "a_400_code_this_package_has_never_heard_of", 2, ["note", "get", "NOTE-12"]),
     (409, "note_conflict", 6, EDIT),
     (409, "a_409_code_this_package_has_never_heard_of", 6, EDIT),
+    (422, "invalid_request", 2, ["note", "get", "NOTE-12"]),
+    (422, "a_422_code_this_package_has_never_heard_of", 2, ["note", "get", "NOTE-12"]),
 ]
 
 
@@ -106,6 +114,41 @@ def test_a_malformed_ref_reports_its_shape_stream_and_number(capsys, answering) 
     assert captured.out == (
         "error\tinvalid_note_ref\t"
         "not a note reference: '#NOTE-12'. Use NOTE-12, note-12 or 12.\t#NOTE-12\n"
+    )
+    assert captured.err == ""
+
+
+def test_a_malformed_precondition_reports_its_shape_stream_and_number(capsys, answering) -> None:
+    """Class 9 (KAN-839), with the body `backend/app/api/errors.py::handle_validation_error`
+    actually builds for the card's own reproduction: ``kaya note edit NOTE-11 --body x
+    --if-updated-at nope``.
+
+    The number is the whole card, same as class 7's. `2` and not `1`: the only place a `422`
+    originates in `backend/` is that one handler, wired exclusively to a request body failing
+    `NoteUpdate`'s pydantic schema — here, ``if_updated_at`` not parsing as an aware datetime — so
+    it is the caller's own typo and unretryable without editing the command, exactly like `#NOTE-12`
+    above. `arg` carries the field name off the ``field`` extra, the same shape ``ref`` gives `400`.
+    """
+    answering(
+        422,
+        {
+            "error": {
+                "code": "invalid_request",
+                "message": "if_updated_at: Input should be a valid datetime or date, input is "
+                "too short",
+                "field": "if_updated_at",
+            }
+        },
+    )
+
+    result = main(["note", "edit", "NOTE-11", "--body", "x", "--if-updated-at", "nope"])
+    captured = capsys.readouterr()
+
+    assert result == 2
+    assert captured.out == (
+        "error\tinvalid_request\t"
+        "if_updated_at: Input should be a valid datetime or date, input is too short\t"
+        "if_updated_at\n"
     )
     assert captured.err == ""
 

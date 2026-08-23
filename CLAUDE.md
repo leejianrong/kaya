@@ -789,13 +789,22 @@ KAN-724 added `409 → 6`, the first number this repository chose rather than in
 retry — and `1` makes that unreachable, since a script must read `1` as "kaya failed" and so either
 re-sends the same stale precondition forever or abandons a conflict it was handed everything to
 resolve. Not `2`: the precondition was correct when it was read, so sending the caller back to their
-own command line is wrong in the other direction. `422` deliberately did **not** get a row — a body
-the API validated and rejected has no action a number could name that its `code` does not name
-better, which is the test `409` passes and `422` does not — and `note_conflict` is not in
-`EXIT_FOR_CODE` for the same reason `invalid_note_ref` isn't. It is a seventh number and not the
-thing ADR 0005 warned against, because that warning is about *reusing* a meaning that already had a
-number; pandan returns `409`s too and maps them to its own unmapped `1`, so the divergence is real,
-temporary and tracked as **pandan KAN-831**. Unknown statuses still default to `1`. The `arg`
+own command line is wrong in the other direction. **`422` joined `2` too, once checked rather than
+assumed** (KAN-839): KAN-724's amendment had left it at the unmapped default on the theory that a
+body the API validated and rejected has no action a number could name that its `code` does not
+already name better — the same defence `1` had for `400` before KAN-718, and wrong for the same
+reason once somebody actually grepped `backend/` for every place a `422` originates. There is
+exactly one, `app/api/errors.py::handle_validation_error`, wired only to FastAPI's
+`RequestValidationError` — a request body failing `NoteCreate`'s or `NoteUpdate`'s pydantic schema,
+never a semantic refusal borrowing the status. That makes `422` the same *kind* of event `400` is
+(unretryable without changing what was sent) rather than the kind `409` is (correct when it was
+read, worth a re-read and a retry), so it reuses `2` — the cheapest of the three additions, since a
+reused number needs no new constant — rather than earning a number of its own. `note_conflict` is
+not in `EXIT_FOR_CODE` for the same reason `invalid_note_ref` isn't, and `409`'s `6` is a seventh
+number and not the thing ADR 0005 warned against, because that warning is about *reusing* a meaning
+that already had a number; pandan returns `409`s too and maps them to its own unmapped `1`, so the
+divergence is real, temporary and tracked as **pandan KAN-831**. Unknown statuses — `500`, `503`,
+whatever arrives next — still default to `1`. The `arg`
 slot is **the first scalar extra a refusal carries**, which is unambiguous only while it carries one;
 `backend/tests/unit/test_error_extras_stay_addressable.py` is the alarm for that, because the client
 may never import the backend and so cannot see a second one appear.
