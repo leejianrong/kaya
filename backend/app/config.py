@@ -11,6 +11,7 @@ caller's bearer upstream (ADR 0002); ``KAYA_PANDAN_URL`` is configuration.
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -184,6 +185,41 @@ class Settings(BaseSettings):
     not, because Vite serves the SPA on :5173 and proxies ``/api`` back.
 
     Set it to ``../frontend/dist`` to run the single-artifact layout from a checkout."""
+
+
+_EXCLUDED_FROM_STARTUP_LOG = frozenset({"database_url"})
+"""Fields ``effective_overrides`` never names, structurally rather than by review.
+
+``database_url``'s default and every real value embed a username and password as URL userinfo —
+``postgresql+psycopg://kaya:kaya@host:5432/kaya`` — so printing it whenever it differs from the
+default would print a real database credential. Nothing else on ``Settings`` holds one: kaya keeps
+no long-lived credential of its own (see this module's docstring and ADR 0002), so there is no
+``token``/``bearer``/``KAYA_TOKEN`` field here to exclude — that name lives in ``kaya-client``'s own
+``config.py``, on the CLI side of the process boundary, and never reaches this ``Settings`` model.
+This is therefore a one-entry allow-list rather than a name pattern that could rot as fields are
+added; a future field whose value could carry a credential earns its own entry here rather than
+being caught implicitly."""
+
+
+def effective_overrides(settings: Settings) -> dict[str, Any]:
+    """Every ``Settings`` field whose value differs from the field's own declared default.
+
+    KAN-968: ``docker-compose.yml``'s ``app`` service forwards exactly two environment variables
+    (``DATABASE_URL``, ``KAYA_PANDAN_URL``) into the container, so every other field here —
+    ``KAYA_CARD_RESOLUTION_*``, the pandan timeout split, ``KAYA_MAX_TEXT_CHARS`` (kaya-client's,
+    not this module's, but the same shape), ``KAYA_SPA_DIST`` — silently takes its default under
+    `make up` however it is spelled in the caller's shell, with nothing warning that the knob never
+    arrived. This does not fix that: a value that never reached the process cannot be named by
+    inspecting the process, and `make up`'s two-variable forward is unchanged (see CLAUDE.md
+    §Commands). What it buys is the general case — a value that *did* take effect, in any run
+    (compose or a direct ``uvicorn``), is visible in the startup log without shelling into the
+    container to run ``printenv``.
+    """
+    return {
+        name: getattr(settings, name)
+        for name, field in Settings.model_fields.items()
+        if name not in _EXCLUDED_FROM_STARTUP_LOG and getattr(settings, name) != field.default
+    }
 
 
 @lru_cache(maxsize=1)
