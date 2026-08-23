@@ -33,9 +33,24 @@ app = FastAPI(
 # compressing edge in front of it: `mount_spa`'s `FileResponse`s went out raw, so a real request
 # against the one real deployment shape paid roughly 3x every quoted table. Middleware, not an edge,
 # because there is no edge (ADR 0010, KAN-722) and this is one line closing a real gap rather than
-# infrastructure built for a deploy shape that does not exist. Registered outermost — before
-# `install_observability` — so the access log's `bytes` field is what the compressed response
-# actually put on the wire, not the pre-compression body GZipMiddleware started from.
+# infrastructure built for a deploy shape that does not exist.
+#
+# Registered before `install_observability`, and that ordering has **no observable effect** on the
+# access log — checked rather than assumed, after an earlier draft of this comment claimed
+# otherwise and was wrong on two counts. First, `app/observability/middleware.py`'s `ACCESS_FIELDS`
+# is `("method", "path", "status", "duration_ms", "client")`: there is no byte-count field for a
+# compression order to make honest or dishonest. Second, `Starlette.add_middleware` inserts at index
+# 0 of `user_middleware`, so the middleware added *last* ends up outermost — meaning
+# `install_observability`'s `RequestLogMiddleware`, added after this line, actually wraps this one,
+# not the other way round. That still changes nothing that matters: verified with a throwaway ASGI
+# trace (both directions), `duration_ms` includes this middleware's work either way, and an
+# exception raised while sending a response is caught by `RequestLogMiddleware`'s `try`/`except` and
+# still produces an access line either way. Both are consequences of ASGI middleware being nested,
+# synchronous coroutine calls rather than concurrent tasks — a `send()` callback invoked deep in the
+# chain unwinds back through every enclosing frame regardless of which middleware nominally wraps
+# which, so there is no ordering here to get right. It sits before `install_observability` simply
+# because the SPA/response-shaping concerns this file composes are grouped together, ahead of where
+# observability is installed — a readability choice, not a behavioural one.
 #
 # Starlette's `GZipMiddleware` explicitly does not touch an `http.response.pathsend` message (see
 # its source: "Don't apply GZip to pathsend responses"), which is how a server offering that ASGI
