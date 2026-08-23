@@ -1018,6 +1018,15 @@ KAN-767 there are **two** JS chunks, so quote the entry chunk, the editor chunk 
 two pages actually fetches — a change that shrinks the entry while making an editor page fetch more bytes
 across more requests is not obviously a win, and the PR has to say which it is.
 
+**Every one of those figures is a `gzip -9` number, and KAN-963 made that true of `make up` rather than
+merely aspirational of it.** `app/main.py` wraps the app in Starlette's `GZipMiddleware`, because
+`make up` is the only origin that exists (ADR 0010's amendment) and it had no compressing edge in
+front of it before this card — a real request against the one real deployment shape paid roughly 3x
+every quoted table. Re-measured against a real single-origin process serving a built `frontend/dist`:
+the wire bytes now land within a couple hundred bytes of the `gzip -9` figure they were always compared
+against (see `frontend/README.md`'s KAN-963 paragraph for the numbers). `backend/` is not one of the
+three shipped packages `scripts/check-version-bump.sh` tracks, so this needed no version bump.
+
 `make measure-auth` is a measurement rather than a gate, and the only target that reads a
 credential: it takes the PAT from `KAYA_MEASURE_PAT` or `~/.config/pandan/config.toml`, never prints
 it, and exits 0 having done nothing when there is none, so CI never needs a secret.

@@ -11,6 +11,7 @@ stand up the real surface without the real settings.
 
 from fastapi import FastAPI
 from pydantic import BaseModel
+from starlette.middleware.gzip import GZipMiddleware
 
 from app import __version__
 from app.api import install_error_handlers, links_router, meta_router
@@ -26,7 +27,32 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
-# First, so that anything the rest of this module's import does — and everything uvicorn logs
+# KAN-963. Every bundle figure this project has ever quoted (ADR 0001 §2's obligation, and every
+# table in frontend/README.md) is a `gzip -9` figure — the honest number *a compressing edge would
+# deliver*. Per ADR 0010's amendment, `make up` is the only origin that exists, and it had no
+# compressing edge in front of it: `mount_spa`'s `FileResponse`s went out raw, so a real request
+# against the one real deployment shape paid roughly 3x every quoted table. Middleware, not an edge,
+# because there is no edge (ADR 0010, KAN-722) and this is one line closing a real gap rather than
+# infrastructure built for a deploy shape that does not exist. Registered outermost — before
+# `install_observability` — so the access log's `bytes` field is what the compressed response
+# actually put on the wire, not the pre-compression body GZipMiddleware started from.
+#
+# Starlette's `GZipMiddleware` explicitly does not touch an `http.response.pathsend` message (see
+# its source: "Don't apply GZip to pathsend responses"), which is how a server offering that ASGI
+# extension could silently exempt every `FileResponse` — every static asset `app/spa.py` serves —
+# from this middleware while every JSON response still compressed. Checked rather than assumed:
+# uvicorn 0.52 (this project's ASGI server) implements no such extension, so it never appears in
+# `scope["extensions"]` and `FileResponse` always falls through to plain chunked
+# `http.response.body` messages, which this middleware compresses like anything else — confirmed by
+# re-measuring against a real built SPA (see the PR). Re-check this comment if the ASGI server ever
+# changes.
+#
+# `minimum_size` is Starlette's own default (500 bytes) — small enough that a real note body clears
+# it and a JSON `{"status":"ok"}` from `/health` does not, so the liveness probe pays no gzip
+# overhead for a saving that could never be positive on its own.
+app.add_middleware(GZipMiddleware)
+
+# So that anything the rest of this module's import does — and everything uvicorn logs
 # while starting up — is already going to one stdout handler in one shape. It also puts the
 # request-log middleware *outside* the exception handlers, which is what lets the access line
 # record the status a refusal was finally answered with rather than the exception it began as.
