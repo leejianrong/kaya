@@ -137,6 +137,38 @@ async function ready(): Promise<void> {
 }
 
 describe('a click on a note stays put when the editor is dirty and the answer is no', () => {
+  it('leaves the typed text on screen — the one fact this whole card is about', async () => {
+    // Isolated from the mechanics below on purpose: this is the single assertion that fails by
+    // *naming the lost text* rather than a route or a call count if the guard silently stopped being
+    // consulted (KAN-969's mutation drill — see the card's "prove a guard by watching it fail").
+    // `documentText()` reads the same `.cm-content` a person would be looking at, not an internal flag.
+    renderApp()
+    await ready()
+    await typeIntoOpenEditor('MARKER-TEXT-1a2b3c')
+    vi.spyOn(globalThis, 'confirm').mockReturnValue(false)
+
+    click(`/notes/${OTHER.ref}`)
+
+    // A short, bounded wait for the *other* note's content to arrive, so this proves something even
+    // if the guard silently vanished: without a guard, the click really does navigate and the note
+    // fetch really does resolve, replacing the document a moment later. A guard that holds means this
+    // never happens and the wait below times out harmlessly — `catch` treats that the same as "nothing
+    // to wait for", which is the correct, fast path on every ordinary (green) run of this suite.
+    try {
+      await vi.waitFor(
+        () => {
+          flushSync()
+          expect(documentText()).toContain('Architecture')
+        },
+        { timeout: 150 },
+      )
+    } catch {
+      // No navigation happened, which is what a held guard looks like.
+    }
+
+    expect(documentText()).toContain('MARKER-TEXT-1a2b3c')
+  })
+
   it('refuses through the sidebar’s flat list', async () => {
     renderApp()
     await ready()
