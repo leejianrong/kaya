@@ -402,11 +402,23 @@ comes from `EditorPane`'s `ondocument` seam, so waiting for a second chunk costs
 going to paint. There is still **no `modulepreload`** in `dist/index.html` — checked, because Vite emits
 one for statically imported chunks and that would make the whole split invisible at the network layer.
 
-One honest note about the numbers above: **kaya's own origin serves these assets uncompressed** — the
-entry chunk arrives as 67,970 B on the wire against 67,618 B on disk, i.e. the bytes plus headers. The
-`gzip -9` column is therefore what a compressing edge would deliver rather than what `make up` does
-today, which is the same convention every table on this page uses. `vite build` prints gzip at a lower
-level than `gzip -9`, so it says `25.69 kB` where `gzip -9` says `25,385 B`.
+One honest note about the numbers above, **updated by KAN-963**: at the time this paragraph was first
+written, kaya's own origin served these assets uncompressed — the entry chunk arrived as 67,970 B on
+the wire against 67,618 B on disk, and the `gzip -9` column was what a *compressing edge* would
+deliver rather than what `make up` did. That gap was roughly 3x on every table on this page, and
+KAN-963 closed it the cheap way: `backend/app/main.py` now wraps the app in Starlette's
+`GZipMiddleware` (default 500-byte threshold, `compresslevel=9`, so `/health`'s tiny JSON is left
+alone and a note body or a static asset is not), because there is no compressing edge in front of
+`make up` and ADR 0010/KAN-722 is not building one soon. Re-measured against a real single-origin
+`uv run uvicorn` process serving this build with `KAYA_SPA_DIST`: the entry chunk arrives as
+**26,542 B on the wire** with `Content-Encoding: gzip`, against `gzip -9`'s 26,495 B on disk — a 47 B
+difference (0.2%) from streaming the compression in chunks rather than over the whole file at once.
+The `gzip -9` column is therefore, as of this measurement, **within a couple hundred bytes of what
+`make up` actually sends** rather than merely what an edge would — checked, not assumed: uvicorn
+implements no `http.response.pathsend` ASGI extension, so the static `FileResponse`s `app/spa.py`
+serves go through GZipMiddleware exactly like a JSON body would. `vite build` prints gzip at a lower
+level than `gzip -9`, so it says `25.69 kB` where `gzip -9` says `25,385 B` (an older build; see the
+KAN-567 table above for the current entry chunk's numbers).
 
 The guard is `tests/preview-chunk-is-lazy.test.ts`, and it is `tests/editor-chunk-is-lazy.test.ts`'s
 twin because the regression is the same silent one: `lib/markdown.ts` is the only file under `src/` that
