@@ -3,6 +3,18 @@
 # (pandan ADR 0018 §Package-name reality). That constrains the distribution name only. The console
 # script is `kaya`, and there is exactly one of them (Q39).
 name = "kaya-notes"
+# 0.13.0 — KAN-839 adds `422` → exit `2` (`EXIT_USAGE`) to `EXIT_FOR_STATUS`. Behavioural: a
+# malformed `--if-updated-at` (`kaya note edit … --if-updated-at nope`) and every other request
+# body a `NoteCreate`/`NoteUpdate` schema refuses used to exit `1` and now exits `2`, so a script
+# branching on the number sees a different answer for the same event. An *addition*, not a
+# renumber — `0/1/2/3/4/5/6` are where ADR 0005 §contract 4 already put them — and the cheapest of
+# the three additions to this table so far, because reusing `EXIT_USAGE` needs no new constant and
+# no widened published-range literal. KAN-724's amendment had left `422` at the unmapped `1` on the
+# theory that its `code` string already named the action better than a number could; ADR 0005's
+# 2026-08-23 amendment corrects that once grepping `backend/` showed `422` has exactly one source
+# — `app/api/errors.py::handle_validation_error`, wired only to a request body failing schema
+# validation — which makes it the same *kind* of caller mistake `400` already is, not the kind
+# `409` is. `invalid_request` is not in `EXIT_FOR_CODE`, for the reason `invalid_note_ref` isn't.
 # 0.11.0 — KAN-559 adds `--q` to `note list` alone (not to `output_flags()`'s shared parent, since
 # it names a request parameter and not an output-shaping flag every verb inherits). Argv reaches
 # `KayaClient.list_notes(args.q)` untouched — `None` when the flag is absent, forwarded verbatim
@@ -62,7 +74,7 @@ name = "kaya-notes"
 # 0.2.0 — KAN-543 gives the CLI argument parsing and ADR 0007's build-stamped `--version`. A
 # behavioural change to a shipped package bumps it in the same PR (ADR 0007 §3, CLAUDE.md
 # §Conventions §Versioning).
-version = "0.12.0"
+version = "0.13.0"
 description = "kaya — the notes CLI"
 readme = "README.md"
 license = "Apache-2.0"

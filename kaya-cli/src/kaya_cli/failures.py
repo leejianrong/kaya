@@ -38,8 +38,8 @@ which cannot go stale. The code table then covers everything that never had a st
 unreachable API, a format nobody registered.
 
 Anything unrecognised is exit `1`. Not `2`: a failure this table has no row for is not evidence that
-argv was wrong, and reporting "usage" for an unmapped `422` would send a caller to re-read the
-manual over a server-side refusal.
+argv was wrong, and reporting "usage" for an unmapped `503` would send a caller to re-read the
+manual over a server-side refusal it had no part in.
 
 ### Why `400` is a *row* rather than an exception to that rule (KAN-718)
 
@@ -74,8 +74,41 @@ parsing stdout at all.
 It is a row in ``EXIT_FOR_STATUS`` and **not** in ``EXIT_FOR_CODE``, for the reason `400` is:
 ``note_conflict`` is today's only `409` code and the backend's vocabulary grows without this
 package's knowledge, so the next one must exit `6` without anybody remembering to add it. The
-default for everything else — `422`, `503`, whatever arrives next — is still `1`, and adding a row
-is still the only way out of it.
+default for everything else — `503`, whatever arrives next — is still `1`, and adding a row is
+still the only way out of it.
+
+### Why `422` joined `400` under `2`, on the same reasoning rather than as an exception (KAN-839)
+
+KAN-724's amendment said `422` "deliberately did **not** get a row" here, on the argument that "a
+body the API validated and rejected has no action a number could name that its `code` does not
+already name better" — the same defence `1` had for `409`, and the wrong one, once checked. KAN-839
+grepped `backend/` for every place a `422` can originate and found exactly one:
+`app/api/errors.py`'s ``handle_validation_error``, wired to `RequestValidationError` and nothing
+else. That handler fires only when a caller's body fails `NoteCreate`'s or `NoteUpdate`'s pydantic
+schema — a `title` outside `1..255` chars, a `path` over `1024`, a naive or malformed
+``if_updated_at``, an extra key `extra="forbid"` refuses, or a literal ``null`` on a field
+`NoteUpdate._reject_explicit_nulls` won't take. There is no second source: no route in `app/api/`
+raises `HTTPException(422, …)` by hand, and `search_term`'s `q` is an unconstrained `str | None`
+that Pydantic can never reject. So kaya's `422` is monosemous in a way its `400` mostly is too: it
+is *always* the schema refusing the bytes the caller sent, never a semantic or business-logic
+refusal borrowing the status.
+
+That makes `422` the same *kind* of event `400` already is, for the identical reason KAN-718 gave —
+the request can never succeed unmodified, however many times it is retried, and `1` tells a script
+"kaya failed" about a mistake that is entirely the caller's to fix. `code_for_status`'s output is
+not the answer any more than it was for `400`, `401`, `403` or `404`: those are equally derivable
+from the code string and have rows anyway, because the table exists so a shell can branch on ``$?``
+alone. `409` is genuinely different in kind — the precondition was correct when it was read, so
+sending its caller back to their own command line would be wrong in the opposite direction — and
+that is the distinction the `422` amendment collapsed by lumping the two together as "no shipped
+number moved" without checking which one actually had nowhere else to go.
+
+`422 → EXIT_USAGE` is a row in ``EXIT_FOR_STATUS`` and **not** in ``EXIT_FOR_CODE``, for the same
+reason `400` is: `invalid_request` is the only code `handle_validation_error` emits today, and the
+next validation failure must exit `2` without anybody remembering to add it. It reuses `2` rather
+than bringing a new number, which is what makes it cheaper than KAN-724's `409`: no constant, no
+widened published-range literal, only the mapping. The default for everything else — `503`,
+whatever arrives next — is still `1`.
 """
 
 import sys
@@ -92,10 +125,12 @@ EXIT_RUNTIME = 1
 """Something failed and no more specific meaning applies — the unreachable API, an unmapped code."""
 
 EXIT_USAGE = 2
-"""The caller's input was rejected — by argparse, or by the API (`400`). Argparse's own number,
-which is why it is `2` and not something tidier. KAN-718 widened the *meaning* without moving the
-number: a malformed ref is the caller's error wherever it is caught, and which layer noticed is not
-a fact a script should have to branch on."""
+"""The caller's input was rejected — by argparse, or by the API (`400`, and since KAN-839 `422`).
+Argparse's own number, which is why it is `2` and not something tidier. KAN-718 widened the
+*meaning* without moving the number: a malformed ref is the caller's error wherever it is caught,
+and which layer noticed is not a fact a script should have to branch on. KAN-839 widened it again
+for `422`, once grepping `backend/` showed it has exactly one source — schema validation of a
+request body — and is therefore the caller's mistake in the same way `400` is."""
 
 EXIT_UNAUTHENTICATED = 3
 """`401`. The credential is missing, malformed or rejected — re-authenticating may usefully help."""
@@ -143,6 +178,7 @@ EXIT_FOR_STATUS: Mapping[int, int] = MappingProxyType(
         403: EXIT_FORBIDDEN,
         404: EXIT_NOT_FOUND,
         409: EXIT_CONFLICT,
+        422: EXIT_USAGE,
     }
 )
 """ADR 0005's status-keyed meanings. Consulted before ``EXIT_FOR_CODE`` for an ``ApiError``, for the
@@ -158,6 +194,13 @@ not what ADR 0005 warned against, because there was no existing number for "the 
 you". Mapping it onto one there was would have been the change that broke the sameness. Pandan's
 matching change is tracked as KAN-831 on its board 5; until it lands, a `409` from pandan's CLI is
 still its own unmapped `1`.
+
+``422`` is KAN-839's addition and reuses ``EXIT_USAGE`` exactly as `400` does, once
+`app/api/errors.py::handle_validation_error` turned out to be the *only* place a `422` originates —
+a caller's request body failing `NoteCreate`'s or `NoteUpdate`'s schema, never a semantic refusal.
+KAN-724's amendment had kept `422` at the unmapped default on the theory that its `code` string
+already named the action better than a number could; that argument proves too much, the same way it
+did for `400` and `409` before it, and this row and ADR 0005's amendment below correct it.
 """
 
 

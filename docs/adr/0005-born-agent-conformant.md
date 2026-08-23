@@ -41,7 +41,7 @@ is half a contract.
 | 1 | `--format {human,json,toon}` over **one** serializer in `kaya-client` (ADR 0004), so formats cannot drift | `--json` is a documented alias for `--format json`; `--format` wins if both are given |
 | 2 | `--fields a,b,c` selects named columns on every list verb; vocabulary derived from the payload's own keys; an unknown name is a clean error naming it | **Omitting** it leaves structured output complete; supplying it narrows every format alike, which under `human` is the widening this row used to describe. Wording corrected by the 2026-08-09 (KAN-546) amendment below. A usage error on single-entity verbs, never a silent no-op |
 | 3 | Errors **structured on stdout**: `error<TAB><code><TAB><message><TAB><arg>`, or an `{"error": {...}}` object under a structured format, with all keys always present | Human `usage:` text still goes to stderr |
-| 4 | Exit codes: `0` ok · `1` runtime · `2` usage — the caller's input was rejected, by argparse or by the API (`400`) · `3` 401 · `4` 403 · `5` 404 · `6` 409 — the guarded write was refused because the note moved | **Pandan's scheme through `5`, adopted verbatim.** Branch on the stable `code` string, never on message text. `2`'s wording widened by the 2026-08-09 (KAN-718) amendment below; `6` added by the 2026-08-12 (KAN-724) one, and pandan's matching row is tracked as its KAN-831. No number moved for either |
+| 4 | Exit codes: `0` ok · `1` runtime · `2` usage — the caller's input was rejected, by argparse or by the API (`400`, `422`) · `3` 401 · `4` 403 · `5` 404 · `6` 409 — the guarded write was refused because the note moved | **Pandan's scheme through `5`, adopted verbatim.** Branch on the stable `code` string, never on message text. `2`'s wording widened by the 2026-08-09 (KAN-718) amendment and the 2026-08-23 (KAN-839) one below; `6` added by the 2026-08-12 (KAN-724) one, and pandan's matching row is tracked as its KAN-831. No number moved for any of the three |
 | 5 | A pre-computed `summary` on every list verb, describing **the returned set** — under a filter or `--limit`, the returned set, not the whole corpus | A trailing line for humans, a `summary` object for structured consumers, both from the same dict. **What is in it** was left open here and settled by the 2026-08-09 (KAN-548) amendment below: one key, `count`. A single entity gets none |
 | 6 | Text truncated by default with a **true** total and `--full` to opt out; an allow-list of prose fields, never "any long string" | A truncated value stays a string: no key added, removed or retyped. **Where** the total is written was left open here, and settled by the 2026-08-09 (KAN-547) amendment below: in-band, inside the string, so it reaches the structured formats too. The multi-byte guarantee is code points |
 | 7 | Bare `kaya` prints live state and exits `0`; `--help` still prints usage | No token → a structured auth error, not a stack trace. **How much** state was left open here, and settled by the 2026-08-09 (KAN-549) amendment below: the five most recent notes, sliced in `kaya-client` |
@@ -482,3 +482,82 @@ to `api_error → EXIT_ERROR = 1`, the same unmapped default kaya had. So the di
 the matching change is filed as **KAN-831 on pandan's board 5**. It is temporary and tracked rather
 than an oversight, and it is the safe direction to diverge in: a `6` an operator has not met yet is a
 number they look up, whereas a `409` reported as `1` is a number they act on wrongly.
+
+## Amendment (2026-08-23, KAN-839): `422` joins `400` under `2`, because it turned out to be the same event
+
+The KAN-724 amendment above asserted, without checking, that `422` belonged at the unmapped default
+alongside a genuine server error: *"a body the API validated and rejected has no action a number
+could name that its `code` does not already name better."* That is the same defence exit `1` had for
+`400` before KAN-718 and for `409` before KAN-724 — "the code string already says it" — and it was
+wrong for the same reason it was wrong both those times, once actually checked against what a `422`
+is in this codebase rather than against what it might be. Observed against a real backend, the
+sighting that reopened the question:
+
+```
+kaya note edit NOTE-11 --body x --if-updated-at nope
+  -> exit 1, error<TAB>invalid_request<TAB>if_updated_at: Input should be a valid datetime or
+     date, input is too short<TAB>if_updated_at
+```
+
+**The pivotal fact, established before deciding rather than assumed.** KAN-839 grepped `backend/`
+for every place a `422` can originate. There is exactly one: `app/api/errors.py`'s
+`handle_validation_error`, registered only for FastAPI's `RequestValidationError` — never a raise
+site's own `HTTPException(422, …)`, of which there are none anywhere in `backend/`. That handler
+fires when a request body fails `NoteCreate`'s or `NoteUpdate`'s pydantic schema: `title` outside
+`1..255` characters, `path` over `1024`, an `if_updated_at` that is not a parseable, timezone-aware
+datetime, an extra key `extra="forbid"` refuses, or a literal `null` on a field
+`NoteUpdate._reject_explicit_nulls` will not accept. The one query parameter in the API with any
+constraint on it — `search_term`'s `q` — is typed `str | None` with no `Field` limits, so it can
+never fail Pydantic and raise one. **Kaya's `422` is not a bucket a future semantic refusal might
+also use; it is monosemous, and every member of that one meaning is a malformed request body.**
+
+**Why that settles it in `400`'s direction and not `409`'s.** KAN-718's argument for `400` was that
+the request can never succeed unmodified, however many times it is retried, and that exit `1` tells
+a script "kaya failed" about a mistake that is entirely the caller's own to fix. Every one of the
+five shapes `handle_validation_error` answers is exactly that: nothing about resending the identical
+bytes ever turns a too-short `if_updated_at` into a valid one. `409` is the opposite case — the
+precondition was *correct when it was read*, and re-reading and retrying is the correct action — and
+that is precisely why `409` needed a number `1` and `2` both lacked, rather than joining either.
+`422` has no such gap: it is the caller's input being rejected, the same way `400` already is, so it
+belongs beside it rather than beside `409`.
+
+**Why `code_for_status` is not the counter-argument here any more than it was for `400`.** The
+KAN-724 amendment's own words apply against itself: "that the code string is on stdout is not the
+answer... `401`, `403` and `404` are equally derivable from it and have numbers anyway." `422`'s
+`invalid_request` and `400`'s `invalid_note_ref` are exactly as derivable from `code` as those three
+were, and the table exists precisely so a shell can branch on `$?` without parsing stdout at all. A
+script that reads `1` on a malformed `--if-updated-at` has to treat that as "kaya failed" and either
+abandons a request it typed wrong on its own or retries it forever — both wrong, for the same reason
+they were wrong for `#NOTE-12`.
+
+**What changed.** `422 → 2` is a row added to `EXIT_FOR_STATUS` in `kaya-cli/src/kaya_cli/failures.py`,
+reusing `EXIT_USAGE`. Every half of the rule survives, and this is the cheapest of the three additions
+so far — reusing a number needs no new constant and no widened published-range literal, only the
+mapping itself:
+
+- **It is an addition, not a renumber.** `0/1/2/3/4/5/6` mean exactly what they meant after KAN-724.
+  `tests/test_exit_codes.py` pins each shipped row by literal value and both tables as *supersets*,
+  so this reddens nothing that did not change and reddens exactly a wrong mapping if one is
+  introduced — proven below by mutation.
+- **The refusal is keyed on its status, not on the code string.** `invalid_request` is deliberately
+  *not* a row in `EXIT_FOR_CODE`, for the reason `invalid_note_ref` and `note_conflict` aren't: the
+  backend's code vocabulary grows without this package's knowledge, and the next validation failure
+  must exit `2` without anybody remembering to add it.
+- **`422` is removed from `test_a_refusal_with_no_row_is_runtime_not_usage`'s parametrisation**,
+  which is the other half of this diff: a status that has acquired a row cannot also be pinned as an
+  example of one that hasn't, and leaving it in would make that test self-contradicting the moment
+  the row landed. `500` and `503` — genuine server-side failures with no designed meaning for a CLI
+  to react to — remain, and are the ones now doing the job the parametrisation actually names.
+- **Not a new number.** Unlike `409`, `422` reuses `2` rather than inventing a seventh: it is the
+  caller's input being rejected, which already had a number, so minting a new one here would be
+  exactly the mistake this ADR's very first amendment warned against — reusing a meaning that already
+  had a number is required, not merely permitted, once the meaning is confirmed to be the same one.
+
+**Why this does not reopen `409`, or invite `500`/`503` to ask for the same treatment.** The test that
+separates them is the one this amendment just ran: grep the actual source and ask whether the request
+could ever succeed by being resent unmodified. `409`'s answer is yes — the write can succeed after a
+re-read, which is why it earned its own number rather than joining `2`. A `500` or `503` is kaya (or
+its upstream) failing in a way the caller's argv had nothing to do with, so `1` — "something failed
+and no more specific meaning applies" — is exactly right for both, and neither gets a row by this
+amendment or by the reasoning in it. `422` is the only status in kaya's table where the check comes
+back "yes, definitionally, every time," because there turned out to be only one source to check.

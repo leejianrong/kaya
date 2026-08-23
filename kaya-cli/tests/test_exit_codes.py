@@ -149,20 +149,23 @@ def test_the_four_status_rows_map_to_their_documented_numbers() -> None:
 
     `400` is KAN-718's row and is `2`, the number argparse already owns. Adding it moved nothing:
     the three rows below it are the same numbers this test asserted the day it was written, which is
-    the add-only rule visible as a diff — one line added, none edited.
+    the add-only rule visible as a diff — one line added, none edited. `422` is KAN-839's row and
+    reuses the same `2`, on the same argument as `400`'s.
     """
     assert EXIT_FOR_STATUS[400] == 2
     assert EXIT_FOR_STATUS[401] == 3
     assert EXIT_FOR_STATUS[403] == 4
     assert EXIT_FOR_STATUS[404] == 5
     assert EXIT_FOR_STATUS[409] == 6
+    assert EXIT_FOR_STATUS[422] == 2
 
 
 def test_the_status_table_is_add_only_too() -> None:
     """A superset, for the same reason ``EXIT_FOR_CODE``'s is one: KAN-718 adds a row and reddens
-    nothing, while moving `404` off `5` reddens exactly the row that moved. KAN-724's `409` is in
-    the literal below now, so it is pinned as tightly as the four rows above it."""
-    assert {400: 2, 401: 3, 403: 4, 404: 5, 409: 6}.items() <= dict(EXIT_FOR_STATUS).items()
+    nothing, while moving `404` off `5` reddens exactly the row that moved. KAN-724's `409` and
+    KAN-839's `422` are both in the literal below now, so each is pinned as tightly as the rows
+    before it."""
+    assert {400: 2, 401: 3, 403: 4, 404: 5, 409: 6, 422: 2}.items() <= dict(EXIT_FOR_STATUS).items()
 
 
 @pytest.mark.parametrize(
@@ -177,6 +180,8 @@ def test_the_status_table_is_add_only_too() -> None:
         (404, "not_found", 5),
         (409, "note_conflict", 6),
         (409, "a_409_code_this_package_has_never_heard_of", 6),
+        (422, "invalid_request", 2),
+        (422, "a_422_code_this_package_has_never_heard_of", 2),
     ],
 )
 def test_a_refusal_is_keyed_on_its_status_not_on_the_apis_code_string(
@@ -190,18 +195,20 @@ def test_a_refusal_is_keyed_on_its_status_not_on_the_apis_code_string(
     assert exit_code_for(failure) == expected
 
 
-@pytest.mark.parametrize("status", [422, 500, 503])
+@pytest.mark.parametrize("status", [500, 503])
 def test_a_refusal_with_no_row_is_runtime_not_usage(status: int) -> None:
     """`1`, not `2`. A failure the table has no row for is not evidence that argv was wrong, and
-    reporting "usage" for a server-side `422` sends a caller to re-read the manual over a refusal
+    reporting "usage" for a server-side `503` sends a caller to re-read the manual over a refusal
     that had nothing to do with what they typed.
 
     `400` used to be in this list and is now a row of its own (KAN-718); `409` left it the same way
-    with KAN-724. The rule they were proving is untouched: the default is still `1`, and both left
-    by *acquiring a meaning*, not by the default being widened to cover statuses nobody decided
-    about. `422` in particular stays here on purpose — a body the API validated and rejected has no
-    action a number could name that its code string does not already, which is the test `409` passed
-    and it does not.
+    with KAN-724; `422` left it the same way with KAN-839. The rule they were proving is untouched:
+    the default is still `1`, and all three left by *acquiring a meaning*, not by the default being
+    widened to cover statuses nobody decided about. `422` no longer stays here: KAN-724's docstring
+    argued it needed no number because its `code` string already named the action better than one
+    could, but that argument was never checked against what actually raises a `422` in `backend/` —
+    KAN-839 did, found `handle_validation_error` is the only source, and moved it to `EXIT_USAGE`
+    alongside `400` for the identical reason. See `kaya_cli.failures` for the full argument.
     """
     failure = ApiError(status, {"error": {"code": "something_new", "message": "no"}})
 
@@ -230,6 +237,31 @@ def test_a_malformed_ref_is_the_callers_error_not_a_runtime_failure() -> None:
     assert exit_code_for(failure) == 2
 
 
+def test_a_malformed_precondition_is_the_callers_error_not_a_runtime_failure() -> None:
+    """KAN-839, with the exact body `backend/app/api/errors.py::handle_validation_error` builds for
+    the card's own reproduction — ``kaya note edit NOTE-11 --body x --if-updated-at nope``.
+
+    `422` here is schema validation and nothing else: ``if_updated_at`` failed to parse as an
+    aware datetime, which is a typo in argv exactly as `#NOTE-12` is, and is exactly as
+    unretryable without editing the command. `arg` carries the field name (`_implied_arg` reads
+    it off `field`), so a caller reading the row learns what was rejected without a second
+    request — the same shape `refs.py`'s `ref` extra gives `400`.
+    """
+    failure = ApiError(
+        422,
+        {
+            "error": {
+                "code": "invalid_request",
+                "message": "if_updated_at: Input should be a valid datetime or date, input is "
+                "too short",
+                "field": "if_updated_at",
+            }
+        },
+    )
+
+    assert exit_code_for(failure) == 2
+
+
 # ------------------------------------------------------- meaning → number, end to end
 
 
@@ -245,6 +277,7 @@ def test_a_malformed_ref_is_the_callers_error_not_a_runtime_failure() -> None:
         (ApiError(403, {"error": {"code": "note_forbidden", "message": "no"}}), 4),
         (ApiError(404, {"error": {"code": "note_not_found", "message": "no"}}), 5),
         (ApiError(409, {"error": {"code": "note_conflict", "message": "no"}}), 6),
+        (ApiError(422, {"error": {"code": "invalid_request", "message": "no"}}), 2),
     ],
 )
 def test_each_failure_class_reaches_its_number(failure: BaseException, expected: int) -> None:
