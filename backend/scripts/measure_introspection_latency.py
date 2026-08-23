@@ -18,6 +18,11 @@ Three phases, in the order the experiment requires:
    sample *if and only if* pandan was genuinely idle beforehand, and the script cannot verify that
    for you — see `--last-contact`. Fly stops a `min_machines_running = 0` machine after roughly
    five minutes without traffic, so a cold sample has to be earned by waiting, not by asking.
+   **KAN-717 found that "waiting" is not sufficient on its own**: pandan's own repo runs a scheduled
+   `.github/workflows/keepalive.yml` (KAN-27/KAN-45) that pings `/api/health` on its own cron,
+   independent of anything kaya-side, and that ping resets the same idle clock this script is
+   trying to let expire. Confirming a genuinely cold sample now means checking that workflow's
+   most recent run time first, not just waiting out a fixed number of minutes.
 2. **Warm miss.** The cache is cleared and `resolve()` re-run, N times. Pandan is awake by now, so
    this is one round trip plus the just-in-time mirror write, and the two are timed separately —
    knowing the split is what says whether the mitigation is the cache or something else.
