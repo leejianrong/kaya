@@ -286,6 +286,135 @@ describe('the zero state', () => {
   })
 })
 
+describe('KAN-969: the dirty seam and beforeunload', () => {
+  /** Mount with `ondirty` wired to a spy, so a test can read every value the pane ever published. */
+  async function openWithDirtySpy(initial: Note | null): Promise<{
+    opened: Box<Note | null>
+    container: HTMLElement
+    dirtyValues: boolean[]
+  }> {
+    const opened = box<Note | null>(initial)
+    const dirtyValues: boolean[] = []
+    mounted.push(
+      mount(EditorPane, {
+        target: host,
+        props: {
+          get note() {
+            return opened.value
+          },
+          error: null,
+          ondirty: (value: boolean) => dirtyValues.push(value),
+        },
+      }),
+    )
+    flushSync()
+    await editorArrived(host)
+    return { opened, container: host.querySelector('.editor-host')!, dirtyValues }
+  }
+
+  it('reports clean on mount and dirty on the first keystroke', async () => {
+    const { container, dirtyValues } = await openWithDirtySpy(note())
+    // The initial mount already published one value (see the mount effect: `dirty = false`, which
+    // this seam's own effect turns into one call), so the interesting read starts from there.
+    expect(dirtyValues.at(-1)).toBe(false)
+
+    type(editor(container), 'X')
+
+    expect(dirtyValues.at(-1)).toBe(true)
+  })
+
+  it('reports clean again once a save with no failure resolves', async () => {
+    stubFetch(200, note({ body: '# Week of 2026-08-03\nX', updated_at: SAVED_AT }))
+    const { container, dirtyValues } = await openWithDirtySpy(note())
+
+    type(editor(container), 'X')
+    expect(dirtyValues.at(-1)).toBe(true)
+
+    host.querySelector('button')!.click()
+    await settled()
+    await vi.waitFor(() => expect(dirtyValues.at(-1)).toBe(false))
+  })
+
+  it('reports clean on a remount — opening a different note without saving', async () => {
+    // This is the case the identity guard already handles; the seam only has to notice. It also
+    // means the parent's own "may I navigate" answer stops citing stale content the moment the
+    // remount actually happens, which is only reachable once a navigation was already allowed.
+    const { opened, container, dirtyValues } = await openWithDirtySpy(note())
+    type(editor(container), 'X')
+    expect(dirtyValues.at(-1)).toBe(true)
+
+    opened.value = note({ ref: 'NOTE-7', id: 7, title: 'Architecture', body: 'other\n' })
+    flushSync()
+
+    expect(dirtyValues.at(-1)).toBe(false)
+  })
+
+  it('never lets the mount effect read dirty back — a rebuild happens exactly once either way', async () => {
+    // The constraint from CLAUDE.md/the card: `ondirty` must not be a way for the mount effect to
+    // depend on its own output. `tests/document-seam.test.ts` proves this structurally (the callback
+    // is read only inside `untrack`); this is the behavioural half — if the wiring somehow *did*
+    // create a feedback loop, the identity guard would still refuse to remount for an unchanged ref,
+    // so the only observable symptom would be `destroy()` firing more than once for one ref change.
+    const destroy = vi.spyOn(EditorView.prototype, 'destroy')
+    const { opened, container } = await openWithDirtySpy(note())
+    type(editor(container), 'X')
+
+    opened.value = note({ ref: 'NOTE-7', id: 7, body: 'other\n' })
+    flushSync()
+
+    expect(destroy).toHaveBeenCalledTimes(1)
+  })
+
+  /** Fire a real `beforeunload` on `window` and report what the listener decided. */
+  function unload(): { defaultPrevented: boolean } {
+    const event = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(event)
+    return { defaultPrevented: event.defaultPrevented }
+  }
+
+  it('does not ask to stay when there is nothing unsaved', async () => {
+    await open(note())
+
+    expect(unload().defaultPrevented).toBe(false)
+  })
+
+  it('asks to stay while the editor is dirty', async () => {
+    const { container } = await open(note())
+    type(editor(container), 'X')
+
+    expect(unload().defaultPrevented).toBe(true)
+  })
+
+  it('stops asking once the edit is saved', async () => {
+    stubFetch(200, note({ body: '# Week of 2026-08-03\nX', updated_at: SAVED_AT }))
+    const { container } = await open(note())
+    type(editor(container), 'X')
+    expect(unload().defaultPrevented).toBe(true)
+
+    host.querySelector('button')!.click()
+    // `now at`, not merely "does not contain `unsaved`" — `saving…` does not contain it either, and
+    // waiting on that would assert nothing about whether the request actually finished (see the
+    // comment on the identically-shaped wait a few tests up).
+    await vi.waitFor(() =>
+      expect(host.querySelector('[data-testid="save-state"]')!.textContent).toContain('now at'),
+    )
+
+    expect(unload().defaultPrevented).toBe(false)
+  })
+
+  it('removes its own listener on unmount, so a destroyed pane cannot still ask', async () => {
+    const instance = mount(EditorPane, { target: host, props: { note: note(), error: null } })
+    await editorArrived(host)
+    type(editor(host.querySelector('.editor-host')!), 'X')
+    expect(unload().defaultPrevented).toBe(true)
+
+    unmount(instance)
+    flushSync()
+
+    expect(unload().defaultPrevented).toBe(false)
+  })
+})
+
 describe("saving, and ADR 0009's precondition", () => {
   it('PATCHes the body with the updated_at it read, to the microsecond', async () => {
     const calls = stubFetch(200, note({ body: '# Week of 2026-08-03\nX', updated_at: SAVED_AT }))

@@ -7,7 +7,13 @@
   import { ApiError } from './lib/api'
   import { clearToken, credentialState } from './lib/auth'
   import { getNote, listNotes } from './lib/notes'
-  import { currentRoute, interceptClick, onNavigate, type Route } from './lib/router'
+  import {
+    currentRoute,
+    interceptClick,
+    onNavigate,
+    setNavigationGuard,
+    type Route,
+  } from './lib/router'
   import type { Note } from './lib/types'
 
   /**
@@ -106,6 +112,62 @@
   function publishDocument(document: string): void {
     liveDocument = document
   }
+
+  /**
+   * Whether the open note's editor holds content the last save does not — `EditorPane`'s own
+   * `dirty`, republished through its `ondirty` seam (KAN-969).
+   *
+   * **Its own rune, deliberately not folded into `note`,** for the identical reason `liveDocument`
+   * above is not: `note` is the editor's *input*, and the only things that may ever assign it are the
+   * note fetch further down and `discard()`. Writing a per-keystroke-derived flag into it would put
+   * exactly the round trip through this file that `liveDocument`'s docstring already refuses, and for
+   * the same reason — it would give `EditorPane`'s own identity guard something to reason about that
+   * it must never see.
+   */
+  let editorDirty = $state(false)
+
+  function noteDirty(value: boolean): void {
+    editorDirty = value
+  }
+
+  /**
+   * The one thing {@link setNavigationGuard} asks before a same-tab navigation moves: is there
+   * unsaved editor content, and if so, does the person actually want to lose it.
+   *
+   * **A native `confirm()`, not a component.** Both would say the same one sentence — there is no
+   * diff to show here, unlike `ConflictBanner`'s two whole notes, so the comparison that justifies a
+   * bespoke component there does not carry over. Building one anyway would need a second piece of
+   * app-wide state (the "pending navigation" a custom dialog has to hold while it waits for a click),
+   * which is exactly what `router.ts`'s guard slot was designed to let this file avoid owning.
+   * `confirm()` is also **synchronous**, which is what lets `interceptClick`'s existing
+   * `preventDefault()`-then-`navigate()` shape stay exactly as it is: an async confirmation would have
+   * to hold that decision open across a promise, with nothing stopping a second click (or the back
+   * button) from landing while the first is still waiting on an answer.
+   *
+   * `globalThis.confirm` rather than a bare `confirm`, matching `router.ts`'s own convention for
+   * anything that might not exist in an environment running this code — and failing **open** (let the
+   * navigation through) rather than closed if it somehow is not there, the same direction
+   * `globalThis.history` and `globalThis.location` already fail in that file. A test environment with
+   * no `confirm` should not be a test environment that can never navigate.
+   */
+  function confirmNavigation(): boolean {
+    if (!editorDirty) {
+      return true
+    }
+    return globalThis.confirm?.('This note has unsaved changes. Leave without saving?') ?? true
+  }
+
+  /**
+   * Register the navigation guard for as long as this shell is mounted, and hand it back on the way
+   * out. `App.svelte` is mounted for the app's whole lifetime in practice, but a test mounts and
+   * unmounts many instances in one process, and `router.ts`'s guard slot is module-level state shared
+   * by all of them — leaving a previous instance's guard registered would have one test's `confirm()`
+   * answer a different test's click.
+   */
+  $effect(() => {
+    setNavigationGuard(confirmNavigation)
+    return () => setNavigationGuard(null)
+  })
 
   /**
    * Whether the backlinks rail is on the screen — which is exactly "a note route is open" (KAN-568).
@@ -294,6 +356,7 @@
             {note}
             error={failure === '' ? null : failure}
             ondocument={publishDocument}
+            ondirty={noteDirty}
           />
           {#if previewing}
             <PreviewPane {note} source={liveDocument} />
