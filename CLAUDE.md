@@ -926,6 +926,32 @@ is still safe, because it cannot be worse than the single deadline it replaces: 
 fail at 5 s where it used to fail at 10 s, and a fast one succeeds where it used to fail outright.
 If you ever do catch pandan genuinely cold, take a `--split-only` sample and settle it.
 
+**KAN-717 found the mechanism: pandan keeps itself warm, on a schedule kaya cannot see or affect.**
+KAN-666 left this as an open question — eight samples across 16, 17 and 7 min idle windows, with the
+kaya-side PM making zero board calls throughout, still all came back warm, and the only guess on
+record ("concurrent kaya PRs keep it awake") named no actual mechanism, because merging a kaya PR
+makes no request to pandan. The real one is in **pandan's own repo**, not kaya's:
+`.github/workflows/keepalive.yml` (KAN-27, hardened by KAN-45) is a scheduled GitHub Actions job,
+`cron: "*/5 * * * *"`, that polls pandan's `/api/health` specifically to stop Fly's
+`min_machines_running = 0` and Neon's free-tier scale-to-zero from ever being observed — it predates
+KAN-666 (merged 2026-07-09, a month before KAN-666's 2026-08-09 run) and was confirmed still `active`
+via `gh run list --repo leejianrong/pandan --workflow=keepalive.yml` on 2026-08-23, with every recent
+run `completed`/`success`. Two things temper how much this settles. First, GitHub's own documented
+behaviour for `schedule:` triggers is to delay runs under load, and the *actual* gap between
+consecutive successful runs measured this way is nowhere near 5 minutes — it ranges roughly
+**20–97 minutes** over the last several days, which is longer than several of KAN-666's own idle
+windows, so this one mechanism does not by itself *guarantee* a ping lands inside any given
+7–17-minute wait; it only has to have landed once, recently, before the sample was taken, and the
+run durations (6–8 s when already warm, 35–38 s when the poll loop needed a few 10 s retries to see
+a `200`) show it doing exactly that on an ordinary day. Second, this is necessarily circumstantial for
+KAN-666's *specific* 2026-08-09 window — GitHub does not retain per-run logs far enough back to prove
+a ping landed in that exact hour, only that the workflow already existed and was already running by
+then. What this does settle: **KAN-539's premise that a cold sample can be "earned by waiting" is not
+reliably true**, because pandan itself runs infrastructure whose entire job is to prevent the wait from
+working, on a cadence kaya has no visibility into and no control over. A future genuinely-cold
+`--split-only` sample needs `gh run list --repo leejianrong/pandan --workflow=keepalive.yml` checked
+alongside it, not just a clock.
+
 **A long read budget is only affordable because of `app/auth/single_flight.py`.** Sync
 `get_principal` runs in Starlette's 40-thread pool, so without coalescing, 40 concurrent requests on
 one uncached PAT hold 40 workers for the whole read budget and note *saving* stalls behind an
