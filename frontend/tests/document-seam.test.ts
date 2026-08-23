@@ -1,5 +1,5 @@
 /**
- * `EditorPane`'s `ondocument` seam, over the **parsed script** rather than over behaviour.
+ * `EditorPane`'s callback seams, over the **parsed script** rather than over behaviour.
  *
  * KAN-554 replaced a cross-component reach (`EditorView.findFromDOM` from inside the preview) with a
  * published callback prop, once KAN-556 released `EditorPane.svelte`. The prop is the better seam, and
@@ -14,6 +14,14 @@
  * with the same ref and an unchanged body does nothing observable, so a DOM test watching for a
  * remount or a moved caret stays green either way. `tests/preview.test.ts` asserts the harm is absent;
  * this asserts the mechanism is present.
+ *
+ * **KAN-969 added a second seam, `ondirty`, in the identical shape and for the identical reason** —
+ * `App.svelte` needs to know whether the editor is dirty in order to guard a same-tab navigation, and
+ * the read of that callback must not become a dependency of the mount effect any more than
+ * `ondocument`'s does. Rather than a second copy of this file, both seams are swept by the same loop
+ * below: the property under test ("this callback is read only inside `untrack`") is one property with
+ * two instances, and two copies of the sweep would be two instruments that could drift apart while both
+ * look green.
  *
  * Same technique and same reasoning as `tests/editor-container.test.ts` (the container has no template
  * children), `tests/no-html-injection.test.ts` (no markup sink in `src/`) and `kaya-cli`'s
@@ -32,8 +40,8 @@ import { describe, expect, it } from 'vitest'
 
 const COMPONENT = fileURLToPath(new URL('../src/components/EditorPane.svelte', import.meta.url))
 
-/** The seam's prop name, and the identifier every read below is looking for. */
-const SEAM = 'ondocument'
+/** The two seams swept below, each an identifier every read is looking for. */
+const SEAMS = ['ondocument', 'ondirty'] as const
 
 interface Node {
   type?: string
@@ -91,48 +99,52 @@ function inside(node: Node, spans: Range[]): boolean {
   return spans.some((span) => (node.start ?? -1) >= span.start && (node.end ?? -1) <= span.end)
 }
 
-describe("the editor's document seam cannot make its own effect a dependency", () => {
-  const nodes = script()
+for (const SEAM of SEAMS) {
+  describe(`the editor's ${SEAM} seam cannot make its own effect a dependency`, () => {
+    const nodes = script()
 
-  // `untrack(...)` calls, and the `$props()` declarator where the prop is *declared* rather than read.
-  const untracked = ranges(
-    nodes,
-    (node) => node.type === 'CallExpression' && node.callee?.name === 'untrack',
-  )
-  const declaration = ranges(
-    nodes,
-    (node) =>
-      node.type === 'VariableDeclarator' &&
-      node.init?.type === 'CallExpression' &&
-      node.init.callee?.name === '$props',
-  )
-  const mentions = nodes.filter((node) => node.type === 'Identifier' && node.name === SEAM)
+    // `untrack(...)` calls, and the `$props()` declarator where the prop is *declared* rather than
+    // read.
+    const untracked = ranges(
+      nodes,
+      (node) => node.type === 'CallExpression' && node.callee?.name === 'untrack',
+    )
+    const declaration = ranges(
+      nodes,
+      (node) =>
+        node.type === 'VariableDeclarator' &&
+        node.init?.type === 'CallExpression' &&
+        node.init.callee?.name === '$props',
+    )
+    const mentions = nodes.filter((node) => node.type === 'Identifier' && node.name === SEAM)
 
-  it('parses the component and finds the seam at all, so an empty sweep cannot pass', () => {
-    // The positive control, and it is the whole reason this file is trustworthy: without it, a rename
-    // of the prop or a parser returning nothing would make every assertion below vacuously true. The
-    // same mistake scoped a security probe to the wrong element on this card's review and reported a
-    // clean result while measuring nothing.
-    expect(untracked.length).toBeGreaterThan(0)
-    expect(declaration).toHaveLength(1)
-    expect(mentions.length).toBeGreaterThan(1)
+    it('parses the component and finds the seam at all, so an empty sweep cannot pass', () => {
+      // The positive control, and it is the whole reason this file is trustworthy: without it, a
+      // rename of the prop or a parser returning nothing would make every assertion below vacuously
+      // true. The same mistake scoped a security probe to the wrong element on this card's review and
+      // reported a clean result while measuring nothing.
+      expect(untracked.length).toBeGreaterThan(0)
+      expect(declaration).toHaveLength(1)
+      expect(mentions.length).toBeGreaterThan(1)
+    })
+
+    it('reads the callback only inside `untrack`', () => {
+      const offenders = mentions
+        .filter((node) => !inside(node, declaration) && !inside(node, untracked))
+        .map((node) => `${SEAM} at offset ${node.start}`)
+
+      // The failure names the offset, because "somewhere in EditorPane.svelte" is not actionable.
+      expect(offenders).toEqual([])
+    })
+
+    it('has at least one read that really is inside `untrack`', () => {
+      // Paired with the test above: together they say "every read is untracked **and** a read
+      // exists". Either one alone passes on a component that never reads the prop, which is a broken
+      // seam.
+      expect(mentions.filter((node) => inside(node, untracked))).not.toHaveLength(0)
+    })
   })
-
-  it('reads the callback only inside `untrack`', () => {
-    const offenders = mentions
-      .filter((node) => !inside(node, declaration) && !inside(node, untracked))
-      .map((node) => `${SEAM} at offset ${node.start}`)
-
-    // The failure names the offset, because "somewhere in EditorPane.svelte" is not actionable.
-    expect(offenders).toEqual([])
-  })
-
-  it('has at least one read that really is inside `untrack`', () => {
-    // Paired with the test above: together they say "every read is untracked **and** a read exists".
-    // Either one alone passes on a component that never reads the prop, which is a broken seam.
-    expect(mentions.filter((node) => inside(node, untracked))).not.toHaveLength(0)
-  })
-})
+}
 
 describe('the remount decision still cannot see the document', () => {
   it('`needsRemount` takes exactly three parameters and none of them is a body', async () => {

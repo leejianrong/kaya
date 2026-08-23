@@ -72,6 +72,37 @@ type Listener = (route: Route) => void
 const listeners = new Set<Listener>()
 
 /**
+ * A synchronous check consulted before every same-tab navigation this module drives, and the single
+ * choke point KAN-969 asks for.
+ *
+ * `interceptClick` already funnels every link surface in the app through {@link navigate} — the
+ * sidebar's flat list, its folder tree, and the backlinks rail all call it with the same two lines,
+ * and the topbar's own brand link is a fourth — so this is where all of them, and any future caller,
+ * get asked the same question once rather than being asked separately at each call site. Before this
+ * card, none of them asked at all: a click discarded whatever the editor held, silently.
+ *
+ * `null` — the default — means "nothing to ask", which is the state before whatever registers a
+ * guard has mounted, and the state again once it unmounts. There is a single slot rather than a set
+ * of listeners like {@link onNavigate}'s: kaya has exactly one thing in the whole SPA that can be
+ * unsaved right now (the open note's editor), and two independent guards firing in sequence for one
+ * click would be a worse experience than either alone, not a more careful one.
+ *
+ * This module stays reactivity-free on purpose (see the file header), and the guard is how that
+ * survives having to ask a person something: `navigate` only decides *whether* to consult it, never
+ * *how* it decides or what it shows. Today's registered guard (`App.svelte`) answers with a native
+ * `confirm()`; a future one could answer with something else entirely, and this file would not
+ * change either way.
+ */
+type NavigationGuard = () => boolean
+
+let guard: NavigationGuard | null = null
+
+/** Register the check {@link navigate} consults before it moves, or clear it with `null`. */
+export function setNavigationGuard(next: NavigationGuard | null): void {
+  guard = next
+}
+
+/**
  * Subscribe to route changes, and get an unsubscribe back.
  *
  * `popstate` covers the back button; {@link navigate} notifies directly, because `pushState` does
@@ -107,6 +138,13 @@ function announce(route: Route): void {
 export function navigate(path: string): void {
   const target = normalize(path)
   if (globalThis.location?.pathname === target) {
+    return
+  }
+  if (guard !== null && !guard()) {
+    // KAN-969: the registered guard vetoed this one (unsaved editor content, today). Neither the URL
+    // nor the route changes, so the caller — `interceptClick`, which has already called
+    // `preventDefault()` on the click that got here — is left exactly where it was, with whatever it
+    // was about to lose still in front of it.
     return
   }
   globalThis.history?.pushState({}, '', target)

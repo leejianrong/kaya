@@ -24,9 +24,28 @@
     note,
     error,
     ondocument,
+    ondirty,
   }: {
     note: Note | null
     error: string | null
+    /**
+     * **KAN-969's seam: whether the open note holds content the last save does not**, fired
+     * whenever {@link dirty} changes.
+     *
+     * Same shape as `ondocument` below and untracked for the identical reason: the parent
+     * (`App.svelte`) needs this to decide whether a same-tab navigation should ask before it
+     * discards anything, and reading the callback must not be able to make this component's mount
+     * effect depend on its own output. So it is read only inside `untrack`, from an effect that reads
+     * nothing but `dirty` itself — never from the mount effect, which already *writes* `dirty` on a
+     * remount but must never read it back.
+     *
+     * `dirty` is not new here — it already drives this pane's own "unsaved changes" status row. This
+     * prop only republishes a value the component already computed for its own template; it is
+     * deliberately not a second, independently-derived notion of "unsaved" in `App.svelte`, which is
+     * exactly the trap CLAUDE.md's "a structural guard does not cover a behavioural claim" section
+     * warns about — two definitions of the same fact drift the first time either side's changes.
+     */
+    ondirty?: (dirty: boolean) => void
     /**
      * **The document seam: what the editor is showing right now, whenever that changes.**
      *
@@ -63,6 +82,11 @@
    */
   function publish(document: string): void {
     untrack(() => ondocument)?.(document)
+  }
+
+  /** {@link publish}'s sibling for {@link ondirty} — see that prop's docstring. */
+  function publishDirty(value: boolean): void {
+    untrack(() => ondirty)?.(value)
   }
 
   /**
@@ -277,6 +301,21 @@
   })
 
   /**
+   * KAN-969: tell the parent whenever `dirty` changes.
+   *
+   * Its own effect, reading nothing else — not `note`, not `kit`, not `host` — so it cannot become a
+   * reason the mount effect below re-runs, and the mount effect cannot be mistaken for the place this
+   * belongs. `dirty` is read here **tracked**, which is the whole point: this is the one place that
+   * is supposed to re-run when it changes. `ondirty` itself is still read through `untrack`, inside
+   * {@link publishDirty} — the callback identity must not become a second dependency of this effect
+   * either, or a parent handing down a fresh closure every render would run it needlessly, exactly the
+   * concern `ondocument`'s docstring raises for the mount effect.
+   */
+  $effect(() => {
+    publishDirty(dirty)
+  })
+
+  /**
    * Mount CodeMirror once per note, and hand it every later document as a transaction.
    *
    * **Reading the `note` prop registers it as a dependency**, so this effect re-runs whenever the
@@ -351,12 +390,43 @@
   })
 
   /**
-   * The component's two once-per-lifetime jobs: **fetch the editor, and give it back.**
+   * KAN-969's second navigation surface: a tab close or a reload, which `lib/router.ts`'s guard
+   * cannot see at all — `beforeunload` fires once the browser has already decided to leave, on a
+   * page the SPA's own router never gets a say over. So this has to be asked directly, from the one
+   * event that exists to be asked.
+   *
+   * Reads `dirty` **at the moment the browser asks**, not through the reactive graph: a DOM event
+   * listener's callback runs outside any effect's synchronous pass, so reading a rune inside it
+   * registers no dependency and cannot retrigger anything. That is what makes it safe to attach this
+   * listener exactly once, in the effect below that already owns the component's other
+   * once-per-lifetime job, rather than adding and removing it every time `dirty` flips — the listener
+   * itself never has to change, only what it decides on the day it fires.
+   *
+   * No browser has shown a custom string in this dialog in years; `event.returnValue` is set to a
+   * non-empty value only because some engines still check for one before showing their own fixed
+   * prompt. The only thing `preventDefault()` buys is that native prompt appearing at all, and it is
+   * called **only** while `dirty` — an unconditional listener would turn every routine reload into a
+   * dialog, which is exactly how a warning trains someone to click through it without reading it.
+   */
+  function confirmBeforeUnload(event: BeforeUnloadEvent): void {
+    if (!dirty) {
+      return
+    }
+    event.preventDefault()
+    event.returnValue = ''
+  }
+
+  /**
+   * The component's three once-per-lifetime jobs: **fetch the editor, listen for the tab closing,
+   * and give both back.**
    *
    * Reads nothing, so it runs exactly once and its cleanup fires only when the component is
    * destroyed — which is what makes it safe to put `view.destroy()` in, and is also what makes it the
-   * right place for KAN-767's `import()`. One run means one load, which is the property the mount
-   * effect above leans on when it treats `kit` as a value that only ever arrives.
+   * right place for KAN-767's `import()` and KAN-969's `beforeunload` listener alike. One run means
+   * one load and one listener, which is the property the mount effect above leans on when it treats
+   * `kit` as a value that only ever arrives, and the property that stops this component from
+   * accumulating a second `beforeunload` handler every time it happens to re-run for an unrelated
+   * reason (it does not re-run at all, but the listener's lifetime should not depend on that).
    *
    * The two live together because they share `live`, which stops a component unmounted mid-flight from
    * coming back and assigning a rune afterwards. **Measured honesty about that flag:** deleting it does
@@ -372,6 +442,7 @@
    */
   $effect(() => {
     let live = true
+    globalThis.addEventListener?.('beforeunload', confirmBeforeUnload)
     // The one `import()` in this component, and the reason CodeMirror is a chunk rather than a third
     // of the entry bundle. A rejection is a real state — offline, or a deploy that replaced the asset
     // under an open tab — and an unexplained empty rectangle is a worse answer than a sentence.
@@ -389,6 +460,7 @@
     )
     return () => {
       live = false
+      globalThis.removeEventListener?.('beforeunload', confirmBeforeUnload)
       view?.destroy()
       view = undefined
       mountedRef = null
