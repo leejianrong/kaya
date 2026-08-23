@@ -229,6 +229,22 @@ jobs:
       - name: Gate — the asset about to ship still reports a real commit sha
         run: scripts/check-release-artifact.sh dist/kaya-linux-x86_64 "$GITHUB_SHA"
 
+      # KAN-971. The release notes' "## What it does" section used to be a sentence hand-written
+      # at KAN-545 for the original read-only V2a release ("kaya note list and kaya note get ...
+      # Reads only"), and it stayed that sentence through V2b's full CRUD set, V5's links and
+      # backlinks, and three tags — cosmetic on the release page rather than a broken artifact,
+      # but a downloader reading it was told the binary could do less than it can, three releases
+      # running. Quoting the binary's OWN `--help` here instead of writing prose about it makes
+      # that drift structurally impossible, the same preference for a guard over a reminder as
+      # everywhere else in this repository: the section can never describe more or less than
+      # what the asset attached to this exact release says about itself, because it IS that.
+      # This has to run here rather than in `build`, because the words belong on the release page
+      # and `build` never sees the write token or knows a release is happening (see the header on
+      # why the two jobs are split at all) — and it can run here because `publish` already has the
+      # gated, executable asset in `dist/`, proven a moment ago to identify itself correctly.
+      - name: Capture this build's own --help, for the release notes
+        run: dist/kaya-linux-x86_64 --help > "${RUNNER_TEMP}/kaya-help.txt"
+
       # `${GITHUB_REF_NAME#v}` is the version, and it is safe to say so: this job only runs for a
       # tag push, and a tag push runs `build`'s tag/version agreement step, which fails the run
       # unless the tag is exactly `v` + kaya-cli's `[project].version`.
@@ -284,10 +300,9 @@ jobs:
 
           ## What it does
 
-          `kaya note list` and `kaya note get <ref>`, against a kaya deployment named by
-          `KAYA_API_URL`, authenticated with a pandan PAT in `KAYA_TOKEN`. `--format human`,
-          `json` or `toon`. **Reads only** — the write verbs are the next slice's.
           EOF
+            printf 'Below is the `--help` this exact asset prints, captured from the binary attached to\nthis release (kaya %s) rather than written by hand, so this section can never say more or\nless than what the binary actually does:\n\n```console\n$ kaya --help\n%s\n```\n' \
+              "$version" "$(cat "${RUNNER_TEMP}/kaya-help.txt")"
           } > "$notes"
 
           # `--verify-tag` refuses to invent a tag, and a re-run against an already-published tag
