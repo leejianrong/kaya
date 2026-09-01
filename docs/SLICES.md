@@ -405,9 +405,19 @@ tool error.
 
 ## Out of scope for the MVP
 
-Recorded here so the boundary is visible from the build document, not only from PLAN §Scope.
+Recorded here so the boundary is visible from the build document, not only from PLAN §Scope. **The MVP
+is done — V1 through V6 above are all shipped.** This list is the boundary that milestone drew, not a
+claim about today: a graph view, an embedded board view, export/import, version history and attachments
+are now shipped or under active build as post-MVP epics on pandan board 18 (EPIC-134–137). See
+[`docs/roadmap/BREADBOARD.md`](roadmap/BREADBOARD.md) for the shape of each and `docs/PLAN.md` §Beyond
+the MVP for the requirement IDs (R10–R15).
 
-- A hosted deployment and browser SSO (ADR 0010, Q7) · attachments (Q35) · per-note sharing (Q8) ·
-  real-time collaboration (Q22) · a graph view (Q36) · an embedded live board view (Q37) · export and import
-  (Q18, though the ref is designed for it) · ambient session context, pandan's V48 (ADR 0005) · a published
-  docs site (Q34) · a plugin ecosystem, permanently (Q38).
+- A hosted deployment and browser SSO (ADR 0010, Q7) — still deferred, by choice (EPIC-135, parked).
+- Attachments (Q35) — now building, R14.
+- Per-note sharing (Q8) — now under investigation as an org/team spike, R15.
+- Real-time collaboration (Q22) — still out.
+- A graph view (Q36) — shipped, R10.
+- An embedded live board view (Q37) — shipped, R11.
+- Export and import (Q18, though the ref is designed for it) — now building, R12.
+- Ambient session context, pandan's V48 (ADR 0005) · a published docs site (Q34) · a plugin ecosystem,
+  permanently (Q38) — still out; no post-MVP epic touches these.

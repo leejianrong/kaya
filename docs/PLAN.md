@@ -72,23 +72,48 @@ default is truncated with a true total and `--full` opts out.
 - Release provenance from the first release, plus a version-bump guard (ADR 0007).
 - One OCI artifact and k8s manifests, exercised locally; no hosted deploy (ADR 0010).
 
-**Out, and why.**
+**Out, and why — as of the MVP.** All six slices below shipped and the MVP milestone is closed; this
+list is the historical record of what that milestone cut, not a claim about what's out *now*. See
+**Beyond the MVP** below and [`docs/roadmap/BREADBOARD.md`](roadmap/BREADBOARD.md) for what's shipped or
+underway since.
 
 - **A hosted deployment.** Deferred to the homelab so kaya isn't the second app to migrate off Fly
   (ADR 0010). This is the one scope cut that makes "cloud-hosted" aspirational for the MVP, and it is
-  deliberate.
+  deliberate. **Still deferred post-MVP, by the maintainer's explicit choice** — EPIC-135 exists on the
+  board but is parked, not scheduled.
 - **Browser single sign-on.** Needs a shared apex domain, which arrives with the homelab (Q7). PAT
   auth carries the MVP, which is the path the primary actor uses anyway.
 - **Attachments and images.** Text-only markdown in Postgres. Object storage when genuinely needed
-  (Q35).
-- **Per-note sharing and ACLs.** Owner-only, mirroring pandan's pre-M5 stance (Q8).
+  (Q35). **Now under active build** — R14, BREADBOARD.md.
+- **Per-note sharing and ACLs.** Owner-only, mirroring pandan's pre-M5 stance (Q8). **Under
+  investigation post-MVP** as part of an org/team model spike — R15, BREADBOARD.md.
 - **Real-time collaboration and local-first sync.** Poll/refresh, per pandan ADR 0007. Local-first is
-  a different and much harder product (Q22).
+  a different and much harder product (Q22). Still out; no post-MVP epic touches this.
 - **A graph view** (Q36) and **an embedded live board view** (Q37). Both become cheap once
-  `note_link` and ADR 0003's resolver exist, which is the argument for not building them now.
+  `note_link` and ADR 0003's resolver exist, which is the argument for not building them now. **Both
+  shipped post-MVP** — R10, R11, BREADBOARD.md.
 - **A plugin ecosystem.** Never (Q38).
 - **Export and import.** Not built, but the `NOTE-n` ref is designed to survive it, because
-  retrofitting identity is the expensive kind of change (Q18).
+  retrofitting identity is the expensive kind of change (Q18). **Now under active build** — R12,
+  BREADBOARD.md.
+
+## Beyond the MVP
+
+The MVP's own requirements (R0–R9 below) are frozen — a shipped, tested milestone, not something this
+section revises. Everything since is tracked as new requirements starting at **R10**, not appended to
+the R5 family, because `R5`/`R5.1` already name V5's wikilink-degradation guarantee and reusing them for
+unrelated post-MVP work would collide with a requirement that's already shipped. The shape for each is in
+[`docs/roadmap/BREADBOARD.md`](roadmap/BREADBOARD.md); the board (pandan board 18, EPIC-134 through
+EPIC-137) is where the day-to-day state lives.
+
+| ID | Requirement | Status |
+|----|-------------|--------|
+| R10 | A graph view over `note_link` | Shipped (KAN-1050) |
+| R11 | A live pandan board/view embedded read-only in a note | Shipped (KAN-1049) |
+| R12 | A note's `NOTE-n` ref survives export and re-import, single-note and whole-corpus | In progress |
+| R13 | Every note body write is a recoverable version, listable and restorable in the SPA | In progress |
+| R14 | A note can carry a non-text attachment, stored in R2, never leaked to another owner | In progress |
+| R15 | Kaya's data model supports a team/org scope, not just single-owner | Under investigation (spike) |
 
 ## Requirements
 
