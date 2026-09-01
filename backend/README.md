@@ -3,21 +3,26 @@
 FastAPI over **sync** SQLAlchemy and psycopg v3, with Alembic wired up from day one
 ([ADR 0001](../docs/adr/0001-stack-inherited-from-pandan.md)).
 
-Right now: `GET /health`, migration `0001` (the `user` mirror, `note`, and the `NOTE-` sequence —
-KAN-533), `app/auth/` — the principal resolver (KAN-534) plus `authorize_note` and the owner-scoped
-list statement (KAN-535) — and `app/api/`: the five `/api/v1/notes` routes over the central ref
-resolver (KAN-536), with ADR 0009's optimistic-concurrency precondition on `PATCH` (KAN-537).
+`GET /health`, `app/auth/` — the principal resolver (KAN-534) plus `authorize_note` and the
+owner-scoped list statement (KAN-535) — and `app/api/`: the five `/api/v1/notes` routes over the
+central ref resolver (KAN-536, with ADR 0009's optimistic-concurrency precondition on `PATCH`,
+KAN-537), plus full-text search, wikilink resolution, a graph view and a board embed, added as later
+slices and epics landed.
 
 | Route | Notes |
 |---|---|
 | `POST /api/v1/notes` | `201` + `Location`. Owner is the caller; there is no field to say otherwise |
-| `GET /api/v1/notes` | `{"notes": [...]}`, owner-scoped in SQL, newest first |
+| `GET /api/v1/notes` | `{"notes": [...]}`, owner-scoped in SQL, newest first. `?q=` ranks by `ts_rank DESC, note.id DESC` (KAN-558/559) |
 | `GET /api/v1/notes/{ref}` | `ref` is `NOTE-12`, `note-12` **or** `12` |
 | `PATCH /api/v1/notes/{ref}` | Partial. Omitted fields are unchanged. Moving a note is `{"path": …}`. Optional `if_updated_at` → `409` on a stale one |
 | `DELETE /api/v1/notes/{ref}` | `204`. The ref is never reused |
+| `GET /api/v1/notes/{ref}/links` | Resolves the note's `[[wikilinks]]` against pandan with the caller's own PAT; unresolved on failure, never an error (KAN-566, ADR 0003) |
+| `GET /api/v1/notes/{ref}/backlinks` | Every note linking to this one, answered from kaya's own tables — no upstream call (KAN-566) |
+| `GET /api/v1/graph` | Every note the caller owns plus every resolved note-to-note link among them, node-and-edge shaped (KAN-1050) |
+| `GET /embeds/board` | A live pandan board/view rendered read-only in a note; same PAT-forwarding, no-session shape as `/links` (KAN-1049) |
 
-Not here yet, with the card that owns each: `?q=` search (KAN-558/559), and `/links` + `/backlinks`
-(KAN-566).
+Building now, not yet on `main`: version history and attachments — see
+[`docs/roadmap/BREADBOARD.md`](../docs/roadmap/BREADBOARD.md) R13/R14.
 
 ## The `PATCH` precondition (ADR 0009)
 
