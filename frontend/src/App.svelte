@@ -108,7 +108,8 @@
    * `notes` and the open `note` come from two separate fetches (`listNotes` vs. `getNote`), so the
    * row in `notes` is a *different object* from the one `EditorPane` just edited — there is nothing
    * to mutate in place, only to replace. Assigning `notes[index]` rather than reassigning the whole
-   * array is what lets `Sidebar`'s existing subscription pick up the change with no new wiring there.
+   * array is what lets `Sidebar`'s existing subscription (and its tree grouping) pick up the move
+   * with no new wiring there.
    */
   function noteUpdated(stored: Note): void {
     const index = notes.findIndex((found) => found.ref === stored.ref)
