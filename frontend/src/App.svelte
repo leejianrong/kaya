@@ -6,11 +6,13 @@
   import Sidebar from './components/Sidebar.svelte'
   import { ApiError } from './lib/api'
   import { clearToken, credentialState } from './lib/auth'
-  import { getNote, listNotes } from './lib/notes'
+  import { createNote, getNote, listNotes } from './lib/notes'
   import {
     currentRoute,
     interceptClick,
+    navigate,
     onNavigate,
+    routeHref,
     setNavigationGuard,
     type Route,
   } from './lib/router'
@@ -62,6 +64,26 @@
   /** `Sidebar`'s `onsearch`: commit the trimmed term, which is what re-runs the fetch below. */
   function search(term: string): void {
     query = term
+  }
+
+  /**
+   * `Sidebar`'s `oncreate` (KAN-1040, BREADBOARD.md A1): create the note, then navigate to it.
+   *
+   * `navigate()` runs before the list refresh below, so a same-tab guard veto (KAN-969, unsaved
+   * editor content elsewhere) is asked before this file does any more work — and either way the
+   * note now exists, so the list is refreshed to include it regardless of whether the navigation
+   * itself went through. A `404`-flavoured failure has no home here; the only failures `createNote`
+   * can produce are validation and auth, both already `absorb()`'s job.
+   */
+  async function createAndOpen(title: string): Promise<void> {
+    try {
+      const created = await createNote({ title })
+      navigate(routeHref({ name: 'note', ref: created.ref }))
+      const term = query.trim()
+      notes = await listNotes({ q: term === '' ? undefined : term })
+    } catch (error) {
+      absorb(error)
+    }
   }
 
   /**
@@ -337,7 +359,7 @@
   </header>
 
   {#if authed}
-    <Sidebar {notes} {route} loading={listing} {query} onsearch={search} />
+    <Sidebar {notes} {route} loading={listing} {query} onsearch={search} oncreate={createAndOpen} />
     <main>
       {#if route.name === 'unknown'}
         <p class="notice">
