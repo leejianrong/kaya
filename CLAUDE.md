@@ -11,15 +11,20 @@ Five packages, one dependency arrow (ADR 0001): `kaya-cli` and `mcp/` are thin a
 never in an adapter); `frontend/` is a browsable SPA that calls `backend/` directly; nothing depends
 on an adapter.
 
-**Status: all six planned slices are complete** (V1 backend, V2a/V2b CLI, V3 SPA editor, V4 search,
-V5 cross-linking including wikilink autocomplete, V6 MCP — all six MCP tools work). Pandan board 18
-("kaya — Notes") shows every tracked card done. The one acknowledged gap is `make test-e2e`, still a
-stub with no card blocking it. **The published binary lags `main`** — check `gh release list
---repo leejianrong/kaya` and each package's `pyproject.toml` version before trusting a specific
-number quoted in any doc, this file included. Full slice-by-slice history, every measured number, and
-the KAN-card provenance behind each rule below live in
-[`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md) — read it when you need the *why* in full,
-not for day-to-day work.
+**Status: the MVP is done, and kaya is past it.** All six planned slices shipped (V1 backend, V2a/V2b
+CLI, V3 SPA editor, V4 search, V5 cross-linking including wikilink autocomplete, V6 MCP — all six MCP
+tools work); `docs/PLAN.md`'s R0–R9 are a closed, frozen record. Work now underway is **post-MVP**,
+tracked as R10 onward in `docs/PLAN.md` §Beyond the MVP and shaped in
+[`docs/roadmap/BREADBOARD.md`](docs/roadmap/BREADBOARD.md): a graph view and an embedded board view have
+shipped, export/import/version-history/attachments are being built, an org/team model is under
+investigation (spike, no decision yet), and an independent Fly.io deploy is scoped but **deliberately
+parked** — the maintainer's explicit call, not a blocker. Pandan board 18 ("kaya — Notes") is the
+day-to-day source of truth for what's in flight; read it before trusting this paragraph's snapshot.
+**The published binary lags `main`** — check `gh release list --repo leejianrong/kaya` and each
+package's `pyproject.toml` version before trusting a specific number quoted in any doc, this file
+included. Full slice-by-slice history, every measured number, and the KAN-card provenance behind each
+rule below live in [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md) — read it when you need the
+*why* in full, not for day-to-day work.
 
 **Trust the code over the docs.** When this file and the repository disagree, the repository is
 right and this file is stale. Fix it in the same PR.
