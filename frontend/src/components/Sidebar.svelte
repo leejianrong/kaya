@@ -26,6 +26,7 @@
     loading,
     query = '',
     onsearch = () => {},
+    oncreate = () => {},
   }: {
     notes: Note[]
     route: Route
@@ -34,6 +35,13 @@
     query?: string
     /** Fired with the trimmed term on submit, and with `''` when the search is cleared. */
     onsearch?: (term: string) => void
+    /**
+     * KAN-1040's "+ New note": fired with the trimmed, non-empty title once the inline prompt is
+     * submitted. `App.svelte` owns the actual `createNote()` call and the navigation afterwards —
+     * same split as `onsearch`, and for the same reason: this component has no client of its own,
+     * and a `401` from a stale credential has to reach `App`'s `discard()`, not stop here.
+     */
+    oncreate?: (title: string) => void
   } = $props()
 
   /**
@@ -60,6 +68,33 @@
   function clear(): void {
     draft = ''
     onsearch('')
+  }
+
+  /** Whether the inline title prompt (A1-UI2) is on screen in place of the "+ New note" button. */
+  let creating = $state(false)
+  let newTitle = $state('')
+
+  function openCreate(): void {
+    creating = true
+    newTitle = ''
+  }
+
+  function cancelCreate(): void {
+    creating = false
+    newTitle = ''
+  }
+
+  /** A blank title is refused here rather than sent — `title` is required server-side and a prompt
+   *  that submits nothing should say nothing happened, not round-trip a `422`. */
+  function submitCreate(event: SubmitEvent): void {
+    event.preventDefault()
+    const title = newTitle.trim()
+    if (title === '') {
+      return
+    }
+    oncreate(title)
+    creating = false
+    newTitle = ''
   }
 
   type View = 'tree' | 'list'
@@ -182,6 +217,32 @@
 
 <nav class="sidebar" aria-label="Notes">
   <!--
+    KAN-1040's "+ New note", A1 in BREADBOARD.md: the button opens an inline title prompt in place
+    of itself, and Create hands the trimmed title up to `oncreate` — this component makes no
+    network call and does not navigate itself.
+  -->
+  <div class="create">
+    {#if creating}
+      <form class="create-form" onsubmit={submitCreate} data-testid="create-form">
+        <input
+          type="text"
+          class="create-input"
+          placeholder="Note title…"
+          bind:value={newTitle}
+          aria-label="New note title"
+          data-testid="create-title-input"
+        />
+        <button type="submit" data-testid="create-confirm">Create</button>
+        <button type="button" data-testid="create-cancel" onclick={cancelCreate}>Cancel</button>
+      </form>
+    {:else}
+      <button type="button" class="new-note" onclick={openCreate} data-testid="new-note-button">
+        + New note
+      </button>
+    {/if}
+  </div>
+
+  <!--
     KAN-559's search box. `--q` on the client is one flag and one input here, and it stays that
     shape: submitting sends `draft.trim()` up to `onsearch`, which is App's request to make, not
     this component's — a `Sidebar` that fetched would be a second network caller for the one list
@@ -279,6 +340,56 @@
     overflow-y: auto;
     padding: 1rem 0.5rem 1.5rem;
     border-right: 1px solid var(--edge);
+  }
+
+  .create {
+    padding: 0 0.5rem;
+  }
+
+  .new-note {
+    width: 100%;
+    padding: 0.35rem 0.5rem;
+    border: 1px dashed var(--edge);
+    border-radius: 0.3rem;
+    background: transparent;
+    color: var(--accent);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.8rem;
+    text-align: left;
+  }
+
+  .new-note:hover {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+
+  .create-form {
+    display: flex;
+    gap: 0.3rem;
+  }
+
+  .create-input {
+    flex: 1;
+    min-width: 0;
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--edge);
+    border-radius: 0.3rem;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 0.8rem;
+  }
+
+  .create-form button {
+    flex: none;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--edge);
+    border-radius: 0.3rem;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.7rem;
   }
 
   .search {

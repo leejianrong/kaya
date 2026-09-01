@@ -232,6 +232,110 @@ describe('the folder tree', () => {
   })
 })
 
+describe('"+ New note" (KAN-1040)', () => {
+  function renderWithCreate(oncreate: (title: string) => void) {
+    mounted.push(
+      mount(Sidebar, {
+        target: host,
+        props: { notes: NOTES, route: { name: 'home' }, loading: false, oncreate },
+      }),
+    )
+    flushSync()
+    return host
+  }
+
+  function button(testid: string): HTMLButtonElement {
+    return host.querySelector<HTMLButtonElement>(`[data-testid="${testid}"]`)!
+  }
+
+  function titleInput(): HTMLInputElement {
+    return host.querySelector<HTMLInputElement>('[data-testid="create-title-input"]')!
+  }
+
+  it('shows the button and no prompt to start with', () => {
+    renderWithCreate(vi.fn())
+
+    expect(button('new-note-button')).not.toBeNull()
+    expect(host.querySelector('[data-testid="create-form"]')).toBeNull()
+  })
+
+  it('opens an inline title prompt in place of the button on click', () => {
+    renderWithCreate(vi.fn())
+
+    button('new-note-button').click()
+    flushSync()
+
+    expect(host.querySelector('[data-testid="create-form"]')).not.toBeNull()
+    expect(host.querySelector('[data-testid="new-note-button"]')).toBeNull()
+  })
+
+  it('fires oncreate with the trimmed title on submit, and closes the prompt', () => {
+    const oncreate = vi.fn()
+    renderWithCreate(oncreate)
+
+    button('new-note-button').click()
+    flushSync()
+    titleInput().value = '  A fresh note  '
+    titleInput().dispatchEvent(new Event('input'))
+    host.querySelector('form[data-testid="create-form"]')!.dispatchEvent(
+      new Event('submit', { cancelable: true }),
+    )
+    flushSync()
+
+    expect(oncreate).toHaveBeenCalledTimes(1)
+    expect(oncreate).toHaveBeenCalledWith('A fresh note')
+    expect(host.querySelector('[data-testid="create-form"]')).toBeNull()
+    expect(host.querySelector('[data-testid="new-note-button"]')).not.toBeNull()
+  })
+
+  it('refuses a blank title — no call, prompt stays open', () => {
+    const oncreate = vi.fn()
+    renderWithCreate(oncreate)
+
+    button('new-note-button').click()
+    flushSync()
+    titleInput().value = '   '
+    titleInput().dispatchEvent(new Event('input'))
+    host.querySelector('form[data-testid="create-form"]')!.dispatchEvent(
+      new Event('submit', { cancelable: true }),
+    )
+    flushSync()
+
+    expect(oncreate).not.toHaveBeenCalled()
+    expect(host.querySelector('[data-testid="create-form"]')).not.toBeNull()
+  })
+
+  it('Cancel closes the prompt without calling oncreate', () => {
+    const oncreate = vi.fn()
+    renderWithCreate(oncreate)
+
+    button('new-note-button').click()
+    flushSync()
+    titleInput().value = 'Discarded'
+    titleInput().dispatchEvent(new Event('input'))
+    button('create-cancel').click()
+    flushSync()
+
+    expect(oncreate).not.toHaveBeenCalled()
+    expect(host.querySelector('[data-testid="create-form"]')).toBeNull()
+  })
+
+  it('starts a fresh prompt empty even after a previous title was typed', () => {
+    renderWithCreate(vi.fn())
+
+    button('new-note-button').click()
+    flushSync()
+    titleInput().value = 'Leftover'
+    titleInput().dispatchEvent(new Event('input'))
+    button('create-cancel').click()
+    flushSync()
+
+    button('new-note-button').click()
+    flushSync()
+    expect(titleInput().value).toBe('')
+  })
+})
+
 describe('the search box (KAN-559)', () => {
   function renderWithSearch(query: string, onsearch: (term: string) => void) {
     mounted.push(
