@@ -1,17 +1,12 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
 
-# Targets are grouped by whether they work TODAY or wait on a slice. Nothing here pretends to run
-# code that doesn't exist yet — see CLAUDE.md §Build status.
-
 PY_PACKAGES := backend kaya-client kaya-cli mcp
 
 .PHONY: help
 help: ## List every target
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
 	  | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
-	@echo ""
-	@echo "  Targets marked (V3+) need application code that has not landed yet."
 
 # ---------------------------------------------------------------- works today
 
@@ -142,8 +137,6 @@ build: ## Build the SPA into frontend/dist
 check: docs-links secret-scan image-pins version-bump lint test ## Everything the pre-push hook runs
 	@echo "✓ all checks that apply to the current tree passed"
 
-# ------------------------------------------------------------------- (V3+)
-
 .PHONY: test-e2e
-test-e2e: ## (V3+) Boots the stack itself
-	@scripts/not-yet.sh test-e2e "KAN-553 (the editor) and KAN-556 (the conflict banner) — KAN-552's shell is in"
+test-e2e: ## Playwright against a real, ephemeral stack + a fake pandan (needs Docker; KAN-1070)
+	@scripts/test-e2e.sh
