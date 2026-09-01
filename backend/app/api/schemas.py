@@ -1,11 +1,11 @@
 """What a note, and since KAN-566 a link, and since KAN-1049 a board embed, looks like on the wire.
 
-Three note models and one envelope, plus KAN-566's ``LinkRead``/``LinkList`` and KAN-1049's
-``EmbedCard``/``BoardEmbedResponse``. The note constraints
-come from migration ``0001`` rather than from taste: ``title`` is ``String(255)`` and ``path`` is
-``String(1024)``, so a longer value is a `422` here instead of a psycopg ``DataError`` and a `500`
-two layers down. ``body`` is ``TEXT`` and carries no limit, because ADR 0008's model comment is
-right that a length cap on prose is a cap on the product.
+Three note models and one envelope, plus KAN-566's ``LinkRead``/``LinkList``, KAN-1049's
+``EmbedCard``/``BoardEmbedResponse``, and R13/KAN-1064's ``NoteVersionRead``/``NoteVersionList``.
+The note constraints come from migration ``0001`` rather than from taste: ``title`` is
+``String(255)`` and ``path`` is ``String(1024)``, so a longer value is a `422` here instead of a
+psycopg ``DataError`` and a `500` two layers down. ``body`` is ``TEXT`` and carries no limit,
+because ADR 0008's model comment is right that a length cap on prose is a cap on the product.
 
 **Shaping does not live here** (ADR 0004). No projection, no truncation, no aggregates: those go
 through ``kaya-client``'s ``render()`` seam in V2a/V2b, and a `--fields`-shaped parameter appearing
@@ -18,6 +18,7 @@ from datetime import datetime
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from app.models import Note
+from app.models.note_version import NoteVersion
 
 TITLE_MAX = 255
 PATH_MAX = 1024
@@ -372,3 +373,41 @@ class GraphRead(BaseModel):
 
     nodes: list[GraphNode]
     edges: list[GraphEdge]
+
+
+class NoteVersionRead(BaseModel):
+    """One snapshot of a note's body — R13's `GET /notes/{ref}/versions` (KAN-1064/1065).
+
+    **The full body, not a snippet or a summary, and that is this card's preview-endpoint design
+    call.** BREADBOARD.md left open whether a preview needs its own `GET .../versions/{id}` or can
+    be a client-side selection over the list response; the call made here is the latter, for the
+    same reason ADR 0004 §Decision already exempts every note payload in this app from projection —
+    a note body is small prose, `NoteRead` already returns it whole on every read the SPA makes, and
+    a version is exactly as long as the body it was cut from. A second round trip per click would be
+    solving a size problem this app has never had, not the one BREADBOARD.md asked to measure
+    first.
+
+    ``id`` is `note_version`'s own surrogate key, included **only** so a list renderer has something
+    stable to key rows on (`{#each versions as v (v.id)}`) — unlike `LinkRead`'s deliberate omission
+    of every internal id, there is no ADR 0008-shaped identity concern here: a version is never
+    independently addressed by any route (there is no `GET .../versions/{id}`, by the design call
+    above), so this id names no resource a caller could reach and is not a second spelling of
+    anything ADR 0008 already owns.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    body: str
+    created_at: datetime
+
+    @classmethod
+    def of(cls, version: NoteVersion) -> "NoteVersionRead":
+        return cls.model_validate(version)
+
+
+class NoteVersionList(BaseModel):
+    """`GET /notes/{ref}/versions`'s envelope — named, like `NoteList`/`LinkList`, for the same
+    reason (PLAN §Implementation decisions: a list verb returns `{"noun": [...]}`)."""
+
+    versions: list[NoteVersionRead]

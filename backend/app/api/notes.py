@@ -26,6 +26,11 @@ take a bearer and an upstream client as well as a session, so the three-phase bo
 that reads as what it is in its own module and as an exception here. They did depend on
 ``NoteFromRef`` and inherit ADR 0008 for free, exactly as this docstring predicted.
 
+``/versions`` landed in KAN-1064 and **is** in this file, unlike ``/links``/``/backlinks`` — it
+needs no bearer and no upstream client, just a scoped read over ``note_version``
+(``app/note_versions.py``), so it is the plain wiring this module's docstring describes rather than
+the exception ``links.py`` is.
+
 Deliberately absent: paging of any shape.
 """
 
@@ -36,12 +41,20 @@ from sqlalchemy.orm import Session
 
 from app.api.concurrency import enforce_precondition
 from app.api.refs import NoteFromRef
-from app.api.schemas import NoteCreate, NoteList, NoteRead, NoteUpdate
+from app.api.schemas import (
+    NoteCreate,
+    NoteList,
+    NoteRead,
+    NoteUpdate,
+    NoteVersionList,
+    NoteVersionRead,
+)
 from app.api.search import SearchTerm
 from app.auth import Principal, get_principal, notes_matching, notes_owned_by
 from app.db import get_session
 from app.models import Note
 from app.note_links import reconcile_note_links, resolve_pending_note_links
+from app.note_versions import cut_version, note_versions
 
 router = APIRouter(prefix="/api/v1", tags=["notes"])
 
@@ -80,12 +93,18 @@ def create_note(
     still-unresolved link at this one, in case this note's title is exactly what one was waiting
     for. Both stay inside this same transaction for the reason above — a resolution landing without
     the note it names, or the reverse, is a state nothing here may produce.
+
+    R13/KAN-1064: ``cut_version`` snapshots the created body as the note's first ``note_version``
+    row, in the same transaction, so a note's history starts at creation rather than at its first
+    edit. Every note gets one, even ``NoteCreate``'s default empty body — "on every body write, no
+    heuristic" (BREADBOARD.md's R13) draws no exception for a body that happens to be ``""``.
     """
     note = Note(owner_id=principal.id, **payload.model_dump())
     session.add(note)
     session.flush()
     reconcile_note_links(session, note)
     resolve_pending_note_links(session, note)
+    cut_version(session, note)
     session.commit()
     session.refresh(note)
 
@@ -145,6 +164,33 @@ def get_note(note: NoteFromRef) -> NoteRead:
     return NoteRead.of(note)
 
 
+@router.get(
+    "/notes/{ref}/versions",
+    summary="Every version of a note's body, newest first",
+)
+def list_note_versions(note: NoteFromRef, session: DbSession) -> NoteVersionList:
+    """R13/KAN-1064: every snapshot ``cut_version`` has ever cut for this note.
+
+    A four-line route over ``app/note_versions.py``'s ``note_versions``, the same shape every other
+    route in this file is — the query, the scoping and the order are all decided one module away.
+    ``note.id`` has already been through ``NoteFromRef`` and therefore ``authorize_note`` by the
+    time it reaches ``note_versions``, which is what lets that function build a statement over a
+    table with no owner column of its own and still be correctly scoped (see its docstring, and
+    ``app/models/note_version.py``'s).
+
+    Full bodies, not snippets: see ``NoteVersionRead``'s docstring for the preview-endpoint design
+    call this response shape *is* — there is no separate preview route, on purpose.
+
+    A note with exactly one save (its own creation) still returns one row, never an empty list —
+    ``create_note`` cuts a version too, so "no history yet" is not a state this note can be in once
+    it exists.
+    """
+    statement = note_versions(note.id)
+    return NoteVersionList(
+        versions=[NoteVersionRead.of(version) for version in session.scalars(statement)]
+    )
+
+
 @router.patch("/notes/{ref}", summary="Edit a note, or move it")
 def update_note(note: NoteFromRef, payload: NoteUpdate, session: DbSession) -> NoteRead:
     """Change ``title``, ``body`` and/or ``path``. Omitted fields are left alone.
@@ -175,6 +221,15 @@ def update_note(note: NoteFromRef, payload: NoteUpdate, session: DbSession) -> N
     other row would otherwise wait forever for a save of its own that has no reason to happen. This
     runs independently of whether ``body`` also changed in the same request, and it runs after
     ``note.title`` has already been assigned above, so it always resolves against the new value.
+
+    R13/KAN-1064/1066: a write that touches ``body`` also calls ``cut_version`` — a snapshot of the
+    body this write just set, in the same transaction as the update it belongs to. A title- or
+    path-only edit cuts nothing, matching the wikilink reconcile immediately above it: neither one
+    has a reason to run over a body that did not change. **This is also how a restore works** —
+    KAN-1066's "restore a version" is nothing more than this same route called with ``body`` set to
+    an old version's content, so a restore is guarded by the identical precondition, reconciles
+    wikilinks the identical way, and cuts its own new version the identical way. No branch in this
+    function knows or needs to know that a particular call was a restore.
     """
     enforce_precondition(session, note, payload)
 
@@ -189,6 +244,7 @@ def update_note(note: NoteFromRef, payload: NoteUpdate, session: DbSession) -> N
     if changes:
         if "body" in changes:
             reconcile_note_links(session, note)
+            cut_version(session, note)
         if "title" in changes:
             resolve_pending_note_links(session, note)
         session.commit()
