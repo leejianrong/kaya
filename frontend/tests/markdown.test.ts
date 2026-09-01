@@ -560,3 +560,54 @@ describe('a `pandan-board` embed (KAN-1049)', () => {
     expect(fragment.querySelector('pre code')).not.toBeNull()
   })
 })
+
+describe('a note attachment image (R14, KAN-1067/1068)', () => {
+  it('renders a placeholder span carrying data-attachment-note/id/alt, no src anywhere', () => {
+    const fragment = renderMarkdown('![a photo](/api/v1/notes/NOTE-12/attachments/34)')
+    const el = fragment.querySelector('span.embed-attachment')
+
+    expect(el).not.toBeNull()
+    expect(el?.getAttribute('data-attachment-note')).toBe('NOTE-12')
+    expect(el?.getAttribute('data-attachment-id')).toBe('34')
+    expect(el?.getAttribute('data-attachment-alt')).toBe('a photo')
+    expect(el?.textContent).toBe('Loading a photo…')
+    // Never a direct R2 URL, and never any fetchable `src` at all — the whole point of the
+    // placeholder shape (module header's "never a direct R2 URL").
+    expect(fragment.querySelector('img')).toBeNull()
+    expect(el?.hasAttribute('src')).toBe(false)
+  })
+
+  it('accepts a bare "note-n" or numeric ref, matching the API resolver\'s own grammar', () => {
+    const fragment = renderMarkdown('![x](/api/v1/notes/note-12/attachments/34)')
+    expect(fragment.querySelector('span.embed-attachment')?.getAttribute('data-attachment-note')).toBe(
+      'note-12',
+    )
+  })
+
+  it('says "Loading attachment…" for an empty alt rather than an empty sentence', () => {
+    const fragment = renderMarkdown('![](/api/v1/notes/NOTE-1/attachments/1)')
+    expect(fragment.querySelector('span.embed-attachment')?.textContent).toBe('Loading attachment…')
+  })
+
+  it('leaves an ordinary absolute-URL image alone — only this exact relative shape is special', () => {
+    const fragment = renderMarkdown('![a cat](https://example.com/cat.png)')
+
+    expect(fragment.querySelector('span.embed-attachment')).toBeNull()
+    expect(fragment.querySelector('img')).not.toBeNull()
+  })
+
+  it.each([
+    '/notes/NOTE-1',
+    '/api/v1/notes/NOTE-1/attachments/',
+    '/api/v1/notes/NOTE-1/attachments/not-a-number',
+    '/api/v1/notes//attachments/1',
+    '/api/v1/notes/NOTE-1/attachments/1/extra',
+  ])('treats %s as an ordinary (refused) relative link, not an attachment embed', (target) => {
+    const fragment = renderMarkdown(`![x](${target})`)
+
+    expect(fragment.querySelector('span.embed-attachment')).toBeNull()
+    // A relative path fails `safeUrl` (nothing to resolve it against), so it renders the same
+    // visible refusal any other unsupported image target does.
+    expect(fragment.querySelector('span.unlinked')).not.toBeNull()
+  })
+})

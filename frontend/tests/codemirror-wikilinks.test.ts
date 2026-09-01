@@ -33,6 +33,7 @@ function open(doc: string, links: readonly Link[] = []): EditorView {
     editable: true,
     placeholder: '',
     links,
+    noteRef: null,
     onSave: () => true,
     onChange: () => {},
   })
