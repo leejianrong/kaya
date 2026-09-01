@@ -39,7 +39,8 @@ Four things live here, and the last two are small only in line count:
   because V6's MCP server started from the same shell must reach the same deployment. KAN-551 added
   the **file** tier (JSON at `$XDG_CONFIG_HOME/kaya/config.json`, consulted per key after the
   environment) and the `config {set,show,path}` verbs as `Payload` builders; PLAN §Config's third
-  tier, the nearest `.mcp.json`, arrives with V6. The writer read-modify-writes, so a hand-set
+  tier, the nearest `.mcp.json`, was never built — V6 shipped without it (`docs/ENGINEERING_NOTES.md`
+  has the reasoning). The writer read-modify-writes, so a hand-set
   `max_text_chars` survives a `config set --api-url`. It never logs, echoes or returns what it
   resolved — `MissingCredential` names the *variable*, never a value, because a truncated token is
   still a token (Q41/Q42).
