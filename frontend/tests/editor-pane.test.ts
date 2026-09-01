@@ -579,3 +579,145 @@ describe("ADR 0009's 409, which must not be swallowed", () => {
     }
   })
 })
+
+describe('the Delete control (KAN-1041, BREADBOARD.md A2)', () => {
+  /**
+   * Answers a `DELETE` with `204` (no body — `stubFetch` above assumes every request sends a JSON
+   * body, which a `DELETE` never does) and anything else with a JSON error. Records every request.
+   */
+  function stubDelete(status: number, errorBody: unknown = { error: { code: 'not_found', message: 'Gone.' } }) {
+    const calls: { url: string; method: string }[] = []
+    vi.stubGlobal('fetch', (url: string, init: RequestInit = {}) => {
+      const method = init.method ?? 'GET'
+      calls.push({ url, method })
+      if (method !== 'DELETE') {
+        // The `/links` fetch the mount effect always makes. Its own failures are silent (see
+        // `loadLinks`), so a 404 here changes nothing this block asserts.
+        return Promise.resolve(new Response(JSON.stringify({ error: { code: 'not_found', message: 'x' } }), { status: 404 }))
+      }
+      if (status === 204) {
+        return Promise.resolve(new Response(null, { status: 204 }))
+      }
+      return Promise.resolve(new Response(JSON.stringify(errorBody), { status }))
+    })
+    return calls
+  }
+
+  function deleteButton(): HTMLButtonElement {
+    return host.querySelector<HTMLButtonElement>('[data-testid="delete-button"]')!
+  }
+
+  it('reads "Delete" before anything is clicked', async () => {
+    stubDelete(204)
+    await open(note())
+    expect(deleteButton().textContent?.trim()).toBe('Delete')
+    expect(host.querySelector('[data-testid="delete-cancel"]')).toBeNull()
+  })
+
+  it('arms on the first click without calling the API', async () => {
+    const calls = stubDelete(204)
+    await open(note())
+
+    deleteButton().click()
+    flushSync()
+
+    expect(deleteButton().textContent?.trim()).toBe('Confirm delete?')
+    expect(calls.some((call) => call.method === 'DELETE')).toBe(false)
+    expect(host.querySelector('[data-testid="delete-cancel"]')).not.toBeNull()
+  })
+
+  it('Cancel disarms without calling the API', async () => {
+    const calls = stubDelete(204)
+    await open(note())
+
+    deleteButton().click()
+    flushSync()
+    host.querySelector<HTMLButtonElement>('[data-testid="delete-cancel"]')!.click()
+    flushSync()
+
+    expect(deleteButton().textContent?.trim()).toBe('Delete')
+    expect(host.querySelector('[data-testid="delete-cancel"]')).toBeNull()
+    expect(calls.some((call) => call.method === 'DELETE')).toBe(false)
+  })
+
+  it('deletes on the second click and fires ondeleted with the ref', async () => {
+    const calls = stubDelete(204)
+    const ondeleted = vi.fn()
+    const opened = box<Note | null>(note())
+    mounted.push(
+      mount(EditorPane, {
+        target: host,
+        props: {
+          get note() {
+            return opened.value
+          },
+          error: null,
+          ondeleted,
+        },
+      }),
+    )
+    flushSync()
+    await editorArrived(host)
+
+    deleteButton().click()
+    flushSync()
+    deleteButton().click()
+    await vi.waitFor(() => expect(ondeleted).toHaveBeenCalledTimes(1))
+
+    expect(ondeleted).toHaveBeenCalledWith('NOTE-6')
+    const deleteCall = calls.find((call) => call.method === 'DELETE')
+    expect(deleteCall?.url).toBe('/api/v1/notes/NOTE-6')
+  })
+
+  it('shows a refusal and disarms rather than calling ondeleted', async () => {
+    stubDelete(404, { error: { code: 'note_not_found', message: 'No note NOTE-6.' } })
+    const ondeleted = vi.fn()
+    mounted.push(mount(EditorPane, { target: host, props: { note: note(), error: null, ondeleted } }))
+    flushSync()
+    await editorArrived(host)
+
+    deleteButton().click()
+    flushSync()
+    deleteButton().click()
+
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="delete-error"]')).not.toBeNull())
+    expect(host.querySelector('[data-testid="delete-error"]')!.textContent).toContain('No note NOTE-6')
+    expect(ondeleted).not.toHaveBeenCalled()
+    expect(deleteButton().textContent?.trim()).toBe('Delete')
+  })
+
+  it('resets arming when a different note opens, so a stray second click cannot delete it', async () => {
+    // This component is mounted once for the app's whole lifetime (PLAN §S9) — only `note` changes as
+    // you navigate. Arming Delete on NOTE-6 and then opening NOTE-7 without confirming must not leave
+    // NOTE-7's button one click from deleting it.
+    const calls = stubDelete(204)
+    const opened = box<Note | null>(note())
+    mounted.push(
+      mount(EditorPane, {
+        target: host,
+        props: {
+          get note() {
+            return opened.value
+          },
+          error: null,
+        },
+      }),
+    )
+    flushSync()
+    await editorArrived(host)
+
+    deleteButton().click()
+    flushSync()
+    expect(deleteButton().textContent?.trim()).toBe('Confirm delete?')
+
+    opened.value = note({ ref: 'NOTE-7', title: 'Architecture notes' })
+    flushSync()
+    await editorArrived(host)
+
+    expect(deleteButton().textContent?.trim()).toBe('Delete')
+    deleteButton().click()
+    flushSync()
+    expect(deleteButton().textContent?.trim()).toBe('Confirm delete?')
+    expect(calls.some((call) => call.method === 'DELETE')).toBe(false)
+  })
+})

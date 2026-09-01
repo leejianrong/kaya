@@ -87,6 +87,21 @@
   }
 
   /**
+   * `EditorPane`'s `ondeleted` (KAN-1041, BREADBOARD.md A2): the note is already gone server-side by
+   * the time this fires, so `notes` drops it by filtering rather than by a re-fetch — the same reason
+   * `discard()` clears state directly instead of re-asking a server that would just say "not found".
+   *
+   * `editorDirty` is cleared before navigating so `confirmNavigation` does not ask whether to discard
+   * unsaved changes to a note that, by the time the question would be asked, no longer exists to save
+   * them to — the two-click Delete already was the deliberate act this guard exists to gate.
+   */
+  function noteDeleted(ref: string): void {
+    notes = notes.filter((found) => found.ref !== ref)
+    editorDirty = false
+    navigate('/')
+  }
+
+  /**
    * Whether this tab has a credential — **reactive**, and KAN-555 is why.
    *
    * It was a `const` read once at mount, which was honest while there was no way to acquire a
@@ -379,6 +394,7 @@
             error={failure === '' ? null : failure}
             ondocument={publishDocument}
             ondirty={noteDirty}
+            ondeleted={noteDeleted}
           />
           {#if previewing}
             <PreviewPane {note} source={liveDocument} />
