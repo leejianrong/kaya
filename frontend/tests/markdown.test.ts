@@ -31,6 +31,9 @@ const ALLOWED_TAGS = new Set([
   'br',
   'code',
   'del',
+  // KAN-1049's `pandan-board` embed placeholder (`.embed-board`). Its malformed-embed notice is a
+  // `p`, already on this list.
+  'div',
   'em',
   'h1',
   'h2',
@@ -69,6 +72,11 @@ const ALLOWED_ATTRIBUTES = new Set([
   'alt',
   'checked',
   'class',
+  // KAN-1049's `pandan-board` placeholder. Values are a board/view id or a column name typed in the
+  // note body, never a URL — inert strings a browser cannot interpret as markup or as a scheme.
+  'data-board',
+  'data-column',
+  'data-view',
   'disabled',
   'href',
   'loading',
@@ -164,6 +172,8 @@ const PAYLOADS: Record<string, string> = {
   'nested in a link label': '[<img src=x onerror=alert(1)>](https://ok.example.com)',
   'nested in emphasis': '*<script>alert(1)</script>*',
   'inside a fenced block': '```\n<script>alert(1)</script>\n```',
+  'pandan-board with a hostile column value':
+    '```pandan-board\nboard: 18\ncolumn: "><script>alert(1)</script>\n```',
 }
 
 describe('the rendered output can only contain what this repo named', () => {
@@ -475,5 +485,78 @@ describe('the markdown a note actually contains', () => {
 
   it('renders an empty document as nothing at all', () => {
     expect(renderMarkdown('').childNodes).toHaveLength(0)
+  })
+})
+
+describe('a `pandan-board` embed (KAN-1049)', () => {
+  it('renders a column query as a placeholder carrying data-board and data-column', () => {
+    const fragment = renderMarkdown('```pandan-board\nboard: 18\ncolumn: todo\n```')
+    const el = fragment.querySelector('div.embed-board')
+
+    expect(el).not.toBeNull()
+    expect(el?.getAttribute('data-board')).toBe('18')
+    expect(el?.getAttribute('data-column')).toBe('todo')
+    expect(el?.hasAttribute('data-view')).toBe(false)
+    expect(el?.textContent).toBe('Loading board…')
+  })
+
+  it('renders a view query as a placeholder carrying data-board and data-view, not data-column', () => {
+    const fragment = renderMarkdown('```pandan-board\nboard: 18\nview: 3\n```')
+    const el = fragment.querySelector('div.embed-board')
+
+    expect(el).not.toBeNull()
+    expect(el?.getAttribute('data-board')).toBe('18')
+    expect(el?.getAttribute('data-view')).toBe('3')
+    expect(el?.hasAttribute('data-column')).toBe(false)
+  })
+
+  it('ignores surrounding blank lines and unknown keys', () => {
+    const fragment = renderMarkdown(
+      '```pandan-board\n\nboard: 18\nassignee: someone\ncolumn: todo\n\n```',
+    )
+    const el = fragment.querySelector('div.embed-board')
+
+    expect(el?.getAttribute('data-board')).toBe('18')
+    expect(el?.getAttribute('data-column')).toBe('todo')
+  })
+
+  it.each([
+    ['no board', 'column: todo'],
+    ['a non-numeric board', 'board: eighteen\ncolumn: todo'],
+    ['neither view nor column', 'board: 18'],
+    ['both view and column', 'board: 18\nview: 3\ncolumn: todo'],
+    ['a non-numeric view', 'board: 18\nview: three'],
+    ['an empty column', 'board: 18\ncolumn:'],
+  ])('renders a static malformed notice for %s, with no data attribute', (_name, body) => {
+    const fragment = renderMarkdown(`\`\`\`pandan-board\n${body}\n\`\`\``)
+
+    expect(fragment.querySelector('div.embed-board')).toBeNull()
+    const notice = fragment.querySelector('p.embed-board-error')
+    expect(notice).not.toBeNull()
+    expect(notice?.textContent).toContain('malformed')
+    // No route for `PreviewPane`'s hydration pass to try and fetch.
+    for (const element of fragment.querySelectorAll('*')) {
+      expect(element.getAttributeNames().some((name) => name.startsWith('data-'))).toBe(false)
+    }
+  })
+
+  it('leaves an ordinary fenced block reading `pandan-board` as text alone', () => {
+    // Only the info string is special. A block that merely mentions the word in its body is an
+    // ordinary code block — this is the "no way to opt out" the module header names, and it is
+    // deliberate rather than a gap.
+    const code = renderMarkdown('```\npandan-board\nboard: 18\ncolumn: todo\n```').querySelector(
+      'pre code',
+    )
+
+    expect(code?.textContent).toBe('pandan-board\nboard: 18\ncolumn: todo')
+    expect(code?.closest('div.embed-board')).toBeNull()
+  })
+
+  it('treats a different info string as an ordinary code block, not an embed', () => {
+    const fragment = renderMarkdown('```pandan-board-ish\nboard: 18\ncolumn: todo\n```')
+
+    expect(fragment.querySelector('div.embed-board')).toBeNull()
+    expect(fragment.querySelector('p.embed-board-error')).toBeNull()
+    expect(fragment.querySelector('pre code')).not.toBeNull()
   })
 })

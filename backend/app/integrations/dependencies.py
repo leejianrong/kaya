@@ -1,11 +1,13 @@
-"""FastAPI wiring for card/epic resolution, and nothing else — KAN-566.
+"""FastAPI wiring for card/epic resolution and the board-embed integration, and nothing else —
+KAN-566, KAN-1049.
 
 The sibling of ``app/auth/dependencies.py``, deliberately the same shape: every decision with an
-argument in it lives one module down (``card_resolution.py``, which is where KAN-564 put all of
-them), and what is left here is which object gets built where and how long it lives. That is the
-part a unit test cannot reach without a framework and does not need to.
+argument in it lives one module down (``card_resolution.py`` or ``board_embed.py``, whichever a
+given block wires), and what is left here is which object gets built where and how long it lives.
+That is the part a unit test cannot reach without a framework and does not need to.
 
-Lifetimes, and each one is the reason ``app/auth/dependencies.py`` gives for its twin:
+Lifetimes for card/epic resolution, and each one is the reason ``app/auth/dependencies.py`` gives
+for its twin:
 
 - **The cache is process-wide.** A per-request cache caches nothing, and this one exists to make a
   second render of the same note cost no upstream call at all (spike 0001's own acceptance line).
@@ -22,6 +24,9 @@ Deliberately **not** here: a ``SingleFlight``. ``card_resolution.py``'s docstrin
 length and the argument is unchanged by having a caller — a resolution miss is bounded by this
 module's own deadline rather than by a cold identity round trip, so two renders racing for one ref
 cost one duplicate request instead of a stalled service.
+
+The board-embed wiring below follows the same upstream/resolver split, minus the cache —
+``board_embed.py``'s module docstring explains why that integration deliberately has none.
 """
 
 from functools import lru_cache
@@ -32,6 +37,9 @@ from fastapi.security import HTTPAuthorizationCredentials
 
 from app.auth.dependencies import bearer_scheme
 from app.config import get_settings
+from app.integrations.board_embed import BoardEmbedResolver, BoardEmbedUpstream
+from app.integrations.board_embed import default_resolver as default_board_embed_resolver
+from app.integrations.board_embed import default_upstream as default_board_embed_upstream
 from app.integrations.card_resolution import (
     CardEpicCache,
     CardEpicResolver,
@@ -64,6 +72,26 @@ def reset_card_resolution() -> None:
     get_card_epic_upstream.cache_clear()
 
 
+@lru_cache(maxsize=1)
+def get_board_embed_upstream() -> BoardEmbedUpstream:
+    """Process-wide, for the reason ``get_card_epic_upstream`` gives: an ``httpx.Client`` pools
+    connections to pandan, and rebuilding one per request would pay a TLS handshake on every
+    render. No cache singleton alongside it — ``board_embed.py``'s module docstring explains why
+    this integration deliberately has none."""
+    return default_board_embed_upstream(get_settings())
+
+
+def get_board_embed_resolver() -> BoardEmbedResolver:
+    """Per-request, same as ``get_card_epic_resolver``: the resolver holds no state of its own, so
+    a fresh one costs an allocation and buys nothing to leak between requests."""
+    return default_board_embed_resolver(get_board_embed_upstream())
+
+
+def reset_board_embed() -> None:
+    """Drop the cached upstream singleton. The twin of ``reset_card_resolution``."""
+    get_board_embed_upstream.cache_clear()
+
+
 def caller_bearer(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
 ) -> str | None:
@@ -92,3 +120,4 @@ def caller_bearer(
 
 CallerBearer = Annotated[str | None, Depends(caller_bearer)]
 CardResolver = Annotated[CardEpicResolver, Depends(get_card_epic_resolver)]
+BoardResolver = Annotated[BoardEmbedResolver, Depends(get_board_embed_resolver)]

@@ -82,6 +82,30 @@ export interface NoteUpdate {
 }
 
 /**
+ * One card in a `pandan-board` embed — `GET /api/v1/embeds/board` (KAN-1049), mirroring
+ * `backend/app/api/schemas.py`'s `EmbedCard`.
+ *
+ * `ref` is pandan's own `ticket_number` (`"KAN-12"`), never a kaya `NOTE-n` — a different ref
+ * system entirely (ADR 0008). This interface is deliberately not near `Note`/`Link` for that
+ * reason.
+ */
+export interface EmbedCard {
+  ref: string
+  title: string
+  column: string
+}
+
+/**
+ * `GET /api/v1/embeds/board`'s body. Always a `200` from the backend, `unavailable: true` covering
+ * every reason pandan could not answer (down, the board/view does not exist, or the caller cannot
+ * see it) — a caller cannot and should not act differently on any of them (ADR 0003).
+ */
+export interface BoardEmbedResponse {
+  unavailable: boolean
+  cards: EmbedCard[]
+}
+
+/**
  * `{"error": {"code", "message", …}}` — flat, all-strings for the two named keys, and identical for
  * every failure including Starlette's own 404/405 and body validation.
  *

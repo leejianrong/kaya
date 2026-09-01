@@ -54,6 +54,13 @@
  * `@codemirror/lang-*` grammars in). No `title` attribute from a link's `LinkTitle` — one fewer
  * source-derived attribute for no real loss. No emoji shortcode table, so `:smile:` stays literal.
  * Wikilinks are KAN-567.
+ *
+ * ## `pandan-board` embeds (KAN-1049)
+ *
+ * A fenced block with the info string `pandan-board` is parsed here as `board`/`view`/`column`
+ * fields and turned into a placeholder element carrying `data-*` attributes — never a live fetch,
+ * which would make this module reach the network mid-render. `PreviewPane.svelte` does the actual
+ * fetch, after the fragment this function returns is in the DOM. See {@link boardEmbedElement}.
  */
 
 import type { SyntaxNode, Tree } from '@lezer/common'
@@ -381,18 +388,18 @@ function blockInto(node: SyntaxNode, context: Context, into: ParentNode): void {
       into.append(el)
       return
     }
-    case 'FencedCode':
+    case 'FencedCode': {
+      // A ```pandan-board``` info string is KAN-1049's live embed and gets its own element; every
+      // other info string (or none) falls through to the same rendering `CodeBlock` gets below.
+      if (codeInfo(node, source) === PANDAN_BOARD_INFO) {
+        into.append(boardEmbedElement(node, source))
+        return
+      }
+      into.append(codeBlockElement(node, source))
+      return
+    }
     case 'CodeBlock': {
-      const pre = element('pre')
-      const code = element('code')
-      // Every `CodeText` run, concatenated. More than one appears when the block sits inside a
-      // blockquote or a list item, where the parser splits it around the continuation marks.
-      const parts = childrenOf(node)
-        .filter((child) => child.name === 'CodeText')
-        .map((child) => source.slice(child.from, child.to))
-      code.append(textNode(parts.join('')))
-      pre.append(code)
-      into.append(pre)
+      into.append(codeBlockElement(node, source))
       return
     }
     case 'HorizontalRule': {
@@ -432,6 +439,139 @@ function rawSourceBlock(raw: string): HTMLElement {
   pre.className = 'raw-html'
   pre.append(textNode(raw))
   return pre
+}
+
+/** A fenced or indented code block's body, joined. See {@link codeBlockElement}'s comment. */
+function codeBody(node: SyntaxNode, source: string): string {
+  // Every `CodeText` run, concatenated. More than one appears when the block sits inside a
+  // blockquote or a list item, where the parser splits it around the continuation marks.
+  return childrenOf(node)
+    .filter((child) => child.name === 'CodeText')
+    .map((child) => source.slice(child.from, child.to))
+    .join('')
+}
+
+function codeBlockElement(node: SyntaxNode, source: string): HTMLElement {
+  const pre = element('pre')
+  const code = element('code')
+  code.append(textNode(codeBody(node, source)))
+  pre.append(code)
+  return pre
+}
+
+/** A fenced code block's info string — the text after the opening ` ``` ` — trimmed. `''` if the
+ * block has none, which is the ordinary, unlabelled case. */
+function codeInfo(node: SyntaxNode, source: string): string {
+  const info = node.getChild('CodeInfo')
+  return info === null ? '' : source.slice(info.from, info.to).trim()
+}
+
+// --- `pandan-board` embeds (KAN-1049) ------------------------------------------------------------
+
+/** The one info string this renderer treats specially. Everything else is an ordinary code block,
+ * including a note that genuinely wants to show `pandan-board`-flavoured text — there is no way to
+ * opt out short of not naming a live board, which nothing has asked for. */
+const PANDAN_BOARD_INFO = 'pandan-board'
+
+interface ParsedBoardEmbed {
+  board: number
+  view: number | null
+  column: string | null
+}
+
+/**
+ * `board: 18` / `view: 3` / `column: todo`, one `key: value` pair per line, or `null` if the block
+ * does not describe exactly one live query.
+ *
+ * `board` is required and must be a non-negative integer; exactly one of `view`/`column` must be
+ * present (both or neither is malformed, matching the backend's `GET /api/v1/embeds/board`
+ * validation in `app/api/embeds.py` — the two are meant to agree, though neither enforces the
+ * other). Unknown keys and blank lines are ignored rather than making the whole block malformed,
+ * which is the same tolerance CommonMark itself has for things it does not recognise.
+ */
+function parseBoardEmbed(body: string): ParsedBoardEmbed | null {
+  const fields = new Map<string, string>()
+  for (const rawLine of body.split('\n')) {
+    const line = rawLine.trim()
+    const colon = line.indexOf(':')
+    if (colon === -1) {
+      continue
+    }
+    const key = line.slice(0, colon).trim()
+    const value = line.slice(colon + 1).trim()
+    if (key !== '') {
+      fields.set(key, value)
+    }
+  }
+
+  const board = fields.get('board')
+  const view = fields.get('view')
+  const column = fields.get('column')
+
+  if (board === undefined || !/^\d+$/.test(board)) {
+    return null
+  }
+  if ((view === undefined) === (column === undefined)) {
+    // Both present, or neither — exactly one is required.
+    return null
+  }
+  if (view !== undefined && !/^\d+$/.test(view)) {
+    return null
+  }
+  if (column !== undefined && column === '') {
+    return null
+  }
+
+  return {
+    board: Number.parseInt(board, 10),
+    view: view === undefined ? null : Number.parseInt(view, 10),
+    column: column ?? null,
+  }
+}
+
+/**
+ * A ```pandan-board``` block, as its pre-hydration placeholder or a static malformed notice.
+ *
+ * The placeholder carries `data-board` plus `data-view` or `data-column` — never both — and
+ * nothing else; `PreviewPane.svelte`'s hydration pass reads exactly those attributes and replaces
+ * the "Loading board…" child once it has an answer. The malformed notice carries **no** `data-*`
+ * attribute at all, which is what makes it a no-op for that pass rather than a second thing it has
+ * to recognise and skip.
+ *
+ * `setAttribute`'s value here is never a URL (unlike `anchor`'s `href`) — `data-board` and its
+ * siblings are inert strings a browser never interprets as markup or as a scheme, so there is no
+ * `safeUrl`-style check to run on them, only the shape check `parseBoardEmbed` already did.
+ */
+function boardEmbedElement(node: SyntaxNode, source: string): HTMLElement {
+  const parsed = parseBoardEmbed(codeBody(node, source))
+  if (parsed === null) {
+    return boardEmbedMalformed()
+  }
+
+  const el = element('div')
+  el.className = 'embed-board'
+  el.setAttribute('data-board', String(parsed.board))
+  if (parsed.view !== null) {
+    el.setAttribute('data-view', String(parsed.view))
+  } else if (parsed.column !== null) {
+    el.setAttribute('data-column', parsed.column)
+  }
+
+  const loading = element('p')
+  loading.append(textNode('Loading board…'))
+  el.append(loading)
+  return el
+}
+
+function boardEmbedMalformed(): HTMLElement {
+  const el = element('p')
+  el.className = 'embed-board-error'
+  el.append(
+    textNode(
+      'This board embed is malformed: it needs `board` and exactly one of `view` or `column`.',
+    ),
+  )
+  return el
 }
 
 function listElement(node: SyntaxNode, context: Context): HTMLElement {
