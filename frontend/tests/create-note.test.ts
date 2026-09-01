@@ -135,7 +135,7 @@ describe('creating a note from the browser (KAN-1040)', () => {
       flushSync()
       expect(host.querySelector('[data-testid="credential-state"]')).not.toBeNull()
     })
-    expect(host.querySelector('h2')?.textContent).toBe(CREATED.title)
+    expect(host.querySelector<HTMLInputElement>('[data-testid="title-input"]')?.value).toBe(CREATED.title)
   })
 
   it('adds the new note to the sidebar list', async () => {

@@ -721,3 +721,125 @@ describe('the Delete control (KAN-1041, BREADBOARD.md A2)', () => {
     expect(calls.some((call) => call.method === 'DELETE')).toBe(false)
   })
 })
+
+describe('the title field (KAN-1042, BREADBOARD.md A4)', () => {
+  /** Every `PATCH` to `title`; every other request (the mount effect's own `/links` fetch) is a
+   *  harmless 404, since a failed `/links` fetch is silent (see `loadLinks`). */
+  function stubTitlePatch(status: number, payload: unknown) {
+    const calls: { url: string; body: Record<string, unknown> }[] = []
+    vi.stubGlobal('fetch', (url: string, init: RequestInit = {}) => {
+      if ((init.method ?? 'GET') !== 'PATCH') {
+        return Promise.resolve(new Response(JSON.stringify({ error: { code: 'not_found', message: 'x' } }), { status: 404 }))
+      }
+      calls.push({ url, body: JSON.parse(String(init.body)) as Record<string, unknown> })
+      return Promise.resolve(new Response(JSON.stringify(payload), { status }))
+    })
+    return calls
+  }
+
+  function titleInput(): HTMLInputElement {
+    return host.querySelector<HTMLInputElement>('[data-testid="title-input"]')!
+  }
+
+  function retype(value: string): void {
+    titleInput().value = value
+    titleInput().dispatchEvent(new Event('input'))
+    flushSync()
+  }
+
+  it('starts with the note title, editable', async () => {
+    stubTitlePatch(200, note())
+    await open(note())
+    expect(titleInput().value).toBe('Weekly review')
+    expect(titleInput().disabled).toBe(false)
+  })
+
+  it('PATCHes only the title on blur, with no if_updated_at', async () => {
+    const calls = stubTitlePatch(200, note({ title: 'New title', updated_at: SAVED_AT }))
+    await open(note())
+
+    retype('New title')
+    titleInput().dispatchEvent(new Event('blur'))
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+
+    expect(calls[0].url).toBe('/api/v1/notes/NOTE-6')
+    expect(calls[0].body).toEqual({ title: 'New title' })
+  })
+
+  it('sends nothing when the title did not change', async () => {
+    const calls = stubTitlePatch(200, note())
+    await open(note())
+
+    titleInput().dispatchEvent(new Event('blur'))
+    flushSync()
+
+    expect(calls).toHaveLength(0)
+  })
+
+  it('Enter commits the same way blur does', async () => {
+    const calls = stubTitlePatch(200, note({ title: 'Via Enter', updated_at: SAVED_AT }))
+    await open(note())
+
+    // `titleKeydown` calls `.blur()` imperatively, and `.blur()` only fires a `blur` event in jsdom
+    // (as in a real browser) when the element was actually focused — which typing into it, here, is.
+    // `bubbles: true` matters here for a reason unrelated to focus: Svelte 5 delegates common events
+    // like `keydown` to one root listener and relies on bubbling to reach it, so a keydown dispatched
+    // without it never reaches the handler at all — unlike `blur`, which does not bubble and so is
+    // attached directly, which is why the plain `Event('blur')` used elsewhere in this file works.
+    titleInput().focus()
+    retype('Via Enter')
+    titleInput().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
+    expect(calls[0].body).toEqual({ title: 'Via Enter' })
+  })
+
+  it("fires onupdated with the fresh note, so App.svelte's separate sidebar list can update", async () => {
+    stubTitlePatch(200, note({ title: 'New title', updated_at: SAVED_AT }))
+    const onupdated = vi.fn()
+    mounted.push(mount(EditorPane, { target: host, props: { note: note(), error: null, onupdated } }))
+    flushSync()
+    await editorArrived(host)
+
+    retype('New title')
+    titleInput().dispatchEvent(new Event('blur'))
+    await vi.waitFor(() => expect(onupdated).toHaveBeenCalledTimes(1))
+
+    expect(onupdated).toHaveBeenCalledWith(expect.objectContaining({ ref: 'NOTE-6', title: 'New title' }))
+  })
+
+  it('refreshes the body-save precondition from the response, so the next Save is not a spurious 409', async () => {
+    // `updated_at` is `onupdate=func.now()` on the backend, so a title-only write moves it exactly as
+    // a body write would. Leaving `basedOn` at the value read on open would guard the next Save
+    // against a stamp the row no longer has.
+    stubTitlePatch(200, note({ title: 'New title', updated_at: SAVED_AT }))
+    await open(note())
+
+    retype('New title')
+    titleInput().dispatchEvent(new Event('blur'))
+    await vi.waitFor(() => expect(host.querySelector('.stamp')!.textContent).toContain(SAVED_AT))
+  })
+
+  it('shows a refusal and leaves what was typed rather than reverting it', async () => {
+    stubTitlePatch(422, { error: { code: 'validation_error', message: 'Title is too long.' } })
+    await open(note())
+
+    retype('New title')
+    titleInput().dispatchEvent(new Event('blur'))
+
+    await vi.waitFor(() => expect(host.querySelector('[data-testid="title-error"]')).not.toBeNull())
+    expect(host.querySelector('[data-testid="title-error"]')!.textContent).toContain('too long')
+    expect(titleInput().value).toBe('New title')
+  })
+
+  it('resets to the new note when a different note opens, discarding an unsaved draft', async () => {
+    stubTitlePatch(200, note())
+    const { opened } = await open(note())
+
+    retype('Not sent anywhere')
+    opened.value = note({ ref: 'NOTE-7', title: 'Architecture notes' })
+    flushSync()
+    await editorArrived(host)
+
+    expect(titleInput().value).toBe('Architecture notes')
+  })
+})
