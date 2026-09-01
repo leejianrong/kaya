@@ -106,6 +106,8 @@ CREATE = "create"
 EDIT = "edit"
 MOVE = "move"
 DELETE = "delete"
+EXPORT = "export"
+IMPORT = "import"
 
 LINKS = "links"
 BACKLINKS = "backlinks"
@@ -204,6 +206,30 @@ def _note_delete(client: KayaClient, args: Namespace) -> Payload:
     return client.delete_note(args.ref)
 
 
+def _note_export(client: KayaClient, args: Namespace) -> Payload:
+    """`note export <ref>` (R12/KAN-1060). ``--out`` is `args.out`, ``None`` when omitted — the
+    same "pass what argv carried, let the client decide the default" shape every write verb here
+    already has (see `KayaClient.export_note`'s own default)."""
+    return client.export_note(args.ref, args.out)
+
+
+def _note_import(client: KayaClient, args: Namespace) -> Payload:
+    """`note import <file>` (R12/KAN-1061). One argument, passed through untouched."""
+    return client.import_note(args.file)
+
+
+def _export_all(client: KayaClient, args: Namespace) -> Payload:
+    """`export --all <dir>` (R12/KAN-1062). ``--all`` is checked by the parser (``required=True``,
+    see `kaya_cli.__main__`), so by the time this runs it has already done its one job — reading as
+    "everything, no filter" — and carries nothing this function needs to inspect."""
+    return client.export_all(args.directory)
+
+
+def _import_dir(client: KayaClient, args: Namespace) -> Payload:
+    """`import --dir <path>` (R12/KAN-1063)."""
+    return client.import_dir(args.directory)
+
+
 def _links(client: KayaClient, args: Namespace) -> Payload:
     return client.links(args.ref)
 
@@ -254,8 +280,12 @@ VERBS: Mapping[tuple[str | None, str | None], Verb] = {
     (NOTE, EDIT): _note_edit,
     (NOTE, MOVE): _note_move,
     (NOTE, DELETE): _note_delete,
+    (NOTE, EXPORT): _note_export,
+    (NOTE, IMPORT): _note_import,
     (LINKS, None): _links,
     (BACKLINKS, None): _backlinks,
+    (EXPORT, None): _export_all,
+    (IMPORT, None): _import_dir,
 }
 """``(command, subcommand)`` → the client method that answers it, for the verbs that need a session.
 

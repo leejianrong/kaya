@@ -130,6 +130,12 @@ PRECONDITION_FLAG = "--if-updated-at"
 API_URL_FLAG = "--api-url"
 TOKEN_FLAG = "--token"
 QUERY_FLAG = "--q"
+OUT_FLAG = "--out"
+ALL_FLAG = "--all"
+DIR_FLAG = "--dir"
+"""R12's export/import flags. ``--out`` names a single destination file (`note export`); ``--all``
+and ``--dir`` name the corpus verbs' one required argument each — see `kaya_cli.__main__` for why
+each is spelled the way BREADBOARD.md's R12 table spells it rather than unified into one name."""
 """KAN-559's search flag, on `note list` alone rather than on `output_flags()`'s shared parent —
 ``q`` is a request parameter `list_notes` forwards, not an output-shaping flag every verb inherits
 the way `--fields`/`--full` do, and `note get` already reads one note with no notion of a query."""

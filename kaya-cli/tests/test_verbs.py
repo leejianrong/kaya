@@ -260,8 +260,8 @@ def test_the_two_dispatch_tables_are_disjoint() -> None:
 
 
 def test_the_published_verb_set_is_pinned() -> None:
-    """SLICES §V2b step 6's list plus §V5 step 6's two, written out so that adding a verb is a
-    visible edit here.
+    """SLICES §V2b step 6's list plus §V5 step 6's two plus R12's four (KAN-1060..1063), written
+    out so that adding a verb is a visible edit here.
 
     The same discipline as `kaya-client`'s pin on ``CLI_FORMATS``: a verb reaching a shell is a
     published contract, and the way one arrives unnoticed is as a side effect of a refactor that
@@ -274,11 +274,15 @@ def test_the_published_verb_set_is_pinned() -> None:
         ("note", "edit"),
         ("note", "move"),
         ("note", "delete"),
+        ("note", "export"),
+        ("note", "import"),
         ("config", "set"),
         ("config", "show"),
         ("config", "path"),
         ("links", None),
         ("backlinks", None),
+        ("export", None),
+        ("import", None),
     }
 
 
