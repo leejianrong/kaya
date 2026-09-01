@@ -57,6 +57,13 @@ KAYA_DB_PORT="$DB_PORT" KAYA_APP_PORT="$APP_PORT" \
 echo "▸ running the Playwright suite"
 (
   cd frontend
+  # Idempotent — a no-op in the common case (browser already downloaded) and a one-time ~10-30s
+  # fetch on a fresh clone. Without this, a first `make test-e2e` on a machine that has never run
+  # Playwright before fails with "browser not found" instead of just working, which is exactly the
+  # first-run experience this target exists to give. CI installs the same way, as its own step
+  # (`--with-deps` there, for the OS package layer `ubuntu-latest` needs and a sandboxed dev
+  # environment already has) — see .github/workflows/ci.yml.
+  npx playwright install chromium
   KAYA_E2E_BASE_URL="http://localhost:${APP_PORT}" \
     KAYA_E2E_FAKE_PANDAN_TOKEN="$KAYA_E2E_FAKE_PANDAN_TOKEN" \
     npx playwright test
