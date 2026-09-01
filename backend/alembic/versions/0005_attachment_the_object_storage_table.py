@@ -6,7 +6,7 @@ Create Date: 2026-09-01
 
 Renumbered from 0004 to 0005 on landing: R13's note_version migration (KAN-1064) branched off the
 same 0003 tip and merged first, so this migration's revision id and down_revision were updated to
-keep Alembic's history linear — same resolution as the KAN-1049/KAN-1050 `backend/app/api/__init__.py`
+keep Alembic's history linear — same resolution as the KAN-1049/KAN-1050 ``app/api/__init__.py``
 conflict, just for a filename collision instead of a content one.
 
 R14 (``docs/roadmap/BREADBOARD.md``), KAN-1067/1068/1069. One table, ``attachment``: one row per
