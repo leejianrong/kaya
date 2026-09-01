@@ -5,20 +5,24 @@ half of the `kayatoast` suite, sibling to [pandan](https://github.com/leejianron
 board. Where pandan tracks *work*, kaya holds the *knowledge*: specs, notes, runbooks, meeting notes,
 cross-linked to the board.
 
-> **Status: the whole planned build is done, and it has nowhere to live.** A pandan PAT creates,
-> reads, edits and deletes notes over `/api/v1/notes`, and the whole stack ships as one container
-> image serving the SPA and the API from a single origin. **`kaya` drives all of it from a shell** —
+> **Status: the MVP is done, and kaya has moved past it.** A pandan PAT creates, reads, edits and
+> deletes notes over `/api/v1/notes`, and the whole stack ships as one container image serving the
+> SPA and the API from a single origin. **`kaya` drives all of it from a shell** —
 > `note {list,get,create,edit,move,delete}`, `links <ref>`, `backlinks <ref>` and
 > `config {set,show,path}`, in `human`, `json` or `toon`. The SPA is a browsable app: a CodeMirror 6
 > editor, a folder tree, a live preview with `[[wikilink]]` pills and autocomplete, a PAT paste to get
-> in, and a conflict banner when two writers collide. Full-text search runs end to end: a ranked
-> `?q=` in the API, `--q` on `note list`, a box in the sidebar. The MCP server registers six tools and
-> all six work. What has no answer at all is **where to point any of it: there is no hosted
-> deployment** (see *Where to point it*, below) — and `make test-e2e` is still an unwritten stub, the
-> one item left on the whole build.
-> See [`docs/PLAN.md`](docs/PLAN.md) for what was built,
-> [`docs/SLICES.md`](docs/SLICES.md) for the order, and [`CLAUDE.md`](CLAUDE.md) for what is
-> genuinely in each package today. Work is tracked on pandan board 18, `kaya — Notes`.
+> in, a conflict banner when two writers collide, a graph view over `note_link`, and a live pandan
+> board embedded read-only in a note. Full-text search runs end to end: a ranked `?q=` in the API,
+> `--q` on `note list`, a box in the sidebar. The MCP server registers six tools and all six work.
+> Building now, beyond the MVP: export/import, per-note version history, and attachments (see
+> [`docs/roadmap/BREADBOARD.md`](docs/roadmap/BREADBOARD.md)) — an org/team model is investigated but
+> not designed, and an independent hosted deploy is scoped but **deliberately parked**, not scheduled.
+> What has no answer at all is still **where to point any of it: there is no hosted deployment** (see
+> *Where to point it*, below).
+> See [`docs/PLAN.md`](docs/PLAN.md) for what the MVP built,
+> [`docs/roadmap/BREADBOARD.md`](docs/roadmap/BREADBOARD.md) for what's beyond it,
+> [`docs/SLICES.md`](docs/SLICES.md) for the MVP's build order, and [`CLAUDE.md`](CLAUDE.md) for what
+> is genuinely in each package today. Work is tracked on pandan board 18, `kaya — Notes`.
 
 ```mermaid
 flowchart LR
@@ -114,8 +118,9 @@ one credential throughout — from the CLI, from the browser, or from an MCP hos
 
 | Document | What it holds |
 |---|---|
-| [`docs/PLAN.md`](docs/PLAN.md) | Problem, solution, scope, requirements, the shape, affordances, testing approach, open risks |
-| [`docs/SLICES.md`](docs/SLICES.md) | Seven vertical slices, each with a build plan and acceptance criteria |
+| [`docs/PLAN.md`](docs/PLAN.md) | Problem, solution, scope, requirements, the shape, affordances, testing approach, open risks, and (§Beyond the MVP) what's building now |
+| [`docs/SLICES.md`](docs/SLICES.md) | The MVP's seven vertical slices, each with a build plan and acceptance criteria — closed and frozen |
+| [`docs/roadmap/BREADBOARD.md`](docs/roadmap/BREADBOARD.md) | The shape of every epic since the MVP: what shipped, what's building, what's a spike |
 | [`docs/QUESTIONS.md`](docs/QUESTIONS.md) | The decision register: what was decided, what is a default, what is deferred |
 | [`docs/adr/`](docs/adr/) | Ten architectural decisions, with what was rejected and why |
 | [`docs/kaya-vision.md`](docs/kaya-vision.md) | The founding statement of intent, kept verbatim |

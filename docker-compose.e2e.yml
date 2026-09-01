@@ -1,0 +1,53 @@
+# Overlay for `make test-e2e` (KAN-1070): a fake pandan standing in for
+# https://simple-kanban-jian.fly.dev, and the app's KAYA_PANDAN_URL pointed at it instead. Nothing
+# else about the base stack changes — same db/migrate/app services, same healthchecks, same
+# DATABASE_URL — so this file is additive only, and it is composed on top of docker-compose.yml
+# rather than standing alone:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.e2e.yml -p <project> up -d --build --wait
+#
+# `scripts/test-e2e.sh` is the only thing that should invoke this; it picks its own
+# COMPOSE_PROJECT_NAME and ports so an e2e run never touches a developer's persistent `make up`
+# volume — see docker-compose.yml's own header on why that matters for parallel worktrees, and the
+# same argument applies doubly here since a test run tears its stack down with `-v` when it's done.
+#
+# `fake-pandan` is stdlib-only Python (`scripts/e2e/fake_pandan.py`) bind-mounted into the same
+# digest-pinned `python:3.12-slim` base the real Dockerfile already builds from, so there is no new
+# image for scripts/check-image-pins.sh to worry about and nothing to build for this one service.
+services:
+  fake-pandan:
+    image: python:3.12-slim@sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36
+    command: ["python", "/fake_pandan.py"]
+    volumes:
+      - ./scripts/e2e/fake_pandan.py:/fake_pandan.py:ro
+    environment:
+      # No default here on purpose: `fake_pandan.py` refuses to start without it, and
+      # `scripts/test-e2e.sh` always sets it — see that script and `fake_pandan.py`'s own docstring
+      # on why a silently-drifting default between this process and Playwright's is the failure to
+      # avoid.
+      KAYA_E2E_FAKE_PANDAN_TOKEN: ${KAYA_E2E_FAKE_PANDAN_TOKEN:?KAYA_E2E_FAKE_PANDAN_TOKEN must be set}
+    restart: "no"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)",
+        ]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+      start_period: 2s
+
+  # The one thing about the base `app` service this overlay actually needs to change: point identity
+  # at the fake rather than the real, live pandan (ADR 0002 — kaya forwards the caller's bearer to
+  # whatever KAYA_PANDAN_URL names, and never mints or validates one itself). Compose merges
+  # `environment` and `depends_on` by key across files, so this does not repeat DATABASE_URL or the
+  # base file's db/migrate dependencies — only adds to them.
+  app:
+    environment:
+      KAYA_PANDAN_URL: http://fake-pandan:8000
+    depends_on:
+      fake-pandan:
+        condition: service_healthy

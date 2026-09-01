@@ -1,8 +1,13 @@
 """attachment: the object storage table
 
-Revision ID: 0004
-Revises: 0003
+Revision ID: 0005
+Revises: 0004
 Create Date: 2026-09-01
+
+Renumbered from 0004 to 0005 on landing: R13's note_version migration (KAN-1064) branched off the
+same 0003 tip and merged first, so this migration's revision id and down_revision were updated to
+keep Alembic's history linear — same resolution as the KAN-1049/KAN-1050 `backend/app/api/__init__.py`
+conflict, just for a filename collision instead of a content one.
 
 R14 (``docs/roadmap/BREADBOARD.md``), KAN-1067/1068/1069. One table, ``attachment``: one row per
 uploaded file, created by ``POST /api/v1/notes/{ref}/attachments`` and read back by
@@ -43,8 +48,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0004"
-down_revision: str | Sequence[str] | None = "0003"
+revision: str = "0005"
+down_revision: str | Sequence[str] | None = "0004"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

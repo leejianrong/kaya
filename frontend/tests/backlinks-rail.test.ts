@@ -117,8 +117,13 @@ describe('the rail is a region of the shell, beside the document rather than ins
     expect(rail.closest('main')).toBeNull()
     expect(rail.closest('.split')).toBeNull()
     expect(rail.closest('.editor-host')).toBeNull()
-    // And it really is a child of the grid, which is what makes the CSS area apply.
-    expect(rail.parentElement?.classList.contains('shell')).toBe(true)
+    // And it really is inside the grid's rail column: R13/KAN-1064 wrapped the panel in
+    // `RightRail.svelte`'s tab strip, so the direct child of `.shell` carrying `grid-area: rail`
+    // is `.right-rail` now — see `App.svelte`'s `.shell > :global(.right-rail)` — and `aside.rail`
+    // sits one level inside that wrapper rather than touching `.shell` itself.
+    const wrapper = rail.closest('.right-rail')
+    expect(wrapper).not.toBeNull()
+    expect(wrapper?.parentElement?.classList.contains('shell')).toBe(true)
   })
 
   it('does not put a node inside the editor container, which the S9 guards also cover', async () => {
