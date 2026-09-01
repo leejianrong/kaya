@@ -7,7 +7,7 @@
   import { needsFetch } from '../lib/backlinks'
   import { type ConflictVersions, keepMinePatch } from '../lib/conflict'
   import { conflictVersions, needsRemount, syncDocument } from '../lib/editor'
-  import { listLinks, updateNote } from '../lib/notes'
+  import { deleteNote, listLinks, updateNote } from '../lib/notes'
   import type { Link, Note, NoteUpdate } from '../lib/types'
   import ConflictBanner from './ConflictBanner.svelte'
 
@@ -25,6 +25,7 @@
     error,
     ondocument,
     ondirty,
+    ondeleted,
   }: {
     note: Note | null
     error: string | null
@@ -72,6 +73,12 @@
      * out and takes nothing back, so a consumer renders into its own element or nowhere.
      */
     ondocument?: (document: string) => void
+    /**
+     * KAN-1041's seam: fired with the ref once `DELETE` succeeds. `App.svelte` removes the row from
+     * the sidebar's own `notes` list and navigates home — this component knows nothing about either,
+     * the same split `ondirty` already makes for "is there something to lose".
+     */
+    ondeleted?: (ref: string) => void
   } = $props()
 
   /**
@@ -210,6 +217,21 @@
    * write", and telling a load failure apart from a refused save is exactly what a bug report needs.
    */
   let unavailable: string | null = $state(null)
+
+  /**
+   * KAN-1041, BREADBOARD.md A2: whether the Delete button is armed — the two-step confirm the card
+   * asks for, with no native `confirm()` and no modal library. The first click arms it; the second,
+   * while still armed, is the actual delete.
+   *
+   * Reset in the mount effect's remount branch below, alongside `dirty`/`refusal` and friends — this
+   * component is mounted once for the app's whole lifetime and only the *note* changes underneath
+   * it, so without that reset, arming Delete on one note and then opening another without confirming
+   * would leave the next note's button one click from deleting **it** instead.
+   */
+  let deleteArmed = $state(false)
+  let deleting = $state(false)
+  /** A delete `DELETE` refused or failed to reach the server. Cleared by the next attempt. */
+  let deleteError: string | null = $state(null)
 
   /**
    * KAN-567: the open note's outbound wikilinks, as `/links` last answered — what
@@ -383,6 +405,9 @@
     conflict = null
     movedAgain = false
     resolution = null
+    deleteArmed = false
+    deleting = false
+    deleteError = null
     // A newly built view has a document nobody has been told about — no transaction happened, so the
     // update listener never fired. Read it off the view rather than from `incomingBody`, so the seam's
     // one promise ("what the editor is showing") is true even if those two ever diverge.
@@ -646,6 +671,53 @@
       saving = false
     }
   }
+
+  /**
+   * The Delete button's click handler: arm on the first click, delete on the second.
+   *
+   * Two clicks rather than a `confirm()` or a banner (BREADBOARD.md A2) — the button's own label
+   * carries the question, so there is nothing else to build or to place. A click while a delete is
+   * already in flight is a no-op rather than a second request.
+   */
+  function clickDelete(): void {
+    if (deleting) {
+      return
+    }
+    if (!deleteArmed) {
+      deleteArmed = true
+      return
+    }
+    void performDelete()
+  }
+
+  /** Disarm without deleting — the way out of a Delete clicked by mistake. */
+  function cancelDelete(): void {
+    deleteArmed = false
+  }
+
+  /**
+   * The one `DELETE` in this component. No precondition to send (ADR 0009's guard is body-only, and
+   * there is no body left to guard once the row is gone) and no `--force`-style override — deleting
+   * twice in a row is refused by the server as a `404` the second time, which is already the correct
+   * answer.
+   */
+  async function performDelete(): Promise<void> {
+    const opened = note
+    if (opened === null || deleting) {
+      return
+    }
+    deleting = true
+    deleteError = null
+    try {
+      await deleteNote(opened.ref)
+      ondeleted?.(opened.ref)
+    } catch (failure) {
+      deleteError = failure instanceof Error ? failure.message : 'Could not delete.'
+      deleteArmed = false
+    } finally {
+      deleting = false
+    }
+  }
 </script>
 
 <section class="pane" aria-label="Editor">
@@ -689,7 +761,31 @@
           no changes
         {/if}
       </span>
+      <button
+        type="button"
+        class="delete"
+        onclick={clickDelete}
+        disabled={deleting}
+        data-testid="delete-button"
+      >
+        {#if deleting}
+          Deleting…
+        {:else if deleteArmed}
+          Confirm delete?
+        {:else}
+          Delete
+        {/if}
+      </button>
+      {#if deleteArmed && !deleting}
+        <button type="button" class="delete-cancel" onclick={cancelDelete} data-testid="delete-cancel">
+          Cancel
+        </button>
+      {/if}
     </div>
+
+    {#if deleteError}
+      <p class="conflict" data-testid="delete-error">{deleteError}</p>
+    {/if}
   {:else}
     <p class="notice">Pick a note from the sidebar.</p>
   {/if}
@@ -795,6 +891,23 @@
     color: var(--muted);
     font-family: var(--mono);
     font-size: 0.75rem;
+  }
+
+  .delete,
+  .delete-cancel {
+    background: transparent;
+    color: var(--muted);
+  }
+
+  /* Pushed to the end of the bar, away from Save — a destructive control gets its own end of the
+     row rather than sitting beside the one you press routinely. */
+  .delete {
+    margin-left: auto;
+  }
+
+  .delete:hover:not(:disabled) {
+    border-color: color-mix(in srgb, #c0392b 55%, var(--edge));
+    color: #c0392b;
   }
 
   .conflict {
