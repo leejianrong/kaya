@@ -59,6 +59,38 @@ export interface LinkList {
   links: Link[]
 }
 
+/**
+ * One node in the note graph — `GET /api/v1/graph` (KAN-1050), mirroring
+ * `backend/app/api/schemas.py`'s `GraphNode` field for field.
+ *
+ * `ref` rather than `id` (ADR 0008 — a note's identity is its ref) — `navigate()`/`routeHref()`
+ * already take refs everywhere else in this app, and a graph node is a note like any other row.
+ */
+export interface GraphNode {
+  ref: string
+  title: string
+  path: string
+}
+
+/**
+ * One resolved note-to-note wikilink, as the two refs it connects.
+ *
+ * Both `NOTE-n`, never an internal id — see `GraphNode`. There is no `target_kind` here: this
+ * graph is note-to-note edges only, a cross-repo `[[KAN-501]]`/`[[EPIC-3]]` reference is out of
+ * scope for it (`backend/app/api/schemas.py`'s `GraphEdge`).
+ */
+export interface GraphEdge {
+  source: string
+  target: string
+}
+
+/** `GET /api/v1/graph`'s envelope — bare, not a named-array wrapper, because it already carries
+ *  two arrays and is rendered as one diagram rather than a page of rows. */
+export interface GraphRead {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+}
+
 /** `POST /api/v1/notes`. `body` and `path` default to `''` server-side. */
 export interface NoteCreate {
   title: string

@@ -1,7 +1,7 @@
 """The ``/api/v1`` surface (KAN-536).
 
-Five modules, and the split is the same one ``app/auth/`` makes: the decisions sit in functions
-over ordinary objects, and only the two route modules know FastAPI's routing machinery exists.
+Six modules, and the split is the same one ``app/auth/`` makes: the decisions sit in functions
+over ordinary objects, and only the route modules know FastAPI's routing machinery exists.
 
 - ``errors.py`` — the wire shape of an error, for *every* failure the app can produce.
 - ``refs.py`` — **the** central ref resolver. ``NOTE-12``, ``note-12`` and ``12`` all arrive here
@@ -13,11 +13,14 @@ over ordinary objects, and only the two route modules know FastAPI's routing mac
   route module rather than two more functions in ``notes.py``, because these are the only routes in
   the package that take a bearer and an upstream client as well as a session — see its docstring,
   which argues the split and the three-phase body that follows from it.
+- ``graph.py`` — KAN-1050's ``/graph``: every note the caller owns and every resolved note-to-note
+  wikilink among them, node-and-edge shaped for the SPA's graph view.
 - ``meta.py`` — KAN-555's one **unauthenticated** route, carrying ``KAYA_PANDAN_URL`` to a visitor
   who has no credential yet and therefore cannot be asked for one. One key, on purpose.
 """
 
 from app.api.errors import install_error_handlers
+from app.api.graph import router as graph_router
 from app.api.links import router as links_router
 from app.api.meta import router as meta_router
 from app.api.notes import router
@@ -25,6 +28,7 @@ from app.api.refs import NoteRef, invalid_note_ref, parse_note_ref, resolve_note
 
 __all__ = [
     "NoteRef",
+    "graph_router",
     "install_error_handlers",
     "invalid_note_ref",
     "links_router",
