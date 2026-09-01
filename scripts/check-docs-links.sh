@@ -18,9 +18,12 @@ while IFS= read -r file; do
   files=$((files + 1))
   dir=$(dirname "$file")
 
-  # Every ](target) link, minus anchors and query strings. `|| true` so a file with
-  # no links doesn't abort the loop.
-  targets=$(grep -oE '\]\([^)]+\)' "$file" 2>/dev/null | sed -E 's/^\]\(//; s/\)$//; s/[#?].*$//' || true)
+  # Every ](target) link, minus anchors and query strings. Fenced code blocks are stripped first —
+  # a code sample containing `](...)`-shaped text (e.g. a Python type hint like `Callable[[], T])`)
+  # reads as a broken link otherwise, which cost a real PR a false red build (KAN-1051).
+  # `|| true` so a file with no links doesn't abort the loop.
+  targets=$(awk '/^```/ { fenced = !fenced; next } !fenced' "$file" \
+    | grep -oE '\]\([^)]+\)' 2>/dev/null | sed -E 's/^\]\(//; s/\)$//; s/[#?].*$//' || true)
 
   while IFS= read -r target; do
     [ -z "$target" ] && continue
