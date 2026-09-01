@@ -81,10 +81,11 @@
      */
     ondeleted?: (ref: string) => void
     /**
-     * KAN-1042: fired with the fresh `Note` whenever a title-only `PATCH` succeeds — the note's own
-     * write path (see {@link saveTitle}), not `App.svelte`'s. `App.svelte` uses it to update the
-     * matching row in the sidebar's `notes` list, which is a *separate* fetch from this component's
-     * `note` prop and does not otherwise learn about a rename until the next full reload.
+     * KAN-1042/1043: fired with the fresh `Note` whenever a title- or path-only `PATCH` succeeds —
+     * the note's own write path (see {@link saveTitle}/{@link savePath}), not `App.svelte`'s.
+     * `App.svelte` uses it to update the matching row in the sidebar's `notes` list, which is a
+     * *separate* fetch from this component's `note` prop and does not otherwise learn about a
+     * rename or move until the next full reload.
      */
     onupdated?: (stored: Note) => void
   } = $props()
@@ -256,6 +257,20 @@
   let titleSaving = $state(false)
   /** A title `PATCH` refused or failed to reach the server. Cleared by the next attempt. */
   let titleError: string | null = $state(null)
+  /**
+   * The path field's own text, and the value {@link savePath} compares it against to decide
+   * whether there is anything to send — `titleDraft`/`titleBaseline`'s sibling, for the identical
+   * reason: "what the prop said" and "what this edit is against" have to stay apart.
+   *
+   * Set in the mount effect's remount branch alongside `basedOn`, and again from a successful
+   * {@link savePath} response — never from the `note` prop on an unrelated re-render, since nothing
+   * currently pushes an external path change into that prop for the same ref.
+   */
+  let pathBaseline = ''
+  let pathDraft = $state('')
+  let pathSaving = $state(false)
+  /** A path `PATCH` refused or failed to reach the server. Cleared by the next attempt. */
+  let pathError: string | null = $state(null)
 
   /**
    * KAN-567: the open note's outbound wikilinks, as `/links` last answered — what
@@ -436,6 +451,10 @@
     titleDraft = titleBaseline
     titleSaving = false
     titleError = null
+    pathBaseline = opened?.path ?? ''
+    pathDraft = pathBaseline
+    pathSaving = false
+    pathError = null
     // A newly built view has a document nobody has been told about — no transaction happened, so the
     // update listener never fired. Read it off the view rather than from `incomingBody`, so the seam's
     // one promise ("what the editor is showing") is true even if those two ever diverge.
@@ -790,6 +809,36 @@
       ;(event.target as HTMLInputElement).blur()
     }
   }
+
+  /**
+   * The path field's blur handler (BREADBOARD.md A3) — `updateNote(ref, { path })` directly, never
+   * `moveNote()`, per ADR 0008: `moveNote` is sugar over the same call for the CLI's benefit, and
+   * this component already owns its write path the way `saveTitle` does for the title. Unguarded, no
+   * `if_updated_at`, and a no-op when nothing changed.
+   *
+   * `basedOn` is refreshed from the response for the same reason `saveTitle` refreshes it: a
+   * path-only write still bumps `updated_at` (`onupdate=func.now()`), so leaving `basedOn` at the
+   * value read on open would guard the *next* body Save against a timestamp the row no longer has.
+   */
+  async function savePath(): Promise<void> {
+    const opened = note
+    if (opened === null || pathSaving || pathDraft === pathBaseline) {
+      return
+    }
+    pathSaving = true
+    pathError = null
+    try {
+      const stored = await updateNote(opened.ref, { path: pathDraft })
+      basedOn = stored.updated_at
+      pathBaseline = stored.path
+      pathDraft = stored.path
+      onupdated?.(stored)
+    } catch (failure) {
+      pathError = failure instanceof Error ? failure.message : 'Could not move.'
+    } finally {
+      pathSaving = false
+    }
+  }
 </script>
 
 <section class="pane" aria-label="Editor">
@@ -811,9 +860,20 @@
       />
       <p class="meta">
         <code>{note.ref}</code>
-        <!-- A note may legitimately have no path (ADR 0008: path is metadata, not identity), and
-             two of the seeded notes do. Say so rather than rendering an empty element. -->
-        <span class="path">{note.path === '' ? '(no path)' : note.path}</span>
+        <!-- KAN-1043, BREADBOARD.md A3: an editable path field in place of the old static span.
+             A note may legitimately have no path (ADR 0008: path is metadata, not identity), and two
+             of the seeded notes do — the placeholder says so rather than the field reading empty for
+             an unrelated reason. Saved on blur, and only if changed — see `savePath`. -->
+        <input
+          type="text"
+          class="path-input"
+          placeholder="(no folder)"
+          bind:value={pathDraft}
+          onblur={() => void savePath()}
+          disabled={pathSaving}
+          aria-label="Note path"
+          data-testid="path-input"
+        />
         <!-- `basedOn` and not `note.updated_at`: after a save the prop is stale, and the version
              this edit is guarded against is the only honest thing to show here. -->
         <span class="stamp" title="ADR 0009's precondition, carried as an opaque string"
@@ -822,6 +882,9 @@
       </p>
       {#if titleError}
         <p class="conflict" data-testid="title-error">{titleError}</p>
+      {/if}
+      {#if pathError}
+        <p class="conflict" data-testid="path-error">{pathError}</p>
       {/if}
     </header>
 
@@ -957,6 +1020,26 @@
 
   .stamp {
     font-family: var(--mono);
+  }
+
+  /* Sits where the old static path span did — same size, same muted color — until you hover or
+     focus it, when the border says it is a field (KAN-1043, same treatment as `.title-input`). */
+  .path-input {
+    min-width: 8rem;
+    padding: 0.05rem 0.3rem;
+    border: 1px solid transparent;
+    border-radius: 0.3rem;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-family: var(--mono);
+    font-size: 0.85rem;
+  }
+
+  .path-input:hover,
+  .path-input:focus {
+    border-color: var(--edge);
+    outline: none;
   }
 
   .notice {
