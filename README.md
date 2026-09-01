@@ -5,20 +5,33 @@ half of the `kayatoast` suite, sibling to [pandan](https://github.com/leejianron
 board. Where pandan tracks *work*, kaya holds the *knowledge*: specs, notes, runbooks, meeting notes,
 cross-linked to the board.
 
-> **Status: the product works from a checkout and has nowhere to live.** A pandan PAT creates,
+> **Status: the whole planned build is done, and it has nowhere to live.** A pandan PAT creates,
 > reads, edits and deletes notes over `/api/v1/notes`, and the whole stack ships as one container
 > image serving the SPA and the API from a single origin. **`kaya` drives all of it from a shell** —
 > `note {list,get,create,edit,move,delete}`, `links <ref>`, `backlinks <ref>` and
 > `config {set,show,path}`, in `human`, `json` or `toon`. The SPA is a browsable app: a CodeMirror 6
-> editor, a folder tree, a live preview, a PAT paste to get in, and a conflict banner when two
-> writers collide. The MCP server registers six
-> tools and five of them work. Full-text search runs end to end: a ranked `?q=` in the API, `--q` on
-> `note list`, a box in the sidebar. What has no answer at all is **where to point any of it: there
-> is no hosted deployment** (see *Where to point it*, below), and the published binary is older than
-> most of the above.
-> See [`docs/PLAN.md`](docs/PLAN.md) for what is being built,
+> editor, a folder tree, a live preview with `[[wikilink]]` pills and autocomplete, a PAT paste to get
+> in, and a conflict banner when two writers collide. Full-text search runs end to end: a ranked
+> `?q=` in the API, `--q` on `note list`, a box in the sidebar. The MCP server registers six tools and
+> all six work. What has no answer at all is **where to point any of it: there is no hosted
+> deployment** (see *Where to point it*, below) — and `make test-e2e` is still an unwritten stub, the
+> one item left on the whole build.
+> See [`docs/PLAN.md`](docs/PLAN.md) for what was built,
 > [`docs/SLICES.md`](docs/SLICES.md) for the order, and [`CLAUDE.md`](CLAUDE.md) for what is
-> genuinely in each package today. Work is tracked on pandan board 18.
+> genuinely in each package today. Work is tracked on pandan board 18, `kaya — Notes`.
+
+```mermaid
+flowchart LR
+    CLI["kaya-cli"] --> Client["kaya-client\n(shaping: projection, truncation, aggregates)"]
+    MCP["mcp\n(6 tools)"] --> Client
+    SPA["frontend\n(SPA, direct API caller)"]
+    Client --> Backend["backend\n(FastAPI + Postgres)"]
+    SPA --> Backend
+    Backend -->|bearer PAT| Pandan[("pandan\n(identity + board)")]
+```
+
+Two adapters (`kaya-cli`, `mcp`) share one client so payload shaping lives in exactly one place; the
+SPA talks to the backend directly, by design (ADR 0004). The arrow only ever points one way.
 
 ## Install the CLI
 
@@ -39,7 +52,7 @@ actually got:
 
 ```console
 $ kaya --version
-kaya 0.5.0 (6694657)
+kaya 0.12.0 (8f0d0ff)
 ```
 
 The sha is the commit it was built from, and a build that did *not* come from the release pipeline
@@ -48,23 +61,21 @@ says `source checkout, not a released build` instead of staying quiet — that i
 pasting into any bug report. Want a shorter name? `ln -sf ~/.local/bin/kaya ~/.local/bin/ky`; there
 is deliberately no second console script.
 
-**That version number is the current release, and it reads only.** `v0.5.0` predates the write verbs:
-its own `--help` says *"Reads only: `note list` and `note get`"*, and `config`, `--fields`, `--full`,
-`links`, `backlinks` and bare `kaya` are all unrecognised words to it. Everything this README
-describes below is on `main` and reaches a binary at the next tag; until then the download is a
-read-only client and the checkout is the whole tool.
+**`v0.12.0` is the current release and it is the full tool** — bare `kaya`, every `note` verb,
+`links`/`backlinks`, `config`, `--q`, `--fields`, `--full` are all there; check with `kaya --help`.
+`main` has moved a handful of commits past that tag since, one of them behavioural to the CLI surface
+(KAN-839: a malformed `--if-updated-at` now exits `2`, not `1`), tracked by `kaya-cli`'s own version
+bump to `0.13.0` — a rebuild off `main` picks that up; the released binary hasn't caught up yet.
 
 ### Where to point it
 
 **There is no hosted kaya, so the binary has no origin until you start one yourself.** This is
 [ADR 0010](docs/adr/0010-no-hosted-deploy-until-the-homelab.md) on purpose, not an omission: the
 image and the Kubernetes manifests are built and exercised locally, and the k8s homelab is kaya's
-first real deploy. A published artifact with nowhere to point it is the open end that ADR names,
-now reached, and it was answered with this paragraph rather than with infrastructure — see that
-ADR's §Amendment (2026-08-20) for the decision and for the three things a remote origin would still
-prove that a local one cannot. The limit that leaves is a real one and worth naming: **running kaya
-means a repository checkout and a working Docker, so no checkout or no Docker means no kaya**,
-whatever the download suggests.
+first real deploy. See that ADR's §Amendment (2026-08-20) for the decision and for the three things a
+remote origin would still prove that a local one cannot. The limit that leaves is a real one and
+worth naming: **running kaya means a repository checkout and a working Docker, so no checkout or no
+Docker means no kaya**, whatever the download suggests.
 
 ```bash
 make up                                     # db + migrate + the app image, one origin on :8000
@@ -87,11 +98,9 @@ kaya note get NOTE-12 --format json
 
 `kaya config set --api-url …` writes those to a config file instead, and `kaya config show`
 reports what resolved and from which tier — it never prints the token, only whether there is one.
-Every verb is live on `main`, so the origin is the one thing standing between the CLI and a usable
-product; [`kaya-cli/README.md`](kaya-cli/README.md) has the formats, the error contract and the exit
-codes.
+[`kaya-cli/README.md`](kaya-cli/README.md) has the formats, the error contract and the exit codes.
 
-## What it will do
+## What it does
 
 Write markdown in a real editor, organise notes in folders, search the full text, and link notes to
 each other with `[[wikilinks]]`. A wikilink can also point at board work: `[[KAN-12]]` renders the
@@ -99,7 +108,7 @@ card's title and column inline, and a backlinks panel answers "which notes menti
 
 The same PAT that drives the board drives the notes, from the same config, with no second login and
 no second token. An agent working `KAN-12` reads its spec note, edits it, and moves the card, using
-one credential throughout.
+one credential throughout — from the CLI, from the browser, or from an MCP host.
 
 ## The plan
 
@@ -118,7 +127,8 @@ Between them they carry most of what makes this project different from a generic
 
 ## Development
 
-Needs `uv` (Python 3.12), Node 24.15+ and Docker.
+Needs `uv` (Python 3.12), Node 24.15+ and Docker. This is a single-maintainer project with no
+separate contributor process — the conventions below are the whole of it.
 
 ```bash
 make hooks         # install the pre-push gate (do this once)
