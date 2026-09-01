@@ -1,9 +1,9 @@
 <script lang="ts">
-  import BacklinksPanel from './components/BacklinksPanel.svelte'
   import EditorPane from './components/EditorPane.svelte'
   import GraphView from './components/GraphView.svelte'
   import Landing from './components/Landing.svelte'
   import PreviewPane from './components/PreviewPane.svelte'
+  import RightRail from './components/RightRail.svelte'
   import Sidebar from './components/Sidebar.svelte'
   import { ApiError } from './lib/api'
   import { clearToken, credentialState } from './lib/auth'
@@ -116,6 +116,26 @@
     const index = notes.findIndex((found) => found.ref === stored.ref)
     if (index !== -1) {
       notes[index] = stored
+    }
+  }
+
+  /**
+   * `RightRail`'s `onrestored` (R13/KAN-1066): a History-tab restore succeeded, so both the sidebar
+   * row **and** the open note are replaced with the fresh record.
+   *
+   * **Not the same as {@link noteUpdated}, and the difference is deliberate.** A title/path-only
+   * save never changes what `EditorPane` is already showing — it typed the new title itself — so
+   * `noteUpdated` only touches `notes`. A restore changes `body`, and the editor did not type it:
+   * the restored text exists only in the History tab's preview and in the response this callback
+   * receives. Reassigning `note` here is what pushes it into the editor, because `note` is the one
+   * prop `EditorPane`'s own effect watches for an *external* body change — `needsRemount` (`lib/
+   * editor.ts`) depends only on the ref, so this does not remount the view; it dispatches the new
+   * text as a transaction, the identical path a stale-precondition "keep theirs" already uses.
+   */
+  function noteRestored(stored: Note): void {
+    noteUpdated(stored)
+    if (note?.ref === stored.ref) {
+      note = stored
     }
   }
 
@@ -427,12 +447,15 @@
     </main>
     {#if railed}
       <!--
-        KAN-568's backlinks rail — the fourth region, and **outside `main` on purpose** (see
-        `railed`). It takes the note rather than the route's ref, so it never asks about a ref the
-        note fetch has not confirmed exists, and it hands a `401` back to `discard()` because this
-        file owns the credential lifecycle and no region may absorb one.
+        KAN-568's rail — the fourth region, and **outside `main` on purpose** (see `railed`). It
+        takes the note rather than the route's ref, so it never asks about a ref the note fetch has
+        not confirmed exists, and it hands a `401` back to `discard()` because this file owns the
+        credential lifecycle and no region may absorb one. R13/KAN-1064 added a second tab
+        (`RightRail.svelte`) beside the original Backlinks one; `onrestored` is the one seam that
+        tab needed from this file, because a restore has to reach the open `note`, not just the
+        sidebar row (see `noteRestored`).
       -->
-      <BacklinksPanel {note} onexpired={discard} />
+      <RightRail {note} onexpired={discard} onrestored={noteRestored} />
     {/if}
   {:else}
     <!-- KAN-555's landing state, which owns everything about the paste including the credential
@@ -498,7 +521,10 @@
     grid-area: sidebar;
   }
 
-  .shell > :global(.rail) {
+  /* R13/KAN-1064 wrapped the fourth region in `RightRail.svelte` (the tab strip beside Backlinks),
+     so the direct child under `.shell` is now `.right-rail` rather than `BacklinksPanel`'s own
+     `.rail` — that class still exists, one level deeper, inside `RightRail`'s `.pane`. */
+  .shell > :global(.right-rail) {
     grid-area: rail;
   }
 

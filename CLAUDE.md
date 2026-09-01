@@ -33,10 +33,11 @@ right and this file is stale. Fix it in the same PR.
 
 [`docs/kaya-vision.md`](docs/kaya-vision.md) (settled intent) → [`docs/PLAN.md`](docs/PLAN.md) +
 [`docs/adr/`](docs/adr/) (the *why*, ten ADRs — amend, don't re-litigate) →
-[`docs/SLICES.md`](docs/SLICES.md) (the seven build slices, matching pandan board 18's seven epics),
-with [`docs/QUESTIONS.md`](docs/QUESTIONS.md) as the decision register (a row marked `ASSUMED` was
-taken on the maintainer's behalf — correct it if wrong). "pandan ADR NNNN" means an ADR in the pandan
-repo; bare "ADR NNNN" means this repo's. Read `PLAN.md` before anything substantial.
+[`docs/SLICES.md`](docs/SLICES.md) (the seven **MVP** build slices, matching board 18's original seven
+epics) → [`docs/roadmap/BREADBOARD.md`](docs/roadmap/BREADBOARD.md) (everything after — board 18 has
+grown four more epics since), with [`docs/QUESTIONS.md`](docs/QUESTIONS.md) as the decision register (a
+row marked `ASSUMED` was taken on the maintainer's behalf — correct it if wrong). "pandan ADR NNNN" means
+an ADR in the pandan repo; bare "ADR NNNN" means this repo's. Read `PLAN.md` before anything substantial.
 
 ## The five decisions you will trip over if you don't know them
 
@@ -193,6 +194,13 @@ via testcontainers.
 
 **Tests.** Layered by cost (`docs/PLAN.md` §Testing approach): fast/no-infra, real-Postgres, e2e. A
 slow check never gates a local push. Every bug and flake becomes a test, written failing first.
+
+**Orchestrating sub-agents.** Hard limit: **at most 2 concurrent sub-agents** (Agent-tool /
+worktree-isolated) driving this repo at once, maintainer's explicit cap. This machine is shared with
+unrelated work; each agent's checks (`uv sync` + `npm ci` + pytest + vitest, run in parallel across
+several worktrees) contend for the same CPU/network and reliably flake an otherwise-passing pre-push
+run past 2 concurrent. Pipeline additional cards — start the next one once a running agent's PR is up,
+not by fanning out wider.
 
 **Mutating a guard to prove it fires** (anything marked `[mutate]` in `SLICES.md`): break the
 protected thing, confirm the failure names the right thing, restore. **Commit the card's work

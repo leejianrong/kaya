@@ -90,7 +90,9 @@ tab-separated row on the one line it most needed to parse.
 
 Resolved in `kaya-client`'s `config.py` so that V6's MCP server reads exactly the same keys
 (PLAN §Config). Each key is taken from the first tier that supplies it: **environment, then the
-config file**. The third tier PLAN names, the nearest `.mcp.json`, arrives with V6.
+config file**. The third tier PLAN names, the nearest `.mcp.json`, was never built — V6 shipped
+without it (see `docs/ENGINEERING_NOTES.md`: choosing which entry in an MCP host's file is kaya's is
+a guess, and a host launching one usually exports the `env` block anyway).
 
 | | |
 |---|---|

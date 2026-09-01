@@ -114,6 +114,30 @@ export interface NoteUpdate {
 }
 
 /**
+ * One snapshot of a note's body — `GET /notes/{ref}/versions` (R13/KAN-1064), mirroring
+ * `backend/app/api/schemas.py`'s `NoteVersionRead` field for field.
+ *
+ * `body` is the **whole** body, not a snippet: the backend's preview-endpoint design call
+ * (`NoteVersionRead`'s own docstring) is that a note body is small prose, same as `Note.body`
+ * itself, so a version list carries every row's full text and a preview is a client-side
+ * selection rather than a second request per click.
+ */
+export interface NoteVersion {
+  /** `note_version`'s own surrogate key — a row key for `{#each}`, nothing more. Unlike every
+   *  identifier on {@link Note}, this names no independently addressable resource: there is no
+   *  `GET .../versions/{id}`, by the design call above. */
+  id: number
+  body: string
+  created_at: string
+}
+
+/** `GET /notes/{ref}/versions`'s envelope — named, like `NoteList`/`LinkList`, for the same
+ *  reason. */
+export interface NoteVersionList {
+  versions: NoteVersion[]
+}
+
+/**
  * One card in a `pandan-board` embed — `GET /api/v1/embeds/board` (KAN-1049), mirroring
  * `backend/app/api/schemas.py`'s `EmbedCard`.
  *

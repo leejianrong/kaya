@@ -8,7 +8,16 @@
  */
 
 import { apiRequest, type RequestOptions } from './api'
-import type { Link, LinkList, Note, NoteCreate, NoteList, NoteUpdate } from './types'
+import type {
+  Link,
+  LinkList,
+  Note,
+  NoteCreate,
+  NoteList,
+  NoteUpdate,
+  NoteVersion,
+  NoteVersionList,
+} from './types'
 
 type Options = Pick<RequestOptions, 'signal' | 'fetchImpl'>
 
@@ -126,6 +135,40 @@ export async function listBacklinks(ref: string, options: Options = {}): Promise
 export async function listLinks(ref: string, options: Options = {}): Promise<Link[]> {
   const payload = await apiRequest<LinkList>(`${notePath(ref)}/links`, options)
   return payload.links
+}
+
+/**
+ * Every version of this note's body, newest first — `GET /notes/{ref}/versions` (R13/KAN-1064),
+ * read by KAN-1065's History tab.
+ *
+ * **Full records, same as everything else this module returns.** The backend's design call
+ * (`backend/app/api/schemas.py`'s `NoteVersionRead`) is that a version's whole `body` rides along
+ * in the list response — a note body is small prose, and a preview is a selection over rows
+ * already in hand, not a second request. `restoreVersion` below is what turns that selection into
+ * a write.
+ */
+export async function listVersions(ref: string, options: Options = {}): Promise<NoteVersion[]> {
+  const payload = await apiRequest<NoteVersionList>(`${notePath(ref)}/versions`, options)
+  return payload.versions
+}
+
+/**
+ * Restore a version: sugar over {@link updateNote}, and it must stay sugar (ADR 0008's `moveNote`
+ * is the precedent — a restore is not a route, it is a `PATCH` whose `body` came from history).
+ *
+ * `ifUpdatedAt` is **required** here, unlike `updateNote`'s own optional precondition: a restore
+ * is a write a person did not just type, aimed from a rail beside the editor rather than from
+ * inside it, and BREADBOARD.md's R13 is explicit that it "goes through the same 409 precondition
+ * as any other edit" — the caller (`HistoryPanel.svelte`) always has the open note's `updated_at`
+ * in hand, so there is no honest reason for this one call site to spell the unguarded write.
+ */
+export function restoreVersion(
+  ref: string,
+  body: string,
+  ifUpdatedAt: string,
+  options: Options = {},
+): Promise<Note> {
+  return updateNote(ref, { body, if_updated_at: ifUpdatedAt }, options)
 }
 
 /** Delete the note. `204`, no body. The ref is never reused (ADR 0008). */
