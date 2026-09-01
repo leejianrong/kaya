@@ -20,6 +20,15 @@ invitation is always accepted. So the schema knowledge that shaping needs (which
 which make the default row, what the envelope is called) is attached *here*, where the call was
 made, and travels with the data.
 
+**R12 (KAN-1060..1063) adds ``export_note``/``export_all``/``import_note``/``import_dir``**, the
+export/import round trip `docs/roadmap/BREADBOARD.md` shapes, plus ``claim_note`` for
+``PUT /api/v1/notes/{ref}`` (KAN-1061, `backend/app/api/note_claim.py`) — the one new route this
+epic needed, so a re-import whose ``kaya_ref`` is free gets that exact ref back rather than a fresh
+one, per ADR 0008 §Decision. ``import_note``/``import_dir`` try ``claim_note`` first whenever the
+source file names a ``kaya_ref``, and fall back to the ordinary ``create_note`` (a fresh, server-
+minted ref) only when the claim is refused — taken, or not a well-formed ref this route accepts —
+or when the file names none at all. See ``_import_document`` for the whole decision.
+
 ### The transport seam
 
 ``client`` is injectable, the same shape as ``PandanIdentityUpstream`` in
@@ -32,12 +41,14 @@ It is also the named place retry-with-backoff would land if KAN-666's measuremen
 a retry over a 21.8 s cold introspection makes an outage take a multiple of the timeout to report.
 """
 
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote, urlencode
 
 import httpx
 
 from kaya_client.errors import ApiError, TransportError, UsageError
+from kaya_client.frontmatter import PATH_KEY, REF_KEY, TITLE_KEY, compose_document, parse_document
 from kaya_client.payloads import Payload
 
 # --------------------------------------------------------------------------- the deadline
@@ -225,6 +236,27 @@ they are named here rather than written inline at three call sites."""
 
 CONTENT_FIELDS = (TITLE_FIELD, BODY_FIELD, PATH_FIELD)
 """The three columns a `PATCH` may write, in the order a refusal lists them."""
+
+EXPORT_NOUN = "export"
+EXPORT_ENVELOPE = "exports"
+"""R12's third noun, alongside ``note`` and ``link``. `note export` is a new **entity** kind for the
+same reason `links` argues a link is not a note: what an export answers — which file did this write,
+and where — is not a note's own shape, so widening ``NOTE_COLUMNS`` to fit it would put a column on
+`note get` that only `note export` ever fills."""
+
+EXPORT_COLUMNS = ("ref", "title", "path", "file")
+"""The whole of what an export reports: which note, and which file it landed in. No prose fields —
+the body went into the file, not onto the screen, which is the point of the verb."""
+
+IMPORTED_FROM_REF_KEY = "imported_from_ref"
+REF_REUSED_KEY = "ref_reused"
+"""Two informational keys `import_note`/`import_dir` add to the created note's own record.
+``imported_from_ref`` is the source file's own ``kaya_ref`` (or ``None`` for a file with none —
+arbitrary markdown, per BREADBOARD.md's R12). ``ref_reused`` is whether the returned note's ``ref``
+is that same value: ``True`` only when `claim_note` succeeded, ``False`` when it was refused (taken,
+or not a ref this route accepts) or never attempted (no ``kaya_ref`` to try). They are extra keys on
+an ordinary ``note`` entity, not a new noun, because the record this returns is a real note in every
+other respect and `note get <ref>` on it behaves identically."""
 
 
 class KayaClient:
@@ -501,6 +533,219 @@ class KayaClient:
             prose_fields=NOTE_PROSE_FIELDS,
         )
 
+    # --------------------------------------------------------- export / import (R12)
+
+    def export_note(self, ref: str, destination: str | Path | None = None) -> Payload:
+        """Write one note to a file: YAML-ish front matter, then the body verbatim.
+
+        ``GET /api/v1/notes/{ref}`` through the ordinary `get_note` path — no new route, per R12's
+        fit-check, and the same ref-resolution guarantee every other verb gets (ADR 0008). What
+        `frontmatter.compose_document` does with the response is this card's whole addition.
+
+        ``destination`` defaults to ``<ref>.md`` in the current directory, using the **canonical**
+        ref the API returned rather than whatever spelling ``ref`` was typed as (``12`` exports to
+        ``NOTE-12.md``, not ``12.md``) — the closest a filename can get to the round-trip guarantee
+        ADR 0008 makes about the ref itself.
+        """
+        note = dict(self.get_note(ref).record)
+        target = Path(destination) if destination is not None else Path(f"{note['ref']}.md")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(compose_document(note), encoding="utf-8")
+        return Payload.entity(
+            noun=EXPORT_NOUN,
+            envelope_key=EXPORT_ENVELOPE,
+            record={
+                "ref": note["ref"],
+                "title": note["title"],
+                "path": note["path"],
+                "file": str(target),
+            },
+            columns=EXPORT_COLUMNS,
+        )
+
+    def export_all(self, directory: str | Path) -> Payload:
+        """Every note the caller owns, one file per note at its ``path`` — an Obsidian-vault-
+        compatible directory (BREADBOARD.md's R12 corpus export).
+
+        ``list_notes()`` rather than a loop of ``get_note`` calls: the list route already returns
+        the complete record, ``body`` included (`NoteList`'s own ``NoteRead`` items, not a
+        summary), so there is no second request per note to make. The order it writes in is
+        whatever `list_notes` returned — ``updated_at DESC, id DESC`` — which is irrelevant to a
+        directory of files and not re-sorted for that reason.
+
+        See `_vault_relative_path` for how a note's mutable, unconstrained ``path`` (ADR 0008: no
+        uniqueness, no format) becomes a filesystem path that cannot escape ``directory``.
+        """
+        root = Path(directory)
+        written = []
+        for note in self.list_notes().records:
+            relative = _vault_relative_path(note)
+            target = root.joinpath(*relative.parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(compose_document(note), encoding="utf-8")
+            written.append(
+                {
+                    "ref": note["ref"],
+                    "title": note["title"],
+                    "path": note["path"],
+                    "file": str(target),
+                }
+            )
+        return Payload.collection(
+            noun=EXPORT_NOUN,
+            envelope_key=EXPORT_ENVELOPE,
+            records=written,
+            columns=EXPORT_COLUMNS,
+        )
+
+    def claim_note(
+        self,
+        ref: str,
+        *,
+        title: str,
+        body: str | None = None,
+        path: str | None = None,
+    ) -> Payload:
+        """``PUT /api/v1/notes/{ref}`` — create a note at this specific, currently-free ref.
+
+        KAN-1061's whole reason for existing: an import whose source file names a ``kaya_ref``
+        nobody currently holds should get that exact ref back, not a fresh one (ADR 0008
+        §Decision), and this is the request that does it. ``ref`` is passed through untouched,
+        the same rule every ref-taking method here follows (ADR 0008) — the backend's own
+        `parse_note_ref` decides whether it is well-formed, not this client.
+
+        Raises ``ApiError`` on a `409` (the ref is already taken — by any owner, not only this
+        caller) or a `400` (not a ref this route accepts, e.g. a bare integer — see
+        `backend/app/api/note_claim.py`'s own docstring for why only the canonical spelling is
+        allowed here). `_import_document` is the caller that turns both into a graceful fallback
+        to `create_note`; nothing about this method's own contract treats either as anything but
+        an ordinary refusal a caller could also see directly.
+        """
+        content = self._content(title, body, path)
+        return self._note(self._request("PUT", self._note_path(ref), content))
+
+    def import_note(self, source: str | Path) -> Payload:
+        """Create a note from one file — kaya's own export shape, or arbitrary markdown.
+
+        See `_import_document` for the decision between `claim_note` (the source file's own
+        ``kaya_ref``, reused when free) and the ordinary `create_note` fallback (a fresh,
+        server-minted ref). Either way this reaches `POST`/`PUT /api/v1/notes`, so KAN-563's
+        wikilink reconciliation runs exactly the way it does for any other create — "nothing
+        bespoke", per R12's own wording.
+
+        A file that cannot be read or is not UTF-8 is a ``UsageError``, the same refusal
+        `kaya_cli.parsing.resolve_body` gives ``--body-file`` for the same two failures, since this
+        is the same kind of caller mistake in the same kind of argument.
+        """
+        path = Path(source)
+        text = _read_text(path, arg=str(source))
+        return self._import_document(text, fallback_title=path.stem, fallback_path="")
+
+    def import_dir(self, directory: str | Path) -> Payload:
+        """Create a note from every ``*.md`` file under ``directory``, recursively.
+
+        **One request per file, in a fixed (sorted) order, and no batching.** A file naming
+        ``[[Some Title]]`` before that title's own file has been walked yet gets an unresolved edge
+        at its own creation — Q26's honest rendering, per ADR 0003 — and the backend's own
+        ``resolve_pending_note_links`` (KAN-563) is what points it at the right note the moment
+        that later file *is* created, in the same transaction as the file that finally supplies the
+        title. That is already correct for *any* creation order, which is what lets this method be
+        a plain loop rather than a two-pass walk that builds a graph first: the order only changes
+        which notes look unresolved in between two files landing, never the end state once the
+        whole directory has been walked.
+
+        Each note's ``path`` becomes the file's own location relative to ``directory`` — the mirror
+        of `export_all`'s ``_vault_relative_path``, so a corpus round-tripped through `export_all`
+        and back through this method files every note exactly where it was.
+        """
+        root = Path(directory)
+        if not root.is_dir():
+            raise UsageError(f"{directory}: not a directory", arg=str(directory))
+
+        created = []
+        candidates = (p for p in root.rglob("*.md") if p.is_file())
+        for file in sorted(candidates):
+            text = _read_text(file, arg=str(file))
+            fallback_path = file.relative_to(root).as_posix()
+            payload = self._import_document(
+                text, fallback_title=file.stem, fallback_path=fallback_path
+            )
+            created.append(dict(payload.record))
+
+        return Payload.collection(
+            noun=NOTE_NOUN,
+            envelope_key=NOTE_ENVELOPE,
+            records=created,
+            columns=NOTE_LIST_COLUMNS,
+            prose_fields=NOTE_PROSE_FIELDS,
+        )
+
+    def _import_document(self, text: str, *, fallback_title: str, fallback_path: str) -> Payload:
+        """The shared half of `import_note` and `import_dir`: parse, claim-or-create, annotate.
+
+        **The ref-preservation decision, in one place.** A file's ``kaya_ref`` — kaya's own export
+        shape carries one, arbitrary markdown never does — is tried first through `claim_note`
+        (``PUT``, KAN-1061). Two things send it to the ordinary `create_note` fallback instead: no
+        ``kaya_ref`` at all (BREADBOARD.md's R12 "absent" case), or `claim_note` refusing — a `409`
+        because somebody already holds it (the "taken" case), or a `400` because it does not parse
+        as a claimable ref (e.g. a bare integer; `backend/app/api/note_claim.py` is deliberately
+        narrower than every other ref-taking route). Any other failure — a `TransportError`, an
+        unexpected status — is **not** swallowed here: a courtesy fallback is for "this ref cannot
+        be honoured", not for "something else is wrong with this request", and hiding the second
+        behind the first would turn a real outage into a silently different note.
+
+        ``imported_from_ref`` is the file's own ``kaya_ref`` (``None`` for the absent case).
+        ``ref_reused`` is ``True`` only when the returned note's ``ref`` actually matches it — a
+        fact derived from the response, not asserted independently, so it cannot drift from what
+        really happened. Comparison is case-insensitive: kaya's own export always writes the
+        canonical spelling, but a hand-edited file's ``kaya_ref: note-12`` naming the same note as
+        the claim actually created should still read as reused.
+
+        Title, in order: the front matter's own ``title``, the body's first line if it is a
+        markdown ``# heading``, the file's own name, or ``"Untitled"`` — the last resort a title
+        that must be non-empty (`NoteCreate.title`) forces. Path: the front matter's own ``path``
+        if the file carries kaya's shape, else ``fallback_path`` (empty for a standalone
+        `import_note`, the file's own vault-relative location for `import_dir`). Body: verbatim,
+        the same "no link rewriting" R12 headline `frontmatter.compose_document` already argues for
+        — the wikilinks a body carries resolve on the server, at creation, the same as any other.
+        """
+        document = parse_document(text)
+        original_ref = document.get(REF_KEY)
+        title = (
+            document.get(TITLE_KEY)
+            or _title_from_body(document.body)
+            or fallback_title
+            or "Untitled"
+        )
+        path = document.get(PATH_KEY) or fallback_path
+
+        created = None
+        if original_ref:
+            try:
+                created = self.claim_note(
+                    original_ref, title=title, body=document.body, path=path or None
+                )
+            except ApiError as exc:
+                if exc.status not in (400, 409):
+                    raise
+                created = None
+
+        if created is None:
+            created = self.create_note(title, body=document.body, path=path or None)
+
+        record = dict(created.record)
+        record[IMPORTED_FROM_REF_KEY] = original_ref
+        record[REF_REUSED_KEY] = bool(
+            original_ref and str(record["ref"]).lower() == original_ref.strip().lower()
+        )
+        return Payload.entity(
+            noun=NOTE_NOUN,
+            envelope_key=NOTE_ENVELOPE,
+            record=record,
+            columns=NOTE_COLUMNS,
+            prose_fields=NOTE_PROSE_FIELDS,
+        )
+
     # ------------------------------------------------------------ note plumbing
 
     @staticmethod
@@ -615,6 +860,65 @@ class KayaClient:
 
     def __exit__(self, *_exc: object) -> None:
         self.close()
+
+
+def _vault_relative_path(note: dict[str, Any]) -> PurePosixPath:
+    """Where `export_all` writes one note, relative to the vault directory.
+
+    ``note["path"]`` is ADR 0008's mutable metadata column: no uniqueness constraint, no format
+    enforced by the API (`app/models/note.py`: "the API decides the convention; the column just
+    stores what it is told"), so it can be empty, can contain ``..`` if someone typed it by hand
+    through `kaya note move`, and carries no guarantee of a ``.md`` suffix. This function is the one
+    place that turns it into a filesystem path a whole directory of writes can trust:
+
+    - ``..`` and ``.`` segments, and empty segments from a leading/trailing/doubled ``/``, are
+      dropped — the traversal guard. A ``path`` cannot walk `export_all`'s write outside the
+      directory the caller named, however it was set.
+    - An empty result (an empty ``path``, or one that was *only* traversal segments) falls back to
+      ``<ref>.md`` at the vault root — every note has a ref, so this is always available and always
+      unique across one export.
+    - A last segment with no ``.md``/``.markdown`` suffix gets ``.md`` appended, because a vault
+      opened in Obsidian only recognises those two as notes (BREADBOARD.md's R12: "a vault opened in
+      Obsidian should just work").
+    """
+    ref = note["ref"]
+    raw = note.get("path") or ""
+    segments = [part for part in raw.replace("\\", "/").split("/") if part not in ("", ".", "..")]
+    if not segments:
+        return PurePosixPath(f"{ref}.md")
+    if not segments[-1].lower().endswith((".md", ".markdown")):
+        segments[-1] = f"{segments[-1]}.md"
+    return PurePosixPath(*segments)
+
+
+def _read_text(path: Path, *, arg: str) -> str:
+    """A file's contents as UTF-8, or the same ``UsageError`` `kaya_cli.parsing.resolve_body` gives
+    ``--body-file`` for the same two failures — an unreadable path, or one that is not UTF-8 text.
+    """
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise UsageError(f"{arg}: {exc.strerror or 'could not be read'}", arg=arg) from None
+    except UnicodeDecodeError:
+        raise UsageError(f"{arg}: not valid UTF-8 text", arg=arg) from None
+
+
+def _title_from_body(body: str) -> str | None:
+    """A title from the body's own first line, if — and only if — that line is a markdown
+    ``# Heading`` opening the file. Used only when the front matter carried none (an arbitrary
+    markdown file with no ``title:`` of its own): the first non-blank line has to be the heading
+    for this to apply, so a body that opens with prose and happens to have a heading further down is
+    left to the filename fallback instead of guessing which heading the author meant as the title.
+    """
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("# "):
+            heading = stripped[2:].strip()
+            return heading or None
+        return None
+    return None
 
 
 def _error_payload(response: httpx.Response) -> dict[str, Any]:

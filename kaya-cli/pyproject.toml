@@ -3,6 +3,17 @@
 # (pandan ADR 0018 §Package-name reality). That constrains the distribution name only. The console
 # script is `kaya`, and there is exactly one of them (Q39).
 name = "kaya-notes"
+# 0.14.0 — KAN-1060..1063 add R12's export/import verbs: `note export <ref>` and
+# `note import <file>` (single note), `export-all <dir>` and `import-all <dir>` (corpus) — four
+# new words dispatched through the same `verbs.VERBS` table every other verb uses, each one
+# `open a session → call one kaya-client method → return the Payload`, same as ever (ADR 0004).
+# The corpus pair is not spelled `export`/`import`: `mcp/tests/test_cli_parity.py`'s word-keyed
+# reader refuses two `add_parser`s sharing a word, which BREADBOARD.md's original `export --all`/
+# `import --dir` draft would have tripped. No opinion added here either way — `--out` and the two
+# `directory` positionals are argv, and every byte of the front-matter shape and the ref-claiming
+# decision (`note import` tries to reclaim the file's own free ref before minting a fresh one)
+# lives in `kaya-client` 0.15.0, `imported_from_ref`/`ref_reused` included. Behavioural — four
+# verbs that used to be usage errors now do something — so a minor bump.
 # 0.13.0 — KAN-839 adds `422` → exit `2` (`EXIT_USAGE`) to `EXIT_FOR_STATUS`. Behavioural: a
 # malformed `--if-updated-at` (`kaya note edit … --if-updated-at nope`) and every other request
 # body a `NoteCreate`/`NoteUpdate` schema refuses used to exit `1` and now exits `2`, so a script
@@ -74,7 +85,7 @@ name = "kaya-notes"
 # 0.2.0 — KAN-543 gives the CLI argument parsing and ADR 0007's build-stamped `--version`. A
 # behavioural change to a shipped package bumps it in the same PR (ADR 0007 §3, CLAUDE.md
 # §Conventions §Versioning).
-version = "0.13.0"
+version = "0.14.0"
 description = "kaya — the notes CLI"
 readme = "README.md"
 license = "Apache-2.0"

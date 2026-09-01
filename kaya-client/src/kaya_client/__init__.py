@@ -113,6 +113,7 @@ from kaya_client.errors import (
     UsageError,
     error_payload,
 )
+from kaya_client.frontmatter import ParsedDocument, compose_document, parse_document
 from kaya_client.hints import HELP_PREFIX, HINTS, help_block, help_lines
 from kaya_client.overview import DESCRIPTION, overview
 from kaya_client.payloads import Kind, Payload, Shaped
@@ -163,6 +164,7 @@ __all__ = [
     "KayaError",
     "Kind",
     "MissingCredential",
+    "ParsedDocument",
     "Payload",
     "Shaped",
     "TransportError",
@@ -172,6 +174,7 @@ __all__ = [
     "api_url",
     "attach_summary",
     "build_sha",
+    "compose_document",
     "config_path",
     "error_payload",
     "help_block",
@@ -180,6 +183,7 @@ __all__ = [
     "max_text_chars",
     "open_client",
     "overview",
+    "parse_document",
     "path_payload",
     "project",
     "read_settings_file",
