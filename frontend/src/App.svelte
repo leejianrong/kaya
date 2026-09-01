@@ -102,6 +102,22 @@
   }
 
   /**
+   * `EditorPane`'s `onupdated` (KAN-1042/1043, BREADBOARD.md A3/A4): a title- or path-only `PATCH`
+   * succeeded, so the matching row in `notes` is replaced with the fresh record.
+   *
+   * `notes` and the open `note` come from two separate fetches (`listNotes` vs. `getNote`), so the
+   * row in `notes` is a *different object* from the one `EditorPane` just edited — there is nothing
+   * to mutate in place, only to replace. Assigning `notes[index]` rather than reassigning the whole
+   * array is what lets `Sidebar`'s existing subscription pick up the change with no new wiring there.
+   */
+  function noteUpdated(stored: Note): void {
+    const index = notes.findIndex((found) => found.ref === stored.ref)
+    if (index !== -1) {
+      notes[index] = stored
+    }
+  }
+
+  /**
    * Whether this tab has a credential — **reactive**, and KAN-555 is why.
    *
    * It was a `const` read once at mount, which was honest while there was no way to acquire a
@@ -395,6 +411,7 @@
             ondocument={publishDocument}
             ondirty={noteDirty}
             ondeleted={noteDeleted}
+            onupdated={noteUpdated}
           />
           {#if previewing}
             <PreviewPane {note} source={liveDocument} />

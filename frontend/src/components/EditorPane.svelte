@@ -26,6 +26,7 @@
     ondocument,
     ondirty,
     ondeleted,
+    onupdated,
   }: {
     note: Note | null
     error: string | null
@@ -79,6 +80,13 @@
      * the same split `ondirty` already makes for "is there something to lose".
      */
     ondeleted?: (ref: string) => void
+    /**
+     * KAN-1042: fired with the fresh `Note` whenever a title-only `PATCH` succeeds — the note's own
+     * write path (see {@link saveTitle}), not `App.svelte`'s. `App.svelte` uses it to update the
+     * matching row in the sidebar's `notes` list, which is a *separate* fetch from this component's
+     * `note` prop and does not otherwise learn about a rename until the next full reload.
+     */
+    onupdated?: (stored: Note) => void
   } = $props()
 
   /**
@@ -232,6 +240,22 @@
   let deleting = $state(false)
   /** A delete `DELETE` refused or failed to reach the server. Cleared by the next attempt. */
   let deleteError: string | null = $state(null)
+  /**
+   * The title input's own text, and the value {@link saveTitle} compares it against to decide
+   * whether there is anything to send — the same split `mountedRef`/`basedOn` already make between
+   * "what the prop said" and "what this edit is against".
+   *
+   * `titleBaseline` is plain bookkeeping (never read by the template) and is set in the mount
+   * effect's remount branch alongside `basedOn`, and again from a successful {@link saveTitle}
+   * response — never from the `note` prop directly on an unrelated re-render, because nothing
+   * currently pushes an external title change into that prop for the same ref. `titleDraft` is the
+   * rune the input binds to.
+   */
+  let titleBaseline = ''
+  let titleDraft = $state('')
+  let titleSaving = $state(false)
+  /** A title `PATCH` refused or failed to reach the server. Cleared by the next attempt. */
+  let titleError: string | null = $state(null)
 
   /**
    * KAN-567: the open note's outbound wikilinks, as `/links` last answered — what
@@ -408,6 +432,10 @@
     deleteArmed = false
     deleting = false
     deleteError = null
+    titleBaseline = opened?.title ?? ''
+    titleDraft = titleBaseline
+    titleSaving = false
+    titleError = null
     // A newly built view has a document nobody has been told about — no transaction happened, so the
     // update listener never fired. Read it off the view rather than from `incomingBody`, so the seam's
     // one promise ("what the editor is showing") is true even if those two ever diverge.
@@ -718,6 +746,50 @@
       deleting = false
     }
   }
+
+  /**
+   * The title field's blur/Enter handler (BREADBOARD.md A4). Unguarded — ADR 0009's precondition is
+   * body-only, so this never sends `if_updated_at` even though `basedOn` is sitting right there — and
+   * a no-op when nothing changed, so blurring an untouched field never round-trips a `PATCH`.
+   *
+   * `basedOn` is refreshed from the response on success. It has to be: `updated_at` is
+   * `onupdate=func.now()` on the backend, so a title-only write moves it exactly as a body write
+   * would, and leaving `basedOn` at the value read on open would guard the *next* body Save against a
+   * timestamp the row no longer has — a spurious `409` against your own edit.
+   */
+  async function saveTitle(): Promise<void> {
+    const opened = note
+    if (opened === null || titleSaving || titleDraft === titleBaseline) {
+      return
+    }
+    titleSaving = true
+    titleError = null
+    try {
+      const stored = await updateNote(opened.ref, { title: titleDraft })
+      basedOn = stored.updated_at
+      titleBaseline = stored.title
+      titleDraft = stored.title
+      onupdated?.(stored)
+    } catch (failure) {
+      titleError = failure instanceof Error ? failure.message : 'Could not rename.'
+    } finally {
+      titleSaving = false
+    }
+  }
+
+  /**
+   * Enter commits the same way blur does, rather than being its own second write path.
+   *
+   * `event.target`, not `event.currentTarget`: Svelte 5 delegates common events like `keydown` to a
+   * shared root listener, so by the time this handler runs `currentTarget` is that root, not the
+   * input — `target` is the element the key was actually pressed in, in delegation or not.
+   */
+  function titleKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      ;(event.target as HTMLInputElement).blur()
+    }
+  }
 </script>
 
 <section class="pane" aria-label="Editor">
@@ -725,7 +797,18 @@
     <p class="notice">{error}</p>
   {:else if note}
     <header>
-      <h2>{note.title}</h2>
+      <!-- KAN-1042, BREADBOARD.md A4: an input in place of the old static `<h2>`. Saved on blur or
+           Enter, and only when it changed — see `saveTitle`. -->
+      <input
+        type="text"
+        class="title-input"
+        bind:value={titleDraft}
+        onblur={() => void saveTitle()}
+        onkeydown={titleKeydown}
+        disabled={titleSaving}
+        aria-label="Note title"
+        data-testid="title-input"
+      />
       <p class="meta">
         <code>{note.ref}</code>
         <!-- A note may legitimately have no path (ADR 0008: path is metadata, not identity), and
@@ -737,6 +820,9 @@
           >based on {basedOn}</span
         >
       </p>
+      {#if titleError}
+        <p class="conflict" data-testid="title-error">{titleError}</p>
+      {/if}
     </header>
 
     <div class="bar">
@@ -839,10 +925,25 @@
     padding: 1.5rem;
   }
 
-  h2 {
-    margin: 0;
+  /* Replaces the old static `<h2>` (KAN-1042) — same type scale, styled to read as a heading until
+     you hover or focus it, at which point the border says it is actually a field. */
+  .title-input {
+    width: 100%;
+    padding: 0.1rem 0.3rem;
+    border: 1px solid transparent;
+    border-radius: 0.3rem;
+    background: transparent;
+    color: inherit;
+    font: inherit;
     font-size: 1.35rem;
+    font-weight: 600;
     letter-spacing: -0.01em;
+  }
+
+  .title-input:hover,
+  .title-input:focus {
+    border-color: var(--edge);
+    outline: none;
   }
 
   .meta {
