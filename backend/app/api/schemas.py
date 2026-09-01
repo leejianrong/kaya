@@ -18,6 +18,7 @@ from datetime import datetime
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from app.models import Note
+from app.models.attachment import Attachment
 
 TITLE_MAX = 255
 PATH_MAX = 1024
@@ -318,6 +319,42 @@ class LinkList(BaseModel):
     """
 
     links: list[LinkRead]
+
+
+class AttachmentRead(BaseModel):
+    """One uploaded file, as `POST /api/v1/notes/{ref}/attachments` returns it — R14, KAN-1067.
+
+    No `note_id`, no `r2_key`: both are internal — the id is the surrogate key `attachment` shares
+    with every other table here, and the key is storage's own address, never handed to a caller for
+    the same reason a direct R2 URL never is (`app/integrations/storage.py`'s module docstring).
+    What a caller needs to *act* on the upload is `markdown`, built here rather than left to the
+    client to assemble, so the one string that has to match `GET /notes/{ref}/attachments/{id}`'s
+    own path is written in exactly one place.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    content_type: str
+    size_bytes: int
+    created_at: datetime
+    markdown: str
+    """`![<filename or a generic word>](/api/v1/notes/{ref}/attachments/{id})` — a relative,
+    same-origin path, never a direct R2 URL. `PreviewPane.svelte` recognises this exact shape and
+    fetches it with the caller's own bearer, swapping the result into a `blob:` URL (R14's render
+    contract); a caller that inserts this string verbatim into the note body gets a working image
+    reference with no further assembly."""
+
+    @classmethod
+    def of(cls, attachment: Attachment, *, note_ref: str, alt: str) -> "AttachmentRead":
+        markdown = f"![{alt}](/api/v1/notes/{note_ref}/attachments/{attachment.id})"
+        return cls(
+            id=attachment.id,
+            content_type=attachment.content_type,
+            size_bytes=attachment.size_bytes,
+            created_at=attachment.created_at,
+            markdown=markdown,
+        )
 
 
 class GraphNode(BaseModel):

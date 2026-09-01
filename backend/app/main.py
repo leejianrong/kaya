@@ -14,7 +14,14 @@ from pydantic import BaseModel
 from starlette.middleware.gzip import GZipMiddleware
 
 from app import __version__
-from app.api import embeds_router, graph_router, install_error_handlers, links_router, meta_router
+from app.api import (
+    attachments_router,
+    embeds_router,
+    graph_router,
+    install_error_handlers,
+    links_router,
+    meta_router,
+)
 from app.api import router as api_router
 from app.observability import install_observability
 from app.spa import mount_spa
@@ -95,6 +102,11 @@ app.include_router(embeds_router)
 # Registration order is immaterial for the same reason as above — `/graph` matches nothing else
 # under `/notes`.
 app.include_router(graph_router)
+
+# R14's `/notes/{ref}/attachments` (KAN-1067/1068). A fifth router under `/api/v1` for the same
+# reason `links_router` is its own: `/notes/{ref}` cannot match `/notes/NOTE-3/attachments`, so
+# registration order is immaterial, and this reads as itself in its own module.
+app.include_router(attachments_router)
 
 # KAN-555. Separate from `api_router` because it is the one route under `/api/v1` with no credential
 # in front of it, and that difference should be visible where the surface is composed rather than

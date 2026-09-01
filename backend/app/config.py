@@ -193,6 +193,59 @@ class Settings(BaseSettings):
     duplicate that and turn a typo'd *log level* into a service that refuses to boot, which is the
     observability layer causing the outage it exists to explain."""
 
+    r2_bucket: str | None = Field(
+        default=None,
+        validation_alias="KAYA_R2_BUCKET",
+    )
+    """The bucket attachments (R14, KAN-1067) are stored in. ``None`` — the default — means
+    attachments are not configured at all: ``app/integrations/storage.py``'s ``default_storage``
+    raises at first use rather than silently pretending a bucket exists, the same "fail loudly on a
+    genuinely missing dependency" instinct `app/db.py` already has for `DATABASE_URL`.
+
+    Provisioning a real Cloudflare R2 bucket and its credentials is a manual step outside any PR's
+    scope (there is no live Cloudflare account wired into this environment or its CI secrets) — the
+    code path is exercised against `app/integrations/storage.py`'s fake in every test."""
+
+    r2_endpoint_url: str | None = Field(
+        default=None,
+        validation_alias="KAYA_R2_ENDPOINT_URL",
+    )
+    """R2's S3-compatible endpoint for the account holding ``r2_bucket``, e.g.
+    ``https://<account-id>.r2.cloudflarestorage.com``. Not a secret — it is a hostname, not a
+    credential — but it travels with the other R2 fields for the same reason `pandan_url` travels
+    with the pandan timeouts: one feature's configuration, read together."""
+
+    r2_access_key_id: str | None = Field(
+        default=None,
+        validation_alias="KAYA_R2_ACCESS_KEY_ID",
+    )
+    """R2 API token id. A credential, so it is in `_EXCLUDED_FROM_STARTUP_LOG` below — see that
+    set's docstring for why a future credential-shaped field earns its own entry rather than being
+    caught implicitly."""
+
+    r2_secret_access_key: str | None = Field(
+        default=None,
+        validation_alias="KAYA_R2_SECRET_ACCESS_KEY",
+    )
+    """R2 API token secret. Same treatment as `r2_access_key_id`, and for the same reason."""
+
+    r2_region: str = Field(
+        default="auto",
+        validation_alias="KAYA_R2_REGION",
+    )
+    """SigV4 needs a region even though R2 is not regional; Cloudflare's own docs say to send
+    ``"auto"``, so that is the default rather than a value somebody has to remember to set."""
+
+    r2_upload_max_bytes: int = Field(
+        default=25 * 1024 * 1024,
+        validation_alias="KAYA_R2_UPLOAD_MAX_BYTES",
+    )
+    """Per-attachment cap, enforced in `app/api/attachments.py` while the upload streams in — a
+    note body has no length cap (`app/models/note.py`'s comment: "a length cap on prose is a cap on
+    the product"), but an attachment is a binary blob with no such argument against bounding it. 25
+    MiB is a round, generous number for "an image, most often" (R14's own framing) rather than a
+    measurement; revisit if a real usage pattern asks for more."""
+
     spa_dist: Path | None = Field(
         default=None,
         validation_alias="KAYA_SPA_DIST",
@@ -208,18 +261,20 @@ class Settings(BaseSettings):
     Set it to ``../frontend/dist`` to run the single-artifact layout from a checkout."""
 
 
-_EXCLUDED_FROM_STARTUP_LOG = frozenset({"database_url"})
+_EXCLUDED_FROM_STARTUP_LOG = frozenset(
+    {"database_url", "r2_access_key_id", "r2_secret_access_key"}
+)
 """Fields ``effective_overrides`` never names, structurally rather than by review.
 
 ``database_url``'s default and every real value embed a username and password as URL userinfo —
 ``postgresql+psycopg://kaya:kaya@host:5432/kaya`` — so printing it whenever it differs from the
-default would print a real database credential. Nothing else on ``Settings`` holds one: kaya keeps
-no long-lived credential of its own (see this module's docstring and ADR 0002), so there is no
-``token``/``bearer``/``KAYA_TOKEN`` field here to exclude — that name lives in ``kaya-client``'s own
-``config.py``, on the CLI side of the process boundary, and never reaches this ``Settings`` model.
-This is therefore a one-entry allow-list rather than a name pattern that could rot as fields are
-added; a future field whose value could carry a credential earns its own entry here rather than
-being caught implicitly."""
+default would print a real database credential. Kaya otherwise keeps no long-lived credential of
+its own (see this module's docstring and ADR 0002) — there is no ``token``/``bearer``/``KAYA_TOKEN``
+field here, that name lives in ``kaya-client``'s own ``config.py`` on the CLI side of the process
+boundary — until R14's R2 fields (KAN-1067), which are the first ``Settings`` fields that hold
+kaya's *own* credential rather than a caller's forwarded bearer. This is therefore a three-entry
+allow-list rather than a name pattern that could rot as fields are added; a future field whose value
+could carry a credential earns its own entry here rather than being caught implicitly."""
 
 
 def effective_overrides(settings: Settings) -> dict[str, Any]:
