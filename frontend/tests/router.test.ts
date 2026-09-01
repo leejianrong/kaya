@@ -21,6 +21,18 @@ describe('parseRoute', () => {
     expect(parseRoute('/notes/NOTE-12')).toEqual({ name: 'note', ref: 'NOTE-12' })
   })
 
+  it('reads /graph as the graph route (KAN-1050)', () => {
+    expect(parseRoute('/graph')).toEqual({ name: 'graph' })
+    expect(parseRoute('/graph/')).toEqual({ name: 'graph' })
+  })
+
+  it('does not let a note ref shadow /graph, or the reverse', () => {
+    // `/notes/` already claims everything under it, and `/graph` is a sibling of `/notes`, not
+    // under it — so neither grammar can accidentally swallow the other's path.
+    expect(parseRoute('/notes/graph')).toEqual({ name: 'note', ref: 'graph' })
+    expect(parseRoute('/graph/extra')).toEqual({ name: 'unknown', path: '/graph/extra' })
+  })
+
   it('passes every spelling the backend accepts straight through', () => {
     // `app/api/refs.py` is the single place an identifier is parsed, and it takes all three. A
     // second grammar here would either reject something the API accepts or accept something it
@@ -65,8 +77,8 @@ describe('parseRoute', () => {
 })
 
 describe('routeHref', () => {
-  it('round-trips the two real routes', () => {
-    for (const path of ['/', '/notes/NOTE-12', '/notes/12']) {
+  it('round-trips every real route', () => {
+    for (const path of ['/', '/notes/NOTE-12', '/notes/12', '/graph']) {
       expect(routeHref(parseRoute(path))).toBe(path)
     }
   })

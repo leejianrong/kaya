@@ -243,6 +243,23 @@
   </div>
 
   <!--
+    KAN-1050's graph view: the only reachable link to it in the app. A row rather than a button —
+    it is a navigation, the same as every other `<a>` in this component — placed beside "+ New
+    note" because that is where a person already looks for "what can I do with my notes as a
+    whole" rather than with one of them.
+  -->
+  <a
+    href={routeHref({ name: 'graph' })}
+    class="graph-link"
+    class:open={route.name === 'graph'}
+    aria-current={route.name === 'graph' ? 'page' : undefined}
+    onclick={(event) => interceptClick(event, '/graph')}
+    data-testid="graph-link"
+  >
+    Graph
+  </a>
+
+  <!--
     KAN-559's search box. `--q` on the client is one flag and one input here, and it stays that
     shape: submitting sends `draft.trim()` up to `onsearch`, which is App's request to make, not
     this component's — a `Sidebar` that fetched would be a second network caller for the one list
@@ -361,6 +378,27 @@
 
   .new-note:hover {
     background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+
+  .graph-link {
+    display: block;
+    margin: 0 0.5rem;
+    padding: 0.3rem 0.5rem;
+    border-radius: 0.3rem;
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-decoration: none;
+  }
+
+  .graph-link:hover {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+
+  a.graph-link.open {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--accent);
   }
 
   .create-form {

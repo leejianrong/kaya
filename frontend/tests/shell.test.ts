@@ -68,7 +68,9 @@ describe('the component harness', () => {
 
     expect(target.querySelector('nav')).not.toBeNull()
     expect(target.textContent).toContain('Weekly review')
-    expect(target.querySelector('a')?.getAttribute('href')).toBe('/notes/NOTE-6')
+    // Not `querySelector('a')`: KAN-1050's "Graph" link is the first anchor in the sidebar now, so
+    // this asks for the note row specifically.
+    expect(target.querySelector('a[href^="/notes/"]')?.getAttribute('href')).toBe('/notes/NOTE-6')
   })
 
   it('renders a note with an empty path without crashing', () => {

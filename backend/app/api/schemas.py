@@ -318,3 +318,57 @@ class LinkList(BaseModel):
     """
 
     links: list[LinkRead]
+
+
+class GraphNode(BaseModel):
+    """One note, as a graph node — KAN-1050's `/graph`.
+
+    Three fields, no more: what a diagram needs to draw a node and let a click navigate to it.
+    ``ref`` rather than ``id`` (ADR 0008 — a note's identity is its ref, never its numeric id, and
+    the frontend's ``navigate()``/``routeHref()`` already take refs, not ids). ``title`` for the
+    label. ``path`` is included because a future grouping-by-folder view is the obvious next cut of
+    this same graph, and it costs nothing to carry now — dropping an unused field later is free,
+    inventing a second graph read to add one field is not.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    ref: str
+    title: str
+    path: str
+
+
+class GraphEdge(BaseModel):
+    """One resolved note-to-note wikilink, as the two refs it connects — KAN-1050's `/graph`.
+
+    Both ``NOTE-n``, never ``note_link.source_note_id``/``resolved_id``'s raw integers, for the same
+    reason ``LinkRead`` withholds them: those ids are internal surrogates and a graph is exactly the
+    payload most tempted to publish them, since it already has one id per endpoint in hand.
+
+    No ``target_kind``: this graph is note-to-note edges only (a `[[KAN-501]]` reference is a
+    cross-repo pandan link, not an edge between two of the caller's own notes, and rendering one
+    would need a call this route does not make). Every edge here is a ``NOTE`` edge by construction
+    — see ``app.auth.notes_graph_edges`` — so a field that could only ever hold one value is not a
+    field.
+    """
+
+    source: str
+    target: str
+
+
+class GraphRead(BaseModel):
+    """`GET /api/v1/graph`'s envelope — every note the caller owns, and every resolved link between
+    two of them.
+
+    Bare (not a list envelope like ``NoteList``/``LinkList``) because it already carries two arrays
+    and a caller renders it as one diagram, not as a page of rows — the "wrap the array" argument
+    those two envelopes make does not apply when there is no bare array to distinguish it from.
+
+    A note with no links still appears in ``nodes`` with nothing in ``edges`` pointing at it: the
+    two arrays are built independently (nodes from the caller's notes, edges from the caller's
+    resolved ``note_link`` rows), so an isolated note is not a special case, it is simply a node no
+    edge happens to name.
+    """
+
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]

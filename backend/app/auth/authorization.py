@@ -283,6 +283,46 @@ def notes_linking_to(principal: Principal, note_id: int) -> Select[tuple[Note]]:
     )
 
 
+def notes_graph_edges(principal: Principal) -> Select[tuple[int, int]]:
+    """Every resolved note-to-note wikilink among **all** of the caller's own notes, as
+    ``(source_note_id, resolved_id)`` pairs — KAN-1050's `/graph`.
+
+    ``notes_linking_to``'s sibling rather than a copy of it: same join, same two-column filter, but
+    with the single-note ``resolved_id == note_id`` clause dropped, because a graph needs every edge
+    at once rather than the edges pointing at one note. Composed onto ``notes_owned_by`` for the
+    identical reason that function is: ``note_link`` has no owner column of its own, so the join to
+    an owner-scoped ``note`` is the only thing that keeps one caller's edges out of another's graph.
+
+    **``target_kind == TARGET_KIND_NOTE``, for the reason ``notes_linking_to`` gives.** This is the
+    *note* graph (KAN-1050's scope, decided up front) — a `[[KAN-501]]` or `[[EPIC-3]]` edge is a
+    cross-repo pandan reference, not an edge between two of the caller's own notes, and rendering
+    one as a graph node would need a pandan call this route does not make (ADR 0003).
+
+    **``resolved_id IS NOT NULL``, for the reason CLAUDE.md states in as many words: "a backlink is
+    found by resolved_id, never by title. An edge with resolved_id IS NULL is a link to a title, not
+    yet a note."** A `[[Some Future Note]]` edge that has not resolved has no target note to draw a
+    line to, so it is excluded here rather than arriving at the route as a dangling id.
+
+    ``with_only_columns`` narrows the projection to the two ids the route actually needs — the
+    caller only ever has that one owner-scoped set of notes to translate an id against, so returning
+    full ``Note`` rows here would be fetched and then thrown away. The ``WHERE``/``FROM`` this
+    composes onto are unaffected by narrowing the columns clause, which is what keeps the owner
+    scoping (and rule 3's ``source_note_id`` constraint) intact for the sweep in
+    ``tests/unit/test_no_unscoped_note_query.py`` to find.
+
+    No ``ORDER BY``: the route builds a node lookup keyed on id and reads it as a dict, so an edge's
+    position in this result carries no meaning of its own. The **nodes** list — a plain
+    ``notes_owned_by`` composed with an ``order_by`` at the route, the same shape ``list_notes``
+    already uses — is what supplies a deterministic order to the response.
+    """
+    return (
+        notes_owned_by(principal)
+        .join(NoteLink, NoteLink.source_note_id == Note.id)
+        .where(NoteLink.target_kind == TARGET_KIND_NOTE, NoteLink.resolved_id.is_not(None))
+        .with_only_columns(NoteLink.source_note_id, NoteLink.resolved_id)
+    )
+
+
 def notes_named_by_id(owner_id: uuid.UUID, note_ids: Iterable[int]) -> Select[tuple[int, str, str]]:
     """``owner_id``'s own notes among ``note_ids``, projected to ``(id, ref, title)`` — KAN-566's
     `/links` reading the *other* end of a resolved NOTE-kind edge.

@@ -1,6 +1,7 @@
 <script lang="ts">
   import BacklinksPanel from './components/BacklinksPanel.svelte'
   import EditorPane from './components/EditorPane.svelte'
+  import GraphView from './components/GraphView.svelte'
   import Landing from './components/Landing.svelte'
   import PreviewPane from './components/PreviewPane.svelte'
   import Sidebar from './components/Sidebar.svelte'
@@ -397,6 +398,10 @@
         <p class="notice">
           Nothing lives at <code>{route.path}</code>. Pick a note from the sidebar.
         </p>
+      {:else if route.name === 'graph'}
+        <!-- KAN-1050: read-only, so it takes no note-lifecycle callbacks — `onexpired` is the one
+             failure it cannot absorb itself, for the same reason `BacklinksPanel`'s cannot. -->
+        <GraphView onexpired={discard} />
       {:else}
         <!--
           The editor and its preview, side by side. `EditorPane` is **outside** the `{#if}` below on
