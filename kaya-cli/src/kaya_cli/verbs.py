@@ -111,6 +111,18 @@ IMPORT = "import"
 
 LINKS = "links"
 BACKLINKS = "backlinks"
+
+EXPORT_ALL = "export-all"
+IMPORT_ALL = "import-all"
+"""R12's corpus verbs (KAN-1062/1063) — top-level, like `links`/`backlinks`, but **not** spelled
+``export``/``import``: `mcp/tests/test_cli_parity.py`'s `declared_flags` keys `__main__.py`'s
+subparsers on the bare word alone and refuses (by its own docstring's design) two `add_parser`
+calls sharing one word, since it cannot then say which verb a flag belongs to. `note export` and
+`note import` already own those two words; a top-level verb with the same spelling BREADBOARD.md's
+R12 table originally used (`kaya export --all`, `kaya import --dir`) would be exactly the collision
+that guard exists to catch. `export-all`/`import-all` are single, self-describing words instead —
+"which subset" is answered by the word itself, so neither takes a marker flag the way the R12 draft
+had `--all` do that job."""
 """KAN-566's two verbs, and they are **top-level words rather than ``note`` subcommands**.
 
 SLICES §V5 build-plan step 6 spells them ``kaya links`` and ``kaya backlinks``, and the wording is
@@ -219,14 +231,12 @@ def _note_import(client: KayaClient, args: Namespace) -> Payload:
 
 
 def _export_all(client: KayaClient, args: Namespace) -> Payload:
-    """`export --all <dir>` (R12/KAN-1062). ``--all`` is checked by the parser (``required=True``,
-    see `kaya_cli.__main__`), so by the time this runs it has already done its one job — reading as
-    "everything, no filter" — and carries nothing this function needs to inspect."""
+    """`export-all <dir>` (R12/KAN-1062)."""
     return client.export_all(args.directory)
 
 
-def _import_dir(client: KayaClient, args: Namespace) -> Payload:
-    """`import --dir <path>` (R12/KAN-1063)."""
+def _import_all(client: KayaClient, args: Namespace) -> Payload:
+    """`import-all <dir>` (R12/KAN-1063)."""
     return client.import_dir(args.directory)
 
 
@@ -284,8 +294,8 @@ VERBS: Mapping[tuple[str | None, str | None], Verb] = {
     (NOTE, IMPORT): _note_import,
     (LINKS, None): _links,
     (BACKLINKS, None): _backlinks,
-    (EXPORT, None): _export_all,
-    (IMPORT, None): _import_dir,
+    (EXPORT_ALL, None): _export_all,
+    (IMPORT_ALL, None): _import_all,
 }
 """``(command, subcommand)`` → the client method that answers it, for the verbs that need a session.
 

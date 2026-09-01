@@ -281,8 +281,8 @@ def test_the_published_verb_set_is_pinned() -> None:
         ("config", "path"),
         ("links", None),
         ("backlinks", None),
-        ("export", None),
-        ("import", None),
+        ("export-all", None),
+        ("import-all", None),
     }
 
 

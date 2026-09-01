@@ -1,4 +1,4 @@
-"""`note export`/`note import`/`export --all`/`import --dir` end to end: argv → parser → verb →
+"""`note export`/`note import`/`export-all`/`import-all` end to end: argv → parser → verb →
 client → stdout → exit code (R12, KAN-1060..1063).
 
 Everything below the socket is the shipped code path, same as `test_write_verbs.py` — the file
@@ -83,30 +83,30 @@ def test_note_import_prints_the_created_note(capsys, answering, tmp_path) -> Non
     assert rendered["imported_from_ref"] is None
 
 
-# ------------------------------------------------------------------------------- export --all
+# --------------------------------------------------------------------------------- export-all
 
 
-def test_export_all_requires_the_all_flag(capsys, tmp_path) -> None:
-    assert main(["export", str(tmp_path)]) == 2
-    assert "--all" in capsys.readouterr().err
+def test_export_all_requires_a_directory(capsys) -> None:
+    assert main(["export-all"]) == 2
+    assert "directory" in capsys.readouterr().err
 
 
 def test_export_all_writes_every_note(answering, tmp_path) -> None:
     answering(200, {"notes": [GROCERIES]})
 
-    assert main(["export", "--all", str(tmp_path)]) == 0
+    assert main(["export-all", str(tmp_path)]) == 0
     assert (tmp_path / "home" / "groceries.md").exists()
 
 
-# -------------------------------------------------------------------------------- import --dir
+# --------------------------------------------------------------------------------- import-all
 
 
-def test_import_dir_requires_the_dir_flag(capsys, tmp_path) -> None:
-    assert main(["import", str(tmp_path)]) == 2
-    assert "--dir" in capsys.readouterr().err
+def test_import_all_requires_a_directory(capsys) -> None:
+    assert main(["import-all"]) == 2
+    assert "directory" in capsys.readouterr().err
 
 
-def test_import_dir_walks_every_markdown_file(fake_api, tmp_path) -> None:
+def test_import_all_walks_every_markdown_file(fake_api, tmp_path) -> None:
     (tmp_path / "a.md").write_text('---\ntitle: "A"\n---\nbody a', encoding="utf-8")
     (tmp_path / "b.md").write_text('---\ntitle: "B"\n---\nbody b', encoding="utf-8")
 
@@ -120,14 +120,14 @@ def test_import_dir_walks_every_markdown_file(fake_api, tmp_path) -> None:
 
     fake_api(handle)
 
-    assert main(["import", "--dir", str(tmp_path)]) == 0
+    assert main(["import-all", str(tmp_path)]) == 0
     posts = [r for r in seen if r.method == "POST"]
     assert len(posts) == 2
 
 
-def test_import_dir_a_missing_directory_is_a_usage_error(capsys, answering, tmp_path) -> None:
+def test_import_all_a_missing_directory_is_a_usage_error(capsys, answering, tmp_path) -> None:
     answering(201, GROCERIES)  # a session has to open before the verb can refuse the directory
     missing = tmp_path / "nope"
 
-    assert main(["import", "--dir", str(missing)]) == 2
+    assert main(["import-all", str(missing)]) == 2
     assert capsys.readouterr().out.startswith("error\tusage\t")

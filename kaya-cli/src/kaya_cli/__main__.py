@@ -81,11 +81,9 @@ from kaya_client import DESCRIPTION as PRODUCT
 from kaya_cli import __version__, verbs
 from kaya_cli.failures import EXIT_OK, report
 from kaya_cli.parsing import (
-    ALL_FLAG,
     API_URL_FLAG,
     BODY_FILE_FLAG,
     BODY_FLAG,
-    DIR_FLAG,
     NO_TEXT_LIMIT,
     OUT_FLAG,
     PATH_FLAG,
@@ -115,7 +113,7 @@ EPILOGUE = (
     "notes. Notes: `note list`, `note get <ref>`, `note create <title>`, `note edit <ref>`,\n"
     "`note move <ref> <path>`, `note delete <ref>`. Links: `links <ref>` for what a note points\n"
     "at, `backlinks <ref>` for what points at it. Export/import (R12): `note export <ref>`,\n"
-    "`note import <file>`, `export --all <dir>`, `import --dir <path>`. Configuration:\n"
+    "`note import <file>`, `export-all <dir>`, `import-all <dir>`. Configuration:\n"
     "`config show`, `config set`, `config path`. `note list --q TERM` searches title and body;\n"
     "`--fields a,b,c` selects columns on a list, and prose is cut to KAYA_MAX_TEXT_CHARS\n"
     "(default 500) unless `--full`. A note is addressed as NOTE-12, note-12 or 12, never by its\n"
@@ -396,39 +394,35 @@ def _add_link_verbs(commands, flags: argparse.ArgumentParser) -> None:
 
 
 def _add_corpus_export_import_verbs(commands, flags: argparse.ArgumentParser) -> None:
-    """`export --all <dir>` and `import --dir <path>` — R12's corpus verbs (KAN-1062/1063).
+    """`export-all <dir>` and `import-all <dir>` — R12's corpus verbs (KAN-1062/1063).
 
     Top level, like `links`/`backlinks`: a positional here would name a *directory*, not a note,
     so grouping either word under `note` would make the same false claim `links`' docstring argues
     against for a pandan ticket ref.
 
-    ``--all`` and ``--dir`` are spelled exactly as BREADBOARD.md's R12 table spells them rather
-    than unified into one flag name, even though each verb accepts exactly one argument. ``--all``
-    is a marker (``required=True``, no value) that makes `kaya export --all <dir>` read as "export
-    everything, no filter" at the call site, which a bare positional directory would not say on its
-    own; ``import --dir`` has no analogous "which subset" question a marker flag could answer, so
-    it is spelled as the value it is.
+    **Not spelled `export`/`import`.** BREADBOARD.md's R12 table originally drafted these as
+    `kaya export --all <dir>` and `kaya import --dir <path>` — a top-level verb sharing a bare word
+    with the single-note `note export`/`note import` subcommands. `mcp/tests/test_cli_parity.py`'s
+    `declared_flags` reader keys `__main__.py`'s subparsers on that bare word alone (a word's
+    subparser is built in a helper that never sees its parent's group), so two `add_parser` calls
+    sharing one word is unsound for it and it refuses by design rather than silently merging two
+    verbs' flags — exactly what adding `export`/`import` as top-level words here would have
+    triggered. `export-all`/`import-all` are single, self-describing words instead, which is also
+    why neither takes the draft's `--all` marker flag: the word already answers "which subset".
     """
     export = commands.add_parser(
-        verbs.EXPORT,
+        verbs.EXPORT_ALL,
         parents=[flags],
         help="write every note you own to an Obsidian-vault-compatible directory",
         description=(
             "Export every note you own, one file per note at its path, into <dir> (created if it "
-            "does not exist). --all is required so the command reads as what it does: "
-            "everything, no filter — there is no other form."
+            "does not exist)."
         ),
-    )
-    export.add_argument(
-        ALL_FLAG,
-        action="store_true",
-        required=True,
-        help="export every note you own (required; there is no filtered form)",
     )
     export.add_argument("directory", help="the directory to write into")
 
     imp = commands.add_parser(
-        verbs.IMPORT,
+        verbs.IMPORT_ALL,
         parents=[flags],
         help="create a note from every markdown file under a directory",
         description=(
@@ -439,13 +433,7 @@ def _add_corpus_export_import_verbs(commands, flags: argparse.ArgumentParser) ->
             "may be imported in any order."
         ),
     )
-    imp.add_argument(
-        DIR_FLAG,
-        dest="directory",
-        required=True,
-        metavar="PATH",
-        help="the directory to walk",
-    )
+    imp.add_argument("directory", help="the directory to walk")
 
 
 def _add_body_flags(verb: argparse.ArgumentParser) -> None:
