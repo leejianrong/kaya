@@ -157,6 +157,27 @@ class Settings(BaseSettings):
     exist or isn't yours" is not the kind of fact that flips back within minutes, so there is no
     argument here for two different half-lives."""
 
+    board_embed_connect_timeout_seconds: float = Field(
+        default=3.0,
+        validation_alias="KAYA_BOARD_EMBED_CONNECT_TIMEOUT_SECONDS",
+    )
+    """Per-request connect budget for rendering a `pandan-board` embed (KAN-1049) — a saved view or
+    column query against pandan, made fresh on every render (see
+    `app/integrations/board_embed.py`'s module docstring for why this path is not cached). Its own
+    field rather than reusing `card_resolution_connect_timeout_seconds`: the two protect different
+    call shapes (one or two whole-response fetches here, versus a chunked `refs=` batch there) even
+    though the underlying argument is the same one card resolution already made — this decorates a
+    note render and must fail fast rather than borrow identity's cold-start allowance. Mirrors
+    card resolution's default rather than guessing a different number, because the same "a few
+    seconds is plenty for a live host, and a dead one should say so quickly" reasoning applies."""
+
+    board_embed_read_timeout_seconds: float = Field(
+        default=3.0,
+        validation_alias="KAYA_BOARD_EMBED_READ_TIMEOUT_SECONDS",
+    )
+    """Per-request read budget for the same calls. See
+    `board_embed_connect_timeout_seconds` for why this is a separate knob from card resolution's."""
+
     log_level: str = Field(
         default="INFO",
         validation_alias="KAYA_LOG_LEVEL",

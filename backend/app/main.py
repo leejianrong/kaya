@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from starlette.middleware.gzip import GZipMiddleware
 
 from app import __version__
-from app.api import install_error_handlers, links_router, meta_router
+from app.api import embeds_router, install_error_handlers, links_router, meta_router
 from app.api import router as api_router
 from app.observability import install_observability
 from app.spa import mount_spa
@@ -84,6 +84,11 @@ app.include_router(api_router)
 # order is immaterial between the two — `/notes/{ref}` cannot match `/notes/NOTE-3/links`, because a
 # path parameter never spans a `/` — so this is composition, not precedence.
 app.include_router(links_router)
+
+# KAN-1049's `/embeds/board`. A third router under `/api/v1` for the reason `app/api/embeds.py`
+# argues: it is authenticated but, unlike every route on `api_router` and unlike `links_router`,
+# it holds no database session at all.
+app.include_router(embeds_router)
 
 # KAN-555. Separate from `api_router` because it is the one route under `/api/v1` with no credential
 # in front of it, and that difference should be visible where the surface is composed rather than
