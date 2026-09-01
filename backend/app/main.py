@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from starlette.middleware.gzip import GZipMiddleware
 
 from app import __version__
-from app.api import graph_router, install_error_handlers, links_router, meta_router
+from app.api import embeds_router, graph_router, install_error_handlers, links_router, meta_router
 from app.api import router as api_router
 from app.observability import install_observability
 from app.spa import mount_spa
@@ -85,7 +85,12 @@ app.include_router(api_router)
 # path parameter never spans a `/` — so this is composition, not precedence.
 app.include_router(links_router)
 
-# KAN-1050's `/graph`. A third router under `/api/v1` for the reason `app/api/graph.py` argues: it
+# KAN-1049's `/embeds/board`. A third router under `/api/v1` for the reason `app/api/embeds.py`
+# argues: it is authenticated but, unlike every route on `api_router` and unlike `links_router`,
+# it holds no database session at all.
+app.include_router(embeds_router)
+
+# KAN-1050's `/graph`. A fourth router under `/api/v1` for the reason `app/api/graph.py` argues: it
 # answers a different question (a graph, not a note), so it reads as itself in its own module.
 # Registration order is immaterial for the same reason as above — `/graph` matches nothing else
 # under `/notes`.

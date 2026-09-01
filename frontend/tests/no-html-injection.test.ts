@@ -229,12 +229,17 @@ describe('the renderer builds DOM the only safe way there is', () => {
   it('passes only literal attribute names to `setAttribute`', () => {
     // `setAttribute` is the one place a source-derived *value* lands in the DOM. Every name passed to
     // it has to be a literal here: a computed name is how `'on' + 'error'` becomes an event handler.
+    //
+    // The pattern allows one internal hyphen group (`data-board`, KAN-1049's embed markers) on top
+    // of the plain lowercase names every earlier attribute used (`href`, `rel`, …) — widened, not
+    // loosened: it is still exactly one `ts.isStringLiteral` literal per call, so a name built from
+    // a template string or a concatenation still fails this the same way it always did.
     const calls = callsTo(renderer, 'setAttribute')
 
     expect(calls.length).toBeGreaterThan(4)
     for (const call of calls) {
       const [name] = call.arguments
-      expect(ts.isStringLiteral(name) && /^[a-z]+$/.test(name.text)).toBe(true)
+      expect(ts.isStringLiteral(name) && /^[a-z]+(-[a-z]+)*$/.test(name.text)).toBe(true)
     }
   })
 })

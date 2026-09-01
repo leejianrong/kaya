@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { Note } from '../lib/types'
+  import { fetchBoardEmbed } from '../lib/embeds'
+  import type { BoardEmbedResponse, Note } from '../lib/types'
 
   /**
    * `lib/markdown.ts`, named as a **type** so naming it costs nothing.
@@ -129,7 +130,108 @@
     // `replaceChildren` and not an incremental patch: the fragment is the whole rendering, and a
     // preview is cheap to rebuild. A diff here would be a second rendering strategy to keep correct.
     target.replaceChildren(loaded.renderMarkdown(markdown))
+
+    // KAN-1049: a second pass over the subtree just built, hydrating every `.embed-board`
+    // placeholder `lib/markdown.ts` left behind. Not folded into `renderMarkdown` itself — that
+    // function never makes a network call (a markdown renderer that fetches mid-parse cannot be
+    // tested without a network), so the placeholder and its live content are necessarily two
+    // steps, same as `EditorPane.svelte`'s CM6 tree rendering first and its `/links` pill
+    // decoration arriving after.
+    //
+    // `abort` is this render pass's own token, not a component-lifetime one: this effect reruns on
+    // every `source` change (a keystroke), `replaceChildren` above already discarded the previous
+    // pass's DOM nodes, and the cleanup below fires before the next run starts (Svelte's ordering,
+    // same guarantee `EditorPane.svelte`'s `linksInflight` leans on). So a response that lands after
+    // ten more keystrokes finds `signal.aborted` true and writes into a node nobody can see — this
+    // is the "ignore a stale response after remount" guard for this component, at render-pass
+    // granularity rather than component-lifetime granularity, because a component doesn't remount
+    // here but a render pass effectively does.
+    const abort = new AbortController()
+    hydrateBoardEmbeds(target, abort.signal)
+    return () => {
+      abort.abort()
+    }
   })
+
+  /** Fetch and fill in every `.embed-board` placeholder under `root`. See the call site above. */
+  function hydrateBoardEmbeds(root: HTMLElement, signal: AbortSignal): void {
+    for (const el of root.querySelectorAll<HTMLElement>('.embed-board')) {
+      const board = Number.parseInt(el.dataset.board ?? '', 10)
+      if (!Number.isFinite(board)) {
+        // `lib/markdown.ts` never emits `.embed-board` without a numeric `data-board` — this is
+        // defence for a future change to that file, not a case reachable today.
+        continue
+      }
+      const view = el.dataset.view === undefined ? undefined : Number.parseInt(el.dataset.view, 10)
+      const column = el.dataset.column
+
+      fetchBoardEmbed({ board, view, column, signal }).then((result) => {
+        if (signal.aborted) {
+          return
+        }
+        applyBoardEmbedResult(el, result)
+      })
+    }
+  }
+
+  /**
+   * Replace a placeholder's "Loading board…" child with what `fetchBoardEmbed` answered.
+   *
+   * `null` (a transport failure) and `{ unavailable: true }` (pandan down, or the caller cannot see
+   * this board — `app/integrations/board_embed.py` does not distinguish them either) render
+   * identically: a caller of this component cannot and should not act differently on either, the
+   * same argument `Link.resolved_ref` already makes for wikilink pills (Q26, ADR 0003).
+   *
+   * Every element is `document.createElement`, every value a `.textContent` assignment — the same
+   * two safe primitives `lib/markdown.ts` uses, for the same reason: a card's `title` is another
+   * author's prose (pandan's, not this note's, but no less arbitrary), and it must become a `Text`
+   * node rather than a string ever passed to `innerHTML`.
+   */
+  function applyBoardEmbedResult(el: HTMLElement, result: BoardEmbedResponse | null): void {
+    el.replaceChildren()
+
+    if (result === null || result.unavailable) {
+      const notice = document.createElement('p')
+      notice.className = 'embed-board-unavailable'
+      notice.dataset.testid = 'embed-board-unavailable'
+      notice.textContent = 'This board could not be reached.'
+      el.append(notice)
+      return
+    }
+
+    if (result.cards.length === 0) {
+      const notice = document.createElement('p')
+      notice.className = 'embed-board-empty'
+      notice.dataset.testid = 'embed-board-empty'
+      notice.textContent = 'No cards match this query.'
+      el.append(notice)
+      return
+    }
+
+    const list = document.createElement('ul')
+    list.className = 'embed-board-cards'
+    list.dataset.testid = 'embed-board-cards'
+    for (const card of result.cards) {
+      const item = document.createElement('li')
+      item.className = 'embed-board-card'
+
+      const ref = document.createElement('span')
+      ref.className = 'embed-board-ref'
+      ref.textContent = card.ref
+
+      const column = document.createElement('span')
+      column.className = 'embed-board-column'
+      column.textContent = card.column
+
+      const title = document.createElement('span')
+      title.className = 'embed-board-title'
+      title.textContent = card.title
+
+      item.append(ref, column, title)
+      list.append(item)
+    }
+    el.append(list)
+  }
 </script>
 
 <section class="preview" aria-label="Preview">
@@ -321,9 +423,69 @@
     font-size: 0.9em;
   }
 
+  /* A malformed `pandan-board` block (`lib/markdown.ts`) — no `data-*` attribute, so this is the
+     whole of its rendering; nothing hydrates it. */
+  .rendered :global(p.embed-board-error) {
+    padding: 0.5rem 0.8rem;
+    border: 1px dashed var(--edge);
+    border-radius: 0.3rem;
+    color: var(--muted);
+    font-size: 0.85em;
+  }
+
   .rendered :global(table) {
     border-collapse: collapse;
     font-size: 0.9em;
+  }
+
+  /*
+    KAN-1049's `pandan-board` embed. `:global` throughout — every node under `.embed-board` was
+    built imperatively (`lib/markdown.ts`'s placeholder, this component's own hydration), never by
+    Svelte's template, so none of it carries a scoping class.
+  */
+  .rendered :global(.embed-board) {
+    padding: 0.6rem 0.8rem;
+    border: 1px solid var(--edge);
+    border-left: 3px solid var(--accent);
+    border-radius: 0.3rem;
+    background: color-mix(in srgb, var(--ink) 4%, transparent);
+    font-size: 0.85em;
+  }
+
+  .rendered :global(.embed-board-unavailable),
+  .rendered :global(.embed-board-empty) {
+    margin: 0;
+    color: var(--muted);
+  }
+
+  .rendered :global(.embed-board-cards) {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .rendered :global(.embed-board-card) {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  .rendered :global(.embed-board-ref) {
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 0.85em;
+  }
+
+  .rendered :global(.embed-board-column) {
+    padding: 0.05em 0.4em;
+    border-radius: 0.25rem;
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    font-size: 0.75em;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
   }
 
   .rendered :global(th),

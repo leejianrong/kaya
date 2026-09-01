@@ -1,6 +1,7 @@
-"""What a note, and since KAN-566 a link, looks like on the wire.
+"""What a note, and since KAN-566 a link, and since KAN-1049 a board embed, looks like on the wire.
 
-Three note models and one envelope, plus KAN-566's ``LinkRead``/``LinkList``. The note constraints
+Three note models and one envelope, plus KAN-566's ``LinkRead``/``LinkList`` and KAN-1049's
+``EmbedCard``/``BoardEmbedResponse``. The note constraints
 come from migration ``0001`` rather than from taste: ``title`` is ``String(255)`` and ``path`` is
 ``String(1024)``, so a longer value is a `422` here instead of a psycopg ``DataError`` and a `500`
 two layers down. ``body`` is ``TEXT`` and carries no limit, because ADR 0008's model comment is
@@ -270,6 +271,41 @@ class LinkRead(BaseModel):
     everything else: an epic has no column (``ResolvedTicket.column``), a note has no column, and an
     unresolved anything has nothing to report. Present because KAN-567's pill renders
     ``KAN-501 · in_progress · "…"`` and the alternative is a second request per link."""
+
+
+class EmbedCard(BaseModel):
+    """One card in a `pandan-board` embed (KAN-1049) — enough for a read-only row, nothing more.
+
+    Deliberately three fields, the same three `LinkRead`'s pill needs for a resolved card: `ref`,
+    `title`, `column`. No `id`, no `board_id`, no `priority` or `assignee` — pandan's `CardRead`
+    carries all of those, but an embed is a live *preview* of a board query inside a note, not a
+    board client, and every field added here is a field `PreviewPane.svelte` has to render.
+
+    `ref` is pandan's own `ticket_number` (`"KAN-12"`), never a kaya `NOTE-n` — a different ref
+    system entirely (ADR 0008), which is why this class does not sit anywhere near `NoteRead`."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    ref: str
+    title: str
+    column: str
+
+
+class BoardEmbedResponse(BaseModel):
+    """`GET /api/v1/embeds/board`'s body. Always a `200`, even when pandan could not be asked —
+    the same "degrade, never fail the render" contract Q26 already set for `LinkRead`
+    (`resolved_ref`/`title`/`column` all going `null`), spelled here as one boolean instead of three
+    nullable fields because there is no partial answer to preserve: either pandan answered with a
+    card list, or it did not, and a caller cannot act differently on "pandan is down" versus "the
+    caller cannot see this board" (ADR 0003, `app/integrations/board_embed.py`'s
+    `BoardEmbedResult` docstring).
+
+    `cards` is `[]` for both `unavailable=True` and a legitimately empty result — a saved view with
+    no matching cards renders identically to a decoration nobody could reach on the wire, and that
+    is deliberate: a caller cannot and should not act differently on either."""
+
+    unavailable: bool
+    cards: list[EmbedCard]
 
 
 class LinkList(BaseModel):

@@ -402,6 +402,150 @@ describe('a note body is rendered inert in the live preview', () => {
   }
 })
 
+describe('a pandan-board embed hydrates after render (KAN-1049)', () => {
+  /** A controllable `fetch`: every call returns a promise this test resolves by hand. */
+  function deferredFetch(): {
+    resolve: (url: string, body: unknown, status?: number) => void
+    calls: string[]
+  } {
+    const calls: string[] = []
+    const pending = new Map<string, (response: Response) => void>()
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      calls.push(url)
+      return new Promise<Response>((resolvePromise) => {
+        pending.set(url, resolvePromise)
+      })
+    }) as unknown as typeof fetch
+    return {
+      calls,
+      resolve: (url, body, status = 200) => {
+        const settlePending = pending.get(url)
+        expect(settlePending, `no fetch is pending for ${url} (saw: ${calls.join(', ')})`).toBeDefined()
+        settlePending!(
+          new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }),
+        )
+      },
+    }
+  }
+
+  const EMBED_URL = (query: string) => `/api/v1/embeds/board?${query}`
+
+  beforeEach(() => {
+    auth.setToken(FAKE_TOKEN)
+  })
+
+  it('replaces the placeholder with a read-only card list on success', async () => {
+    const { resolve } = deferredFetch()
+    const body =
+      '# Sprint\n\n```pandan-board\nboard: 18\ncolumn: todo\n```\n'
+    mounted.push(mount(PreviewPane, { target: host, props: { note: note(), source: body } }))
+    await previewRendered(host)
+
+    expect(host.querySelector('.embed-board p')?.textContent).toBe('Loading board…')
+
+    resolve(EMBED_URL('board=18&column=todo'), {
+      unavailable: false,
+      cards: [{ ref: 'KAN-1', title: 'Fix the bug', column: 'todo' }],
+    })
+    await settle()
+
+    const cards = host.querySelector('[data-testid="embed-board-cards"]')
+    expect(cards).not.toBeNull()
+    expect(cards!.textContent).toContain('KAN-1')
+    expect(cards!.textContent).toContain('Fix the bug')
+    expect(cards!.textContent).toContain('todo')
+    expect(host.querySelector('.embed-board p')).toBeNull()
+  })
+
+  it('shows an unavailable notice when pandan answers unavailable', async () => {
+    const { resolve } = deferredFetch()
+    const body = '```pandan-board\nboard: 18\nview: 3\n```\n'
+    mounted.push(mount(PreviewPane, { target: host, props: { note: note(), source: body } }))
+    await previewRendered(host)
+
+    resolve(EMBED_URL('board=18&view=3'), { unavailable: true, cards: [] })
+    await settle()
+
+    expect(host.querySelector('[data-testid="embed-board-unavailable"]')).not.toBeNull()
+    expect(host.querySelector('[data-testid="embed-board-cards"]')).toBeNull()
+  })
+
+  it('shows the same unavailable notice when the fetch fails outright, not an error', async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new TypeError('network down')
+    }) as unknown as typeof fetch
+    const body = '```pandan-board\nboard: 18\ncolumn: todo\n```\n'
+
+    mounted.push(mount(PreviewPane, { target: host, props: { note: note(), source: body } }))
+    await previewRendered(host)
+    await settle()
+
+    // `fetchBoardEmbed` never rejects (see `lib/embeds.ts`), so mounting and settling above must not
+    // throw, and the placeholder still resolves to the one degraded state a caller can act on.
+    expect(host.querySelector('[data-testid="embed-board-unavailable"]')).not.toBeNull()
+  })
+
+  it('renders a static notice for a malformed embed and makes no fetch at all', async () => {
+    const { calls } = deferredFetch()
+    const body = '```pandan-board\nboard: not-a-number\ncolumn: todo\n```\n'
+
+    mounted.push(mount(PreviewPane, { target: host, props: { note: note(), source: body } }))
+    await previewRendered(host)
+    await settle()
+
+    expect(host.querySelector('p.embed-board-error')).not.toBeNull()
+    expect(host.querySelector('.embed-board')).toBeNull()
+    // The malformed placeholder carries no `data-board`, which is what makes it invisible to
+    // `hydrateBoardEmbeds` — asserted here as "no request happened", the observable half of that.
+    expect(calls).toEqual([])
+  })
+
+  it('ignores a stale fetch once a later render already answered for a different embed', async () => {
+    // KAN-1049's race: a re-render (any keystroke, not necessarily one inside the embed block)
+    // rebuilds the whole preview, including a *new* `.embed-board` node for the same or a different
+    // query, before the previous render's fetch has resolved. The old node is already out of the
+    // DOM by the time its answer arrives, and the assertion is that the answer never becomes visible.
+    const { resolve, calls } = deferredFetch()
+    const live = box('```pandan-board\nboard: 1\ncolumn: a\n```\n')
+
+    mounted.push(
+      mount(PreviewPane, {
+        target: host,
+        props: {
+          note: note(),
+          get source() {
+            return live.value
+          },
+        },
+      }),
+    )
+    await previewRendered(host)
+    await vi.waitFor(() => expect(calls).toContain(EMBED_URL('board=1&column=a')))
+
+    // A second render, for a *different* board, before the first ever answers.
+    live.value = '```pandan-board\nboard: 2\ncolumn: b\n```\n'
+    flushSync()
+    await vi.waitFor(() => expect(calls).toContain(EMBED_URL('board=2&column=b')))
+
+    resolve(EMBED_URL('board=2&column=b'), {
+      unavailable: false,
+      cards: [{ ref: 'KAN-2', title: 'Second board', column: 'b' }],
+    })
+    await settle()
+
+    // The stale answer, for a board no longer on screen, arrives last.
+    resolve(EMBED_URL('board=1&column=a'), {
+      unavailable: false,
+      cards: [{ ref: 'KAN-1', title: 'STALE FIRST BOARD', column: 'a' }],
+    })
+    await settle()
+
+    expect(host.textContent).not.toContain('STALE FIRST BOARD')
+    expect(host.textContent).toContain('Second board')
+  })
+})
+
 describe('the preview toggle', () => {
   const NOTE = note()
 
