@@ -83,6 +83,24 @@ def test_note_import_prints_the_created_note(capsys, answering, tmp_path) -> Non
     assert rendered["imported_from_ref"] is None
 
 
+def test_note_import_reclaims_a_free_ref_end_to_end(capsys, fake_api, tmp_path) -> None:
+    """R12/KAN-1061's headline, through the real CLI: a file naming a free ``kaya_ref`` gets that
+    exact ref back via ``PUT``, not a fresh one from ``POST`` — proven at the argv-to-stdout layer,
+    the same way `test_write_verbs.py` proves every other verb end to end."""
+    source = tmp_path / "in.md"
+    source.write_text('---\nkaya_ref: "NOTE-12"\ntitle: "Groceries"\n---\nmilk', encoding="utf-8")
+
+    seen = fake_api(lambda request: httpx.Response(201, json=GROCERIES))
+
+    assert main(["note", "import", str(source), "--json"]) == 0
+    assert (seen[0].method, seen[0].url.path) == ("PUT", "/api/v1/notes/NOTE-12")
+
+    rendered = json.loads(capsys.readouterr().out)
+    assert rendered["ref"] == "NOTE-12"
+    assert rendered["imported_from_ref"] == "NOTE-12"
+    assert rendered["ref_reused"] is True
+
+
 # --------------------------------------------------------------------------------- export-all
 
 

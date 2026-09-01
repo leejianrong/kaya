@@ -21,6 +21,7 @@ from app.api import (
     install_error_handlers,
     links_router,
     meta_router,
+    note_claim_router,
 )
 from app.api import router as api_router
 from app.observability import install_observability
@@ -107,6 +108,14 @@ app.include_router(graph_router)
 # reason `links_router` is its own: `/notes/{ref}` cannot match `/notes/NOTE-3/attachments`, so
 # registration order is immaterial, and this reads as itself in its own module.
 app.include_router(attachments_router)
+
+# R12/KAN-1061's `PUT /notes/{ref}`. A sixth router under `/api/v1` for the reason
+# `app/api/note_claim.py` argues: it is the one route allowed to hand a caller-chosen ref to a new
+# note, which `NoteCreate` (the schema every other creation path shares) is deliberately built to
+# refuse, so it earns its own module rather than a conditional inside `notes.py`. Registration
+# order is immaterial against `api_router`'s own `GET`/`PATCH`/`DELETE /notes/{ref}`: they share a
+# path but not a method, and Starlette dispatches on both.
+app.include_router(note_claim_router)
 
 # KAN-555. Separate from `api_router` because it is the one route under `/api/v1` with no credential
 # in front of it, and that difference should be visible where the surface is composed rather than

@@ -21,11 +21,13 @@ which make the default row, what the envelope is called) is attached *here*, whe
 made, and travels with the data.
 
 **R12 (KAN-1060..1063) adds ``export_note``/``export_all``/``import_note``/``import_dir``**, the
-export/import round trip `docs/roadmap/BREADBOARD.md` shapes. No new route: export reads through
-``get_note``/``list_notes`` and import writes through ``create_note``, so every one of them is this
-file's existing seven methods plus file I/O and `frontmatter`'s parse/compose pair. See
-``_import_document`` for R12's one real finding — a caller-supplied ref has nowhere on the wire to
-go, which the fit-check's "no new route" leaves unresolved rather than this card working around it.
+export/import round trip `docs/roadmap/BREADBOARD.md` shapes, plus ``claim_note`` for
+``PUT /api/v1/notes/{ref}`` (KAN-1061, `backend/app/api/note_claim.py`) — the one new route this
+epic needed, so a re-import whose ``kaya_ref`` is free gets that exact ref back rather than a fresh
+one, per ADR 0008 §Decision. ``import_note``/``import_dir`` try ``claim_note`` first whenever the
+source file names a ``kaya_ref``, and fall back to the ordinary ``create_note`` (a fresh, server-
+minted ref) only when the claim is refused — taken, or not a well-formed ref this route accepts —
+or when the file names none at all. See ``_import_document`` for the whole decision.
 
 ### The transport seam
 
@@ -247,18 +249,14 @@ EXPORT_COLUMNS = ("ref", "title", "path", "file")
 the body went into the file, not onto the screen, which is the point of the verb."""
 
 IMPORTED_FROM_REF_KEY = "imported_from_ref"
-ORIGINAL_REF_STATUS_KEY = "original_ref_status"
-"""Two informational keys `import_note`/`import_dir` add to the created note's own record — see
-``_import_document``'s docstring for what they mean, and, more importantly, for what they do
-**not**: the backend has no way to honour a caller-supplied ref (`app/models/note.py`'s
-``NOTE_REF_SERVER_DEFAULT`` allocates one from a sequence inside the INSERT, and ``NoteCreate``
-forbids sending one at all), so these two keys report what the source file *asked for* and whether
-it *could* have been reused — never that it *was*. They are extra keys on an ordinary ``note``
-entity, not a new noun, because the record this returns is a real note in every other respect and
-`note get <ref>` on it behaves identically."""
-
-REF_STATUS_FREE = "free"
-REF_STATUS_TAKEN = "taken"
+REF_REUSED_KEY = "ref_reused"
+"""Two informational keys `import_note`/`import_dir` add to the created note's own record.
+``imported_from_ref`` is the source file's own ``kaya_ref`` (or ``None`` for a file with none —
+arbitrary markdown, per BREADBOARD.md's R12). ``ref_reused`` is whether the returned note's ``ref``
+is that same value: ``True`` only when `claim_note` succeeded, ``False`` when it was refused (taken,
+or not a ref this route accepts) or never attempted (no ``kaya_ref`` to try). They are extra keys on
+an ordinary ``note`` entity, not a new noun, because the record this returns is a real note in every
+other respect and `note get <ref>` on it behaves identically."""
 
 
 class KayaClient:
@@ -600,13 +598,40 @@ class KayaClient:
             columns=EXPORT_COLUMNS,
         )
 
+    def claim_note(
+        self,
+        ref: str,
+        *,
+        title: str,
+        body: str | None = None,
+        path: str | None = None,
+    ) -> Payload:
+        """``PUT /api/v1/notes/{ref}`` — create a note at this specific, currently-free ref.
+
+        KAN-1061's whole reason for existing: an import whose source file names a ``kaya_ref``
+        nobody currently holds should get that exact ref back, not a fresh one (ADR 0008
+        §Decision), and this is the request that does it. ``ref`` is passed through untouched,
+        the same rule every ref-taking method here follows (ADR 0008) — the backend's own
+        `parse_note_ref` decides whether it is well-formed, not this client.
+
+        Raises ``ApiError`` on a `409` (the ref is already taken — by any owner, not only this
+        caller) or a `400` (not a ref this route accepts, e.g. a bare integer — see
+        `backend/app/api/note_claim.py`'s own docstring for why only the canonical spelling is
+        allowed here). `_import_document` is the caller that turns both into a graceful fallback
+        to `create_note`; nothing about this method's own contract treats either as anything but
+        an ordinary refusal a caller could also see directly.
+        """
+        content = self._content(title, body, path)
+        return self._note(self._request("PUT", self._note_path(ref), content))
+
     def import_note(self, source: str | Path) -> Payload:
         """Create a note from one file — kaya's own export shape, or arbitrary markdown.
 
-        ``POST /api/v1/notes`` through the ordinary `create_note` path (see `_import_document`),
-        so KAN-563's wikilink reconciliation runs exactly the way it does for any other create —
-        "nothing bespoke", per R12's own wording. **No new route**, and — see `_import_document`'s
-        docstring — no route that could accept a caller-chosen ref either way.
+        See `_import_document` for the decision between `claim_note` (the source file's own
+        ``kaya_ref``, reused when free) and the ordinary `create_note` fallback (a fresh,
+        server-minted ref). Either way this reaches `POST`/`PUT /api/v1/notes`, so KAN-563's
+        wikilink reconciliation runs exactly the way it does for any other create — "nothing
+        bespoke", per R12's own wording.
 
         A file that cannot be read or is not UTF-8 is a ``UsageError``, the same refusal
         `kaya_cli.parsing.resolve_body` gives ``--body-file`` for the same two failures, since this
@@ -656,29 +681,25 @@ class KayaClient:
         )
 
     def _import_document(self, text: str, *, fallback_title: str, fallback_path: str) -> Payload:
-        """The shared half of `import_note` and `import_dir`: parse, create, annotate.
+        """The shared half of `import_note` and `import_dir`: parse, claim-or-create, annotate.
 
-        **Why the front matter's ``kaya_ref`` never reaches the request this method sends, and why
-        that is correct rather than an unfinished half of R12.** ADR 0008 §Decision and
-        `app/models/note.py`'s own comment both make this permanent: a ref is "allocated by
-        Postgres inside the INSERT" from ``note_ref_seq``, never assigned by application code, and
-        ``NoteCreate`` (`app/api/schemas.py`) declares ``extra="forbid"`` with no ``ref`` field at
-        all — sending one is a `422` naming the field, not a hint the server ignores. There is
-        consequently no request this method, or any future one that stays inside R12's fit-check
-        ("no new backend route, no new table"), could make that would hand the new note the old
-        ref back. BREADBOARD.md's R12 table says an import "carries [a free ref] forward"; that
-        turned out to describe a capability the current schema does not have a door for, which is
-        this card's one finding worth flagging rather than quietly working around.
+        **The ref-preservation decision, in one place.** A file's ``kaya_ref`` — kaya's own export
+        shape carries one, arbitrary markdown never does — is tried first through `claim_note`
+        (``PUT``, KAN-1061). Two things send it to the ordinary `create_note` fallback instead: no
+        ``kaya_ref`` at all (BREADBOARD.md's R12 "absent" case), or `claim_note` refusing — a `409`
+        because somebody already holds it (the "taken" case), or a `400` because it does not parse
+        as a claimable ref (e.g. a bare integer; `backend/app/api/note_claim.py` is deliberately
+        narrower than every other ref-taking route). Any other failure — a `TransportError`, an
+        unexpected status — is **not** swallowed here: a courtesy fallback is for "this ref cannot
+        be honoured", not for "something else is wrong with this request", and hiding the second
+        behind the first would turn a real outage into a silently different note.
 
-        So every import mints a fresh ref — the one thing `create_note` can do — and what this
-        method adds is honest bookkeeping about the ref the file *asked* for:
-        ``imported_from_ref`` is that ref (or ``None`` for a file with no ``kaya_ref`` at all, the
-        "absent" case BREADBOARD.md does describe correctly), and ``original_ref_status`` is
-        whether it was free or already taken *at the moment of this import* — informational only,
-        since neither answer changes what happens next. A future card could close this gap for
-        real, by giving ``NoteCreate`` an optional ``ref`` the route accepts only when the sequence
-        has not passed it — that is a new field on an existing route, not a new one, so it may
-        still fit R12's constraint, but it is schema and route work this card's scope excludes.
+        ``imported_from_ref`` is the file's own ``kaya_ref`` (``None`` for the absent case).
+        ``ref_reused`` is ``True`` only when the returned note's ``ref`` actually matches it — a
+        fact derived from the response, not asserted independently, so it cannot drift from what
+        really happened. Comparison is case-insensitive: kaya's own export always writes the
+        canonical spelling, but a hand-edited file's ``kaya_ref: note-12`` naming the same note as
+        the claim actually created should still read as reused.
 
         Title, in order: the front matter's own ``title``, the body's first line if it is a
         markdown ``# heading``, the file's own name, or ``"Untitled"`` — the last resort a title
@@ -698,12 +719,25 @@ class KayaClient:
         )
         path = document.get(PATH_KEY) or fallback_path
 
-        status = self._ref_status(original_ref) if original_ref else None
-        created = self.create_note(title, body=document.body, path=path or None)
+        created = None
+        if original_ref:
+            try:
+                created = self.claim_note(
+                    original_ref, title=title, body=document.body, path=path or None
+                )
+            except ApiError as exc:
+                if exc.status not in (400, 409):
+                    raise
+                created = None
+
+        if created is None:
+            created = self.create_note(title, body=document.body, path=path or None)
 
         record = dict(created.record)
         record[IMPORTED_FROM_REF_KEY] = original_ref
-        record[ORIGINAL_REF_STATUS_KEY] = status
+        record[REF_REUSED_KEY] = bool(
+            original_ref and str(record["ref"]).lower() == original_ref.strip().lower()
+        )
         return Payload.entity(
             noun=NOTE_NOUN,
             envelope_key=NOTE_ENVELOPE,
@@ -711,31 +745,6 @@ class KayaClient:
             columns=NOTE_COLUMNS,
             prose_fields=NOTE_PROSE_FIELDS,
         )
-
-    def _ref_status(self, ref: str) -> str | None:
-        """Whether ``ref`` currently names a note — ``"free"``, ``"taken"``, or ``None`` when this
-        client cannot tell (a malformed ref, or the request itself failing).
-
-        A plain `get_note`, and the same unscoped-fetch distinction `authorize_note` exists to make
-        is what this reads: a `404` means nobody holds it (``free``); a `403` means somebody else
-        does (``taken``, without this caller ever learning whose); a `200` means the caller's own
-        note does (``taken``). Anything else — a `400` for a ref this module cannot even parse, a
-        `TransportError` — degrades to ``None`` rather than raising, because this check is a
-        courtesy note on an import that is going to mint a fresh ref regardless (see
-        `_import_document`); a transient failure here must never be the reason a whole import
-        fails.
-        """
-        try:
-            self.get_note(ref)
-        except ApiError as exc:
-            if exc.status == 404:
-                return REF_STATUS_FREE
-            if exc.status == 403:
-                return REF_STATUS_TAKEN
-            return None
-        except TransportError:
-            return None
-        return REF_STATUS_TAKEN
 
     # ------------------------------------------------------------ note plumbing
 

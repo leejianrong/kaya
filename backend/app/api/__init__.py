@@ -21,6 +21,9 @@ over ordinary objects, and only the route modules know FastAPI's routing machine
 - ``attachments.py`` — R14's two (KAN-1067/1068): ``POST``/``GET /notes/{ref}/attachments``,
   reached through ``NoteFromRef`` exactly like every other ref-taking route, over a table with no
   owner column of its own — see its module docstring.
+- ``note_claim.py`` — R12/KAN-1061's ``PUT /notes/{ref}``: create a note at a caller-chosen, still-
+  free ref, for the one caller (kaya-client's import path) that has a specific number to reclaim —
+  see its module docstring for why this needed a new route rather than a field on ``NoteCreate``.
 - ``meta.py`` — KAN-555's one **unauthenticated** route, carrying ``KAYA_PANDAN_URL`` to a visitor
   who has no credential yet and therefore cannot be asked for one. One key, on purpose.
 """
@@ -31,6 +34,7 @@ from app.api.errors import install_error_handlers
 from app.api.graph import router as graph_router
 from app.api.links import router as links_router
 from app.api.meta import router as meta_router
+from app.api.note_claim import router as note_claim_router
 from app.api.notes import router
 from app.api.refs import NoteRef, invalid_note_ref, parse_note_ref, resolve_note
 
@@ -43,6 +47,7 @@ __all__ = [
     "invalid_note_ref",
     "links_router",
     "meta_router",
+    "note_claim_router",
     "parse_note_ref",
     "resolve_note",
     "router",

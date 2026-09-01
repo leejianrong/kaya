@@ -912,7 +912,10 @@ def test_no_refusal_reaches_the_wire_nested_under_detail(client: Any) -> None:
             headers=auth(ALICE_TOKEN),
         ),
         client.get("/api/v1/nope", headers=auth(ALICE_TOKEN)),  # 404 from Starlette
-        client.put(f"{NOTES}/{hers['ref']}", headers=auth(ALICE_TOKEN)),  # 405 from Starlette
+        # 405 from Starlette. Not `PUT {NOTES}/{ref}` any more — R12/KAN-1061 gave that combination
+        # a real handler (`app/api/note_claim.py`), so `DELETE` on the *collection* (only `GET`/
+        # `POST` exist there) is what still has no route to answer it.
+        client.delete(NOTES, headers=auth(ALICE_TOKEN)),
     ]
 
     assert [r.status_code for r in refusals] == [401, 401, 403, 404, 400, 422, 409, 404, 405]

@@ -3,8 +3,10 @@
 
 R12's headline finding — kaya's ``[[Title]]`` wikilinks are already Obsidian-native — means export
 never rewrites a body, so most of what is worth pinning here is that the file on disk and the note
-on the wire agree byte for byte, and that import sends exactly the request `create_note` always
-sends (no bespoke reconciliation, per BREADBOARD.md's R12).
+on the wire agree byte for byte, that import tries `claim_note` (``PUT``) first whenever the file
+names a ``kaya_ref`` and falls back to the ordinary `create_note` (``POST``) only when that is
+refused or absent, and that neither request is anything bespoke (no reconciliation logic lives
+here — KAN-563 runs identically either way, per BREADBOARD.md's R12).
 """
 
 import json
@@ -109,14 +111,53 @@ def test_export_all_a_path_that_is_only_traversal_segments_falls_back_to_the_ref
     assert payload.records[0]["file"] == str(tmp_path / "NOTE-3.md")
 
 
+# ----------------------------------------------------------------------------- claim_note
+
+
+def test_claim_note_puts_to_the_ref_and_returns_the_note() -> None:
+    handler = responder(201, {**GROCERIES, "ref": "NOTE-42"})
+    with client_over(handler) as client:
+        payload = client.claim_note("NOTE-42", title="Groceries", body="milk", path="x.md")
+
+    seen = handler.seen  # type: ignore[attr-defined]
+    assert (seen.method, seen.url.path) == ("PUT", "/api/v1/notes/NOTE-42")
+    assert body_of(seen) == {"title": "Groceries", "body": "milk", "path": "x.md"}
+    assert payload.record["ref"] == "NOTE-42"
+
+
+def test_claim_note_omits_body_and_path_when_not_given() -> None:
+    """The same ``None``-means-omitted rule `create_note`/`update_note` follow — see `_content`."""
+    handler = responder(201, GROCERIES)
+    with client_over(handler) as client:
+        client.claim_note("NOTE-42", title="Groceries")
+
+    assert body_of(handler.seen) == {"title": "Groceries"}  # type: ignore[attr-defined]
+
+
+def test_claim_note_a_taken_ref_raises_api_error() -> None:
+    body = {"error": {"code": "ref_taken", "message": "taken", "ref": "NOTE-42"}}
+    with client_over(responder(409, body)) as client, pytest.raises(ApiError) as excinfo:
+        client.claim_note("NOTE-42", title="x")
+    assert excinfo.value.status == 409
+    assert excinfo.value.code == "ref_taken"
+
+
+def test_claim_note_percent_encodes_the_ref() -> None:
+    """The same `_note_path` every other ref-taking method shares (KAN-541) — no second URL
+    builder to forget the fix in."""
+    handler = responder(201, GROCERIES)
+    with client_over(handler) as client:
+        client.claim_note("#NOTE-1", title="x")
+    assert handler.seen.url.raw_path.decode() == "/api/v1/notes/%23NOTE-1"  # type: ignore[attr-defined]
+
+
 # ------------------------------------------------------------- the round trip, chained for real
 
 
-def test_export_then_import_round_trips_title_path_and_body(tmp_path) -> None:
-    """The literal round trip: `export_note` writes a file, `import_note` reads that same file
-    back. The ref cannot survive (see the ref-preservation tests below), but everything else the
-    front matter carries — title, path, body, `[[wikilinks]]` untouched — does, because it is the
-    same file crossing the boundary both ways.
+def test_export_then_import_round_trips_the_ref_when_it_is_free(tmp_path) -> None:
+    """The literal round trip, and this card's headline claim made true: `export_note` writes a
+    file; the note is deleted (its ref is now free); `import_note` reads the same file back and
+    gets the *same* ref, via `claim_note`'s `PUT` — not a fresh one.
     """
     exported: list[httpx.Request] = []
 
@@ -128,52 +169,52 @@ def test_export_then_import_round_trips_title_path_and_body(tmp_path) -> None:
     with client_over(export_handler) as client:
         client.export_note("NOTE-12", target)
 
-    created: list[httpx.Request] = []
+    reimported: list[httpx.Request] = []
 
     def import_handler(request: httpx.Request) -> httpx.Response:
-        created.append(request)
-        if request.method == "GET":
-            return httpx.Response(200, json=GROCERIES)  # NOTE-12 still exists: "taken"
-        return httpx.Response(201, json={**GROCERIES, "ref": "NOTE-88", "id": 88})
+        reimported.append(request)
+        assert request.method == "PUT", "the free-ref path never falls back to POST"
+        return httpx.Response(201, json=GROCERIES)  # the same ref, reclaimed
 
     with client_over(import_handler) as client:
         payload = client.import_note(target)
 
-    post = next(r for r in created if r.method == "POST")
-    assert body_of(post) == {
+    [put] = reimported
+    assert put.url.path == "/api/v1/notes/NOTE-12"
+    assert body_of(put) == {
         "title": GROCERIES["title"],
         "body": GROCERIES["body"],
         "path": GROCERIES["path"],
     }
-    assert payload.record["ref"] == "NOTE-88"  # a fresh ref — see the finding below
-    assert payload.record["ref"] != GROCERIES["ref"]
+    assert payload.record["ref"] == GROCERIES["ref"]
     assert payload.record["imported_from_ref"] == GROCERIES["ref"]
-    assert payload.record["original_ref_status"] == "taken"
+    assert payload.record["ref_reused"] is True
 
 
 # -------------------------------------------------------------------------- import_note
 
 
-def test_import_note_creates_a_note_from_the_files_front_matter_and_body(tmp_path) -> None:
+def test_import_note_claims_the_files_own_ref_when_it_is_free(tmp_path) -> None:
     source = tmp_path / "in.md"
     source.write_text(
         '---\nkaya_ref: "NOTE-99"\ntitle: "Groceries"\npath: "home/groceries.md"\n---\n'
         "milk\neggs",
         encoding="utf-8",
     )
-    handler = responder(201, GROCERIES)
+    handler = responder(201, {**GROCERIES, "ref": "NOTE-99"})
     with client_over(handler) as client:
         payload = client.import_note(source)
 
     seen = handler.seen  # type: ignore[attr-defined]
-    assert (seen.method, seen.url.path) == ("POST", "/api/v1/notes")
+    assert (seen.method, seen.url.path) == ("PUT", "/api/v1/notes/NOTE-99")
     assert body_of(seen) == {
         "title": "Groceries",
         "body": "milk\neggs",
         "path": "home/groceries.md",
     }
-    assert payload.record["ref"] == "NOTE-12"  # the fresh ref the fake API minted
+    assert payload.record["ref"] == "NOTE-99"
     assert payload.record["imported_from_ref"] == "NOTE-99"
+    assert payload.record["ref_reused"] is True
 
 
 def test_import_note_with_no_front_matter_uses_the_filename_as_the_title(tmp_path) -> None:
@@ -205,48 +246,69 @@ def test_import_note_a_file_that_does_not_exist_is_a_usage_error(tmp_path) -> No
 # --------------------------------------------------------------- the ref-preservation finding
 
 
-def test_import_note_a_ref_still_held_by_a_note_is_reported_taken(tmp_path) -> None:
-    """R12's 'taken' case: the source file's own ref still exists, so a fresh one is minted."""
+def test_import_note_falls_back_to_a_fresh_ref_when_the_files_own_ref_is_taken(tmp_path) -> None:
+    """R12's 'taken' case: `claim_note`'s `PUT` gets a `409`, so `import_note` falls back to the
+    ordinary `create_note` — a fresh, server-minted ref, exactly the "if taken or absent" half of
+    BREADBOARD.md's R12 table.
+    """
     source = tmp_path / "in.md"
     source.write_text('---\nkaya_ref: "NOTE-12"\ntitle: "Groceries"\n---\nmilk', encoding="utf-8")
 
+    seen: list[httpx.Request] = []
+
     def handle(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET":
-            return httpx.Response(200, json=GROCERIES)  # NOTE-12 still exists
+        seen.append(request)
+        if request.method == "PUT":
+            body = {"error": {"code": "ref_taken", "message": "taken", "ref": "NOTE-12"}}
+            return httpx.Response(409, json=body)
         return httpx.Response(201, json={**GROCERIES, "ref": "NOTE-77", "id": 77})
 
     with client_over(handle) as client:
         payload = client.import_note(source)
 
+    assert [r.method for r in seen] == ["PUT", "POST"], "PUT tried first, POST is the fallback"
     assert payload.record["ref"] == "NOTE-77"  # a fresh ref, never NOTE-12
     assert payload.record["imported_from_ref"] == "NOTE-12"
-    assert payload.record["original_ref_status"] == "taken"
+    assert payload.record["ref_reused"] is False
 
 
-def test_import_note_a_ref_nobody_holds_is_reported_free_but_still_not_reused(tmp_path) -> None:
-    """R12's 'free' case, and this repo's central finding about it: even when the source file's
-    ``kaya_ref`` names no existing note, the backend has no route that accepts a caller-supplied
-    ref (`app/api/schemas.py`'s ``NoteCreate`` is ``extra="forbid"`` with no ``ref`` field, and the
-    column is a Postgres sequence default) — so a fresh ref is minted regardless. This test is the
-    proof that the client tells the truth about that rather than quietly pretending otherwise.
-    """
+def test_import_note_falls_back_to_a_fresh_ref_when_the_files_own_ref_will_not_parse(
+    tmp_path,
+) -> None:
+    """`claim_note` only accepts the canonical `NOTE-n` spelling (`backend/app/api/note_claim.py`),
+    so a hand-typed `kaya_ref` that cannot even parse as a ref — a `400`, not a `409` — falls back
+    exactly the same way a taken one does, rather than raising."""
     source = tmp_path / "in.md"
-    source.write_text(
-        '---\nkaya_ref: "NOTE-999999"\ntitle: "Groceries"\n---\nmilk', encoding="utf-8"
-    )
+    source.write_text('---\nkaya_ref: "not-a-ref-at-all"\ntitle: "x"\n---\nmilk', encoding="utf-8")
+
+    seen: list[httpx.Request] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET":
-            body = {"error": {"code": "note_not_found", "message": "no such note"}}
-            return httpx.Response(404, json=body)  # NOTE-999999 was never allocated
-        return httpx.Response(201, json=GROCERIES)  # the server mints NOTE-12, not NOTE-999999
+        seen.append(request)
+        if request.method == "PUT":
+            body = {"error": {"code": "invalid_note_ref", "message": "nope"}}
+            return httpx.Response(400, json=body)
+        return httpx.Response(201, json=GROCERIES)
 
     with client_over(handle) as client:
         payload = client.import_note(source)
 
-    assert payload.record["original_ref_status"] == "free"
-    assert payload.record["ref"] == "NOTE-12"
-    assert payload.record["ref"] != "NOTE-999999"
+    assert [r.method for r in seen] == ["PUT", "POST"]
+    assert payload.record["ref_reused"] is False
+
+
+def test_import_note_does_not_swallow_an_unrelated_failure_from_the_claim(tmp_path) -> None:
+    """A `403`/`503`/anything else from `claim_note` is a real problem, not "this ref is
+    unavailable" — the fallback exists for exactly two statuses, and only those two."""
+    source = tmp_path / "in.md"
+    source.write_text('---\nkaya_ref: "NOTE-12"\ntitle: "x"\n---\nmilk', encoding="utf-8")
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"error": {"code": "upstream_unavailable", "message": ""}})
+
+    with client_over(handle) as client, pytest.raises(ApiError) as excinfo:
+        client.import_note(source)
+    assert excinfo.value.status == 503
 
 
 # ---------------------------------------------------------------------------- import_dir

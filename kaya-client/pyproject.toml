@@ -1,19 +1,16 @@
 [project]
 name = "kaya-client"
 # 0.15.0 — KAN-1060..1063 add R12's export/import round trip: `KayaClient.export_note`,
-# `export_all`, `import_note` and `import_dir`, plus a new `frontmatter` module
+# `export_all`, `import_note`, `import_dir` and `claim_note`, plus a new `frontmatter` module
 # (`compose_document`/`parse_document`/`ParsedDocument`) for the front-matter file shape
-# `docs/roadmap/BREADBOARD.md` fixes. No new route and no new table — export reads through
-# `get_note`/`list_notes`, import writes through `create_note`, so KAN-563's wikilink
-# reconciliation runs unchanged. New public API, so a minor bump; no existing method's signature
-# or behaviour changed. **One finding worth recording here rather than only in the code**: R12's
-# table describes an import "carrying \[a free ref\] forward" when the source file's own
-# ``kaya_ref`` names no existing note. That capability does not exist on the current wire — ADR
-# 0008 and `app/models/note.py`'s own permanent-decision comment both make a ref
-# sequence-allocated inside the INSERT, and `NoteCreate` is `extra="forbid"` with no `ref` field
-# at all — so every import mints a fresh ref regardless, and `imported_from_ref`/
-# `original_ref_status` report what the file asked for rather than claiming it happened. See
-# `KayaClient._import_document`'s docstring for the full argument.
+# `docs/roadmap/BREADBOARD.md` fixes. Export reads through `get_note`/`list_notes`; import writes
+# through `create_note` or, when the source file's own `kaya_ref` is free, through `claim_note`
+# (`PUT /api/v1/notes/{ref}`, `backend/app/api/note_claim.py` — the one new backend route this
+# epic needed, landing in the same PR) — so a re-imported note gets its exact ref back, per ADR
+# 0008 §Decision, and KAN-563's wikilink reconciliation runs unchanged either way. New public API,
+# so a minor bump; no existing method's signature or behaviour changed. `imported_from_ref`/
+# `ref_reused` on an imported note's record report what the file asked for and whether it was
+# actually honoured. See `KayaClient._import_document`'s docstring for the full decision.
 # 0.13.0 — KAN-559 adds ``q`` to `list_notes`, forwarded to `GET /api/v1/notes?q=` exactly as
 # `if_updated_at` is forwarded: an opaque string, ``None`` when the caller did not ask to search
 # (adding no query parameter at all, so a plain `list_notes()` is byte-identical to before) and
