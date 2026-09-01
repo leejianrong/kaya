@@ -18,11 +18,14 @@
  * Per CLAUDE.md's mutation-testing convention, this guard was proven for real: `onChange` in
  * `EditorPane.svelte`'s `build()` was mutated to call `void save()` on every keystroke — the exact
  * per-keystroke autosave shape this test exists to rule out — and this test was run against that
- * build. It failed on the assertion right after typing (`expect(patchCount).toBe(0)`), reporting a
- * count in the high teens rather than zero — CM6 batches rapid synthetic keystrokes into fewer than
- * 20 transactions, so the exact number varies run to run, but it is never zero once every keystroke
- * fires a save. The mutation was reverted with `git apply -R` on an otherwise-clean tree; see the PR
- * description for the full transcript and the `git status --short` check confirming a clean restore.
+ * build. It failed on the assertion right after typing (`expect(patchCount).toBe(0)`), reporting 3
+ * rather than 0. Not "one per keystroke": `write()`'s own `saving` guard makes each `onChange`-fired
+ * save a no-op while a previous one is still in flight, so the count is throttled to roughly one
+ * per round trip rather than one per character — and it is exactly this throttling, observed rather
+ * than guessed at beforehand, that makes "count is nonzero" the right assertion for this mutation
+ * and not "count equals 20". The mutation was reverted with `git apply -R` on an otherwise-clean
+ * tree; see the PR description for the full transcript and the `git status --short` check
+ * confirming a clean restore.
  */
 import { fakeToken } from './env'
 import { apiCreateNote, expect, prefixedTitle, test } from './fixtures'
