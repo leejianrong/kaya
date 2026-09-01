@@ -228,6 +228,15 @@
   let unavailable: string | null = $state(null)
 
   /**
+   * R14 (KAN-1067): a drop/paste upload that failed, via `lib/codemirror.ts`'s
+   * `EditorSpec.onAttachmentError`. Its own rune rather than folded into `refusal` — that one means
+   * "the server refused a `PATCH`" and this is a different request entirely (`POST
+   * .../attachments`), the same separation `unavailable` already keeps from a load failure. Cleared
+   * on the next remount, same as every other per-note error rune below.
+   */
+  let attachmentError: string | null = $state(null)
+
+  /**
    * KAN-1041, BREADBOARD.md A2: whether the Delete button is armed — the two-step confirm the card
    * asks for, with no native `confirm()` and no modal library. The first click arms it; the second,
    * while still armed, is the actual delete.
@@ -447,6 +456,7 @@
     deleteArmed = false
     deleting = false
     deleteError = null
+    attachmentError = null
     titleBaseline = opened?.title ?? ''
     titleDraft = titleBaseline
     titleSaving = false
@@ -561,6 +571,12 @@
       editable,
       placeholder: editable ? 'Write markdown…' : 'No note open.',
       links: currentLinks,
+      // R14 (KAN-1067): `null` in the zero state, which is what turns drop/paste-to-upload off
+      // entirely inside `lib/codemirror.ts` — there is no note to attach a file to.
+      noteRef: opened?.ref ?? null,
+      onAttachmentError: (message) => {
+        attachmentError = message
+      },
       onSave: onSaveKey,
       onChange: (document) => {
         dirty = true
@@ -959,6 +975,12 @@
 
   {#if refusal}
     <p class="conflict" data-testid="save-error">{refusal}</p>
+  {/if}
+
+  {#if attachmentError}
+    <!-- R14 (KAN-1067): a dropped/pasted file's upload failed. A sibling of the container below,
+         same reasoning as `unavailable`'s notice — nothing may render inside S9's container. -->
+    <p class="conflict" data-testid="attachment-error">{attachmentError}</p>
   {/if}
 
   {#if unavailable}

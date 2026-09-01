@@ -17,6 +17,13 @@ dependencies = [
     # Runtime, not just test tooling, since KAN-534: the principal resolver calls pandan's
     # `GET /api/v1/me` over httpx (ADR 0002). It doubles as fastapi.testclient's transport.
     "httpx>=0.28",
+    # R14 (KAN-1067): attachments live in Cloudflare R2, which speaks the S3 API — boto3 is the
+    # standard S3-compatible client (see app/integrations/storage.py's module docstring for why
+    # this rather than hand-rolling SigV4 signing over httpx).
+    "boto3>=1.43.85",
+    # FastAPI's File()/UploadFile parse multipart bodies through this package; it does nothing on
+    # its own and no code here imports it directly.
+    "python-multipart>=0.0.32",
 ]
 
 [project.optional-dependencies]

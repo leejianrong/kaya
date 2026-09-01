@@ -546,6 +546,130 @@ describe('a pandan-board embed hydrates after render (KAN-1049)', () => {
   })
 })
 
+describe('a note attachment image hydrates after render (R14, KAN-1067/1068)', () => {
+  /** A controllable `fetch` answering with binary bytes, `deferredFetch`'s sibling above for a
+   *  `Blob` body instead of a JSON one. */
+  function deferredBlobFetch(): {
+    resolve: (url: string, bytes: string, status?: number) => void
+    calls: string[]
+  } {
+    const calls: string[] = []
+    const pending = new Map<string, (response: Response) => void>()
+    globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      calls.push(url)
+      return new Promise<Response>((resolvePromise) => {
+        pending.set(url, resolvePromise)
+      })
+    }) as unknown as typeof fetch
+    return {
+      calls,
+      resolve: (url, bytes, status = 200) => {
+        const settlePending = pending.get(url)
+        expect(settlePending, `no fetch is pending for ${url} (saw: ${calls.join(', ')})`).toBeDefined()
+        settlePending!(new Response(new Blob([bytes]), { status }))
+      },
+    }
+  }
+
+  const ATTACHMENT_URL = '/api/v1/notes/NOTE-6/attachments/34'
+
+  beforeEach(() => {
+    auth.setToken(FAKE_TOKEN)
+  })
+
+  it('replaces the placeholder with a real <img> pointing at a blob: URL on success', async () => {
+    const { resolve } = deferredBlobFetch()
+    const body = '# Screenshots\n\n![a photo](/api/v1/notes/NOTE-6/attachments/34)\n'
+    mounted.push(mount(PreviewPane, { target: host, props: { note: note(), source: body } }))
+    await previewRendered(host)
+
+    expect(host.querySelector('.embed-attachment')?.textContent).toBe('Loading a photo…')
+
+    resolve(ATTACHMENT_URL, 'pixels')
+    await settle()
+
+    const img = host.querySelector<HTMLImageElement>('.embed-attachment img')
+    expect(img).not.toBeNull()
+    expect(img!.src).toMatch(/^blob:/)
+    expect(img!.alt).toBe('a photo')
+    expect(host.querySelector('.embed-attachment')?.textContent).not.toContain('Loading')
+  })
+
+  it('never puts a direct R2 URL, or any fetchable URL, in the rendered DOM before hydration', async () => {
+    const { calls } = deferredBlobFetch()
+    const body = '![a photo](/api/v1/notes/NOTE-6/attachments/34)\n'
+    mounted.push(mount(PreviewPane, { target: host, props: { note: note(), source: body } }))
+    await previewRendered(host)
+
+    // The placeholder itself carries no `src` at all — nothing for a browser to request on its
+    // own — and the only request this component makes goes through `fetchAttachmentBlobUrl` with
+    // the caller's own bearer, asserted by the one call recorded here.
+    expect(host.querySelector('.embed-attachment')?.hasAttribute('src')).toBe(false)
+    expect(calls).toEqual([ATTACHMENT_URL])
+  })
+
+  it('shows an unavailable notice when the fetch answers 403/404', async () => {
+    const { resolve } = deferredBlobFetch()
+    const body = '![secret](/api/v1/notes/NOTE-6/attachments/34)\n'
+    mounted.push(mount(PreviewPane, { target: host, props: { note: note(), source: body } }))
+    await previewRendered(host)
+
+    resolve(ATTACHMENT_URL, '', 403)
+    await settle()
+
+    const notice = host.querySelector('[data-testid="embed-attachment-unavailable"]')
+    expect(notice).not.toBeNull()
+    expect(notice!.textContent).toContain('secret')
+    expect(host.querySelector('.embed-attachment img')).toBeNull()
+  })
+
+  it('shows the same unavailable notice when the fetch fails outright, not an error', async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new TypeError('network down')
+    }) as unknown as typeof fetch
+    const body = '![x](/api/v1/notes/NOTE-6/attachments/34)\n'
+
+    mounted.push(mount(PreviewPane, { target: host, props: { note: note(), source: body } }))
+    await previewRendered(host)
+    await settle()
+
+    // `fetchAttachmentBlobUrl` never rejects (see `lib/attachments.ts`), so this must not throw.
+    expect(host.querySelector('[data-testid="embed-attachment-unavailable"]')).not.toBeNull()
+  })
+
+  it('ignores a stale fetch once a later render already answered for a different attachment', async () => {
+    const { resolve, calls } = deferredBlobFetch()
+    const live = box('![first](/api/v1/notes/NOTE-6/attachments/1)\n')
+
+    mounted.push(
+      mount(PreviewPane, {
+        target: host,
+        props: {
+          note: note(),
+          get source() {
+            return live.value
+          },
+        },
+      }),
+    )
+    await previewRendered(host)
+    await vi.waitFor(() => expect(calls).toContain('/api/v1/notes/NOTE-6/attachments/1'))
+
+    live.value = '![second](/api/v1/notes/NOTE-6/attachments/2)\n'
+    flushSync()
+    await vi.waitFor(() => expect(calls).toContain('/api/v1/notes/NOTE-6/attachments/2'))
+
+    resolve('/api/v1/notes/NOTE-6/attachments/2', 'second-bytes')
+    await settle()
+    resolve('/api/v1/notes/NOTE-6/attachments/1', 'STALE-FIRST-BYTES')
+    await settle()
+
+    const img = host.querySelector<HTMLImageElement>('.embed-attachment img')
+    expect(img?.alt).toBe('second')
+  })
+})
+
 describe('the preview toggle', () => {
   const NOTE = note()
 
