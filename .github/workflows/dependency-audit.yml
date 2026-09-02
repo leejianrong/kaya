@@ -65,7 +65,7 @@ jobs:
       # Pin styles follow ci.yml and its reasoning: `actions/*` publish floating major tags, and
       # astral-sh/setup-uv stopped publishing them at v8, so it takes an exact patch tag and `@v9`
       # fails the run outright. Keep these two lines in step with ci.yml when either is bumped.
-      - uses: astral-sh/setup-uv@v10.0.0
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
           # Every lockfile, because this job reads all four. One cache key for the job is right
