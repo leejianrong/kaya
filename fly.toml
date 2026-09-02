@@ -13,7 +13,11 @@
 # on the deployed image is true here too, not `unknown`.
 
 app = "kaya-jian"
-primary_region = "sin"
+# Matches pandan's own region (`simple-kanban-jian` runs in `iad`) rather than a region picked for
+# the human operator's location — every kaya request that needs `GET /api/v1/me` (ADR 0002) hops to
+# pandan, and that hop's latency is the one KAN-1047 measures for real. Co-locating removes a cross-
+# region leg from a number this ADR amendment is explicitly trying to learn honestly.
+primary_region = "iad"
 
 [build]
 
