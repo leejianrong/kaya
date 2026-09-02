@@ -85,6 +85,7 @@ from kaya_cli.parsing import (
     BODY_FILE_FLAG,
     BODY_FLAG,
     NO_TEXT_LIMIT,
+    OUT_FLAG,
     PATH_FLAG,
     PRECONDITION_FLAG,
     QUERY_FLAG,
@@ -111,10 +112,12 @@ EPILOGUE = (
     "Bare `kaya` prints this build, where it is installed, and your five most recently updated\n"
     "notes. Notes: `note list`, `note get <ref>`, `note create <title>`, `note edit <ref>`,\n"
     "`note move <ref> <path>`, `note delete <ref>`. Links: `links <ref>` for what a note points\n"
-    "at, `backlinks <ref>` for what points at it. Configuration: `config show`, `config set`,\n"
-    "`config path`. `note list --q TERM` searches title and body; `--fields a,b,c` selects\n"
-    "columns on a list, and prose is cut to KAYA_MAX_TEXT_CHARS (default 500) unless `--full`. A\n"
-    "note is addressed as NOTE-12, note-12 or 12, never by its path. See docs/SLICES.md."
+    "at, `backlinks <ref>` for what points at it. Export/import (R12): `note export <ref>`,\n"
+    "`note import <file>`, `export-all <dir>`, `import-all <dir>`. Configuration:\n"
+    "`config show`, `config set`, `config path`. `note list --q TERM` searches title and body;\n"
+    "`--fields a,b,c` selects columns on a list, and prose is cut to KAYA_MAX_TEXT_CHARS\n"
+    "(default 500) unless `--full`. A note is addressed as NOTE-12, note-12 or 12, never by its\n"
+    "path. See docs/SLICES.md and docs/roadmap/BREADBOARD.md."
 )
 
 NOTE_HELP = "create, read, change and delete the notes you own"
@@ -222,6 +225,7 @@ def build_parser() -> StructuredParser:
     _add_config_verbs(config.add_subparsers(dest="subcommand", required=True), flags)
 
     _add_link_verbs(commands, flags)
+    _add_corpus_export_import_verbs(commands, flags)
 
     return parser
 
@@ -311,6 +315,39 @@ def _add_note_verbs(note_commands, flags: argparse.ArgumentParser) -> None:
     )
     delete.add_argument("ref", help=REF_HELP)
 
+    export = note_commands.add_parser(
+        verbs.EXPORT,
+        parents=[flags],
+        help="write one note to a markdown file: front matter, then the body verbatim",
+        description=(
+            "Export one note: kaya_ref/title/path/created_at/updated_at as front matter, a `---` "
+            "line, then the body exactly as stored — no [[wikilink]] rewriting, since kaya's "
+            "syntax is already Obsidian-native (BREADBOARD.md R12)."
+        ),
+    )
+    export.add_argument("ref", help=REF_HELP)
+    export.add_argument(
+        OUT_FLAG,
+        default=None,
+        metavar="PATH",
+        help="where to write the file (default: <ref>.md in the current directory)",
+    )
+
+    imp = note_commands.add_parser(
+        verbs.IMPORT,
+        parents=[flags],
+        help="create a note from a file (kaya's own export shape, or arbitrary markdown)",
+        description=(
+            "Create a note from a file's front matter and body. A fresh ref is always minted — "
+            "kaya's ref allocator has no way to accept a caller-chosen one (a Postgres sequence, "
+            "not application code) — but the file's own kaya_ref is reported back as "
+            "imported_from_ref so you can see what it named. title/path/body are kept from the "
+            "front matter when present; otherwise a title comes from an H1 heading or the "
+            "filename, and the note is unfiled."
+        ),
+    )
+    imp.add_argument("file", help="the markdown file to import")
+
 
 def _add_link_verbs(commands, flags: argparse.ArgumentParser) -> None:
     """`links <ref>` and `backlinks <ref>` — KAN-566, and the first **top-level** verbs.
@@ -354,6 +391,49 @@ def _add_link_verbs(commands, flags: argparse.ArgumentParser) -> None:
         ),
     )
     backlinks.add_argument("ref", help=REF_HELP)
+
+
+def _add_corpus_export_import_verbs(commands, flags: argparse.ArgumentParser) -> None:
+    """`export-all <dir>` and `import-all <dir>` — R12's corpus verbs (KAN-1062/1063).
+
+    Top level, like `links`/`backlinks`: a positional here would name a *directory*, not a note,
+    so grouping either word under `note` would make the same false claim `links`' docstring argues
+    against for a pandan ticket ref.
+
+    **Not spelled `export`/`import`.** BREADBOARD.md's R12 table originally drafted these as
+    `kaya export --all <dir>` and `kaya import --dir <path>` — a top-level verb sharing a bare word
+    with the single-note `note export`/`note import` subcommands. `mcp/tests/test_cli_parity.py`'s
+    `declared_flags` reader keys `__main__.py`'s subparsers on that bare word alone (a word's
+    subparser is built in a helper that never sees its parent's group), so two `add_parser` calls
+    sharing one word is unsound for it and it refuses by design rather than silently merging two
+    verbs' flags — exactly what adding `export`/`import` as top-level words here would have
+    triggered. `export-all`/`import-all` are single, self-describing words instead, which is also
+    why neither takes the draft's `--all` marker flag: the word already answers "which subset".
+    """
+    export = commands.add_parser(
+        verbs.EXPORT_ALL,
+        parents=[flags],
+        help="write every note you own to an Obsidian-vault-compatible directory",
+        description=(
+            "Export every note you own, one file per note at its path, into <dir> (created if it "
+            "does not exist)."
+        ),
+    )
+    export.add_argument("directory", help="the directory to write into")
+
+    imp = commands.add_parser(
+        verbs.IMPORT_ALL,
+        parents=[flags],
+        help="create a note from every markdown file under a directory",
+        description=(
+            "Walk <dir> recursively for *.md files and import each one (`note import`'s rules, "
+            "per file). [[Title]] links are resolved against the whole batch as it is created — a "
+            "link named before its target has been walked is unresolved until the target is "
+            "created, the same reconciliation an ordinary edit already gets (KAN-563), so files "
+            "may be imported in any order."
+        ),
+    )
+    imp.add_argument("directory", help="the directory to walk")
 
 
 def _add_body_flags(verb: argparse.ArgumentParser) -> None:

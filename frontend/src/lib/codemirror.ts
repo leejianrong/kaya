@@ -45,6 +45,12 @@
  * unshaped call every other reader of `/api/v1/notes` makes (ADR 0004 exempts the SPA from shaping
  * entirely) — so calling it directly from the source is the idiomatic use of the API CM6 offers,
  * not a rule bent to fit a card.
+ *
+ * **R14 (KAN-1067) widened this file the same way again**, for a drop/paste-to-upload handler:
+ * `EditorView.domEventHandlers` needs `EditorView` in scope to construct, so the extension lives
+ * here, and `lib/attachments.ts`'s `uploadAttachment` is called directly from it — the identical
+ * shape the autocomplete source above already established for a plain, unshaped API call made from
+ * inside a CodeMirror extension. See {@link attachmentDropPaste}.
  */
 
 import {
@@ -68,6 +74,7 @@ import {
   type ViewUpdate,
 } from '@codemirror/view'
 
+import { uploadAttachment } from './attachments'
 import { listNotes } from './notes'
 import type { Link } from './types'
 import {
@@ -99,6 +106,20 @@ export interface EditorSpec {
    * live view through {@link setWikilinks}, not through a second `createView` call.
    */
   links: readonly Link[]
+  /**
+   * R14 (KAN-1067): the ref an uploaded file attaches to, or `null` in the zero state (no note
+   * open — `EditorPane.svelte`'s read-only view). `null` is what turns drop/paste-to-upload off
+   * entirely: {@link attachmentDropPaste}'s handlers decline the event and let the browser's
+   * default behaviour run (typically opening the dropped file), the same "there is nothing to do
+   * this without" reasoning `EditorSpec.editable`'s `false` already gives the zero state.
+   */
+  noteRef: string | null
+  /**
+   * A drop/paste upload was attempted and failed — `ApiError`/`NetworkError`'s message, or a
+   * generic fallback. Optional: a caller that does not wire this simply shows no failure message,
+   * same convention as every other optional callback here.
+   */
+  onAttachmentError?: (message: string) => void
 }
 
 /**
@@ -272,6 +293,138 @@ async function completeWikilink(context: CompletionContext): Promise<CompletionR
   return { from: trigger.from, options, validFor: /^[^[\]\n]*$/ }
 }
 
+// --- R14: drop/paste-to-upload (KAN-1067) --------------------------------------------------------
+
+/** The file a `drop` carried, or `null` for a drop that carried none (an internal text drag, a
+ *  link dropped from another tab). */
+function fileFromDrop(event: DragEvent): File | null {
+  return event.dataTransfer?.files.item(0) ?? null
+}
+
+/** The file a `paste` carried, or `null` for an ordinary text paste. A paste's `DataTransferItem`
+ *  list can hold a file *and* its text representation at once (some OSes offer both for a copied
+ *  image), so this returns the first item whose `kind` is `'file'` rather than assuming index 0. */
+function fileFromPaste(event: ClipboardEvent): File | null {
+  const items = event.clipboardData?.items
+  if (items === undefined) {
+    return null
+  }
+  for (const item of items) {
+    if (item.kind === 'file') {
+      return item.getAsFile()
+    }
+  }
+  return null
+}
+
+/**
+ * A short, collision-resistant token embedded in the placeholder text {@link uploadDroppedFile}
+ * inserts, so the later find-and-replace (`resolvePlaceholder`) matches the exact insertion this
+ * upload made rather than a coincidentally identical one from a second drop landed in between.
+ * `Math.random`, not `crypto.randomUUID`: this is not a security boundary, only an anti-collision
+ * tag inside one document, and `randomUUID` is unavailable in some older embedders' `WebView`s.
+ */
+function placeholderToken(): string {
+  return Math.random().toString(36).slice(2, 10)
+}
+
+/**
+ * The markdown placeholder shown while an upload is in flight — a real, syntactically valid empty
+ * image reference rather than plain text, so it renders as *something* in the preview pane rather
+ * than as literal asterisks or brackets while the network round trip is outstanding.
+ */
+function placeholderText(filename: string, token: string): string {
+  const label = filename === '' ? 'file' : filename
+  return `![Uploading ${label}… #${token}]()`
+}
+
+/**
+ * Replace `placeholder` with `replacement`, found by an exact substring search over the **current**
+ * document — never by the numeric position the drop/paste handler recorded, which the user may
+ * have typed past by the time the upload resolves. CM6 has no "insert at this range, wherever it
+ * ends up" primitive that survives an async gap the way a `StateEffect` does across a *synchronous*
+ * dispatch; searching for the placeholder's own text is what stands in for one here.
+ *
+ * If the placeholder is not found — the user deleted it, or edited through it, before the upload
+ * settled — this is a silent no-op. Reinserting text the user actively removed would be a surprise
+ * edit landing on a document they believe they have finished changing, which is a worse failure
+ * than the upload's result simply not appearing.
+ */
+function resolvePlaceholder(view: EditorView, placeholder: string, replacement: string): void {
+  const doc = view.state.doc.toString()
+  const at = doc.indexOf(placeholder)
+  if (at === -1) {
+    return
+  }
+  view.dispatch({ changes: { from: at, to: at + placeholder.length, insert: replacement } })
+}
+
+/**
+ * Insert a placeholder at `at`, upload `file` to `noteRef`, and resolve the placeholder to the
+ * returned markdown reference — or remove it and report the failure through `onError`.
+ *
+ * `spec.onSave`/`onChange` are untouched by any of this: an upload is not a save, and CM6's own
+ * `updateListener` (wired in {@link createView}) already fires for the placeholder's insertion and
+ * its later resolution exactly as it would for anything the person typed, which is what keeps
+ * `dirty`/`ondocument` correct without this function knowing either rune exists.
+ */
+function uploadDroppedFile(
+  view: EditorView,
+  noteRef: string,
+  file: File,
+  at: number,
+  onError: ((message: string) => void) | undefined,
+): void {
+  const token = placeholderToken()
+  const placeholder = placeholderText(file.name, token)
+  view.dispatch({ changes: { from: at, to: at, insert: placeholder } })
+
+  uploadAttachment(noteRef, file).then(
+    (attachment) => {
+      resolvePlaceholder(view, placeholder, attachment.markdown)
+    },
+    (failure: unknown) => {
+      resolvePlaceholder(view, placeholder, '')
+      const message = failure instanceof Error ? failure.message : 'Could not upload the attachment.'
+      onError?.(message)
+    },
+  )
+}
+
+/**
+ * `EditorView.domEventHandlers` for drop-to-upload and paste-to-upload (R14, KAN-1067).
+ *
+ * Both handlers return `false` — "not handled, let CM6 and the browser do their ordinary thing" —
+ * whenever there is nowhere to upload to (`spec.noteRef === null`, the zero state) or the event
+ * carried no file at all, so an ordinary text drop or an ordinary text paste is entirely
+ * unaffected: neither handler ever calls `preventDefault` on those.
+ */
+function attachmentDropPaste(spec: EditorSpec) {
+  return EditorView.domEventHandlers({
+    drop(event, view) {
+      const noteRef = spec.noteRef
+      const file = fileFromDrop(event)
+      if (noteRef === null || file === null) {
+        return false
+      }
+      event.preventDefault()
+      const at = view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? view.state.doc.length
+      uploadDroppedFile(view, noteRef, file, at, spec.onAttachmentError)
+      return true
+    },
+    paste(event, view) {
+      const noteRef = spec.noteRef
+      const file = fileFromPaste(event)
+      if (noteRef === null || file === null) {
+        return false
+      }
+      event.preventDefault()
+      uploadDroppedFile(view, noteRef, file, view.state.selection.main.head, spec.onAttachmentError)
+      return true
+    },
+  })
+}
+
 /** The extension set, and the one place a new CodeMirror package would have to earn its bytes. */
 export function createView(spec: EditorSpec): EditorView {
   return new EditorView({
@@ -324,6 +477,10 @@ export function createView(spec: EditorSpec): EditorView {
         wikilinksField.init(() => spec.links),
         wikilinkPills,
         autocompletion({ override: [completeWikilink] }),
+        // R14 (KAN-1067). Reads `spec.noteRef`/`spec.onAttachmentError` at call time through the
+        // closure, same as `onSave`/`onChange` above — there is no rune here to react to a later
+        // change, exactly as there is none for those two.
+        attachmentDropPaste(spec),
       ],
     }),
   })

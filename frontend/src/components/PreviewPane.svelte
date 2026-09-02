@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fetchAttachmentBlobUrl } from '../lib/attachments'
   import { fetchBoardEmbed } from '../lib/embeds'
   import type { BoardEmbedResponse, Note } from '../lib/types'
 
@@ -148,8 +149,16 @@
     // here but a render pass effectively does.
     const abort = new AbortController()
     hydrateBoardEmbeds(target, abort.signal)
+    // R14 (KAN-1067/1068): every `blob:` URL this pass creates is tracked so the cleanup below can
+    // revoke it — `replaceChildren` above already discarded the `<img>`s that held the previous
+    // pass's URLs, so nothing but this array remembers them.
+    const createdUrls: string[] = []
+    hydrateAttachments(target, abort.signal, createdUrls)
     return () => {
       abort.abort()
+      for (const url of createdUrls) {
+        URL.revokeObjectURL(url)
+      }
     }
   })
 
@@ -231,6 +240,74 @@
       list.append(item)
     }
     el.append(list)
+  }
+
+  /**
+   * Fetch and fill in every `.embed-attachment` placeholder under `root` — R14's render half
+   * (KAN-1068). `lib/markdown.ts`'s `attachmentEmbedElement` is the only thing that produces this
+   * class, and it always carries `data-attachment-note`/`data-attachment-id` together, so there is
+   * nothing to validate here beyond parsing the id back out of the string it was serialized as.
+   *
+   * `createdUrls` collects every `blob:` URL this pass mints, so the caller (the render effect
+   * above) can revoke them once this pass's DOM is thrown away — a `blob:` URL outlives the `<img>`
+   * that used it until something calls `URL.revokeObjectURL`, and nothing else in this component
+   * ever will.
+   */
+  function hydrateAttachments(root: HTMLElement, signal: AbortSignal, createdUrls: string[]): void {
+    for (const el of root.querySelectorAll<HTMLElement>('.embed-attachment')) {
+      const noteRef = el.dataset.attachmentNote
+      const id = Number.parseInt(el.dataset.attachmentId ?? '', 10)
+      if (noteRef === undefined || !Number.isFinite(id)) {
+        // `lib/markdown.ts` never emits `.embed-attachment` without both — defence for a future
+        // change to that file, not a case reachable today (same posture as `hydrateBoardEmbeds`'s
+        // identical guard).
+        continue
+      }
+      const alt = el.dataset.attachmentAlt ?? ''
+
+      fetchAttachmentBlobUrl(noteRef, id, { signal }).then((url) => {
+        if (signal.aborted) {
+          // This pass was superseded before the fetch settled: `el` is detached (`replaceChildren`
+          // already threw the whole previous fragment away), so nothing will ever read this URL —
+          // revoke it immediately rather than leaving it for a cleanup that will never see it,
+          // since it was never pushed onto this pass's `createdUrls`.
+          if (url !== null) {
+            URL.revokeObjectURL(url)
+          }
+          return
+        }
+        applyAttachmentResult(el, url, alt)
+        if (url !== null) {
+          createdUrls.push(url)
+        }
+      })
+    }
+  }
+
+  /**
+   * Replace an attachment placeholder's "Loading …" child with the fetched image, or a refusal
+   * notice for `null` (no credential, a `403`/`404`, a transport failure — `fetchAttachmentBlobUrl`
+   * collapses all of them, for the same over-disclosure reason `applyBoardEmbedResult` gives: a
+   * reader cannot and should not act differently on any of them).
+   */
+  function applyAttachmentResult(el: HTMLElement, url: string | null, alt: string): void {
+    el.replaceChildren()
+
+    if (url === null) {
+      const notice = document.createElement('span')
+      notice.className = 'embed-attachment-unavailable'
+      notice.dataset.testid = 'embed-attachment-unavailable'
+      notice.textContent =
+        alt === '' ? 'This attachment could not be loaded.' : `${alt} (could not be loaded)`
+      el.append(notice)
+      return
+    }
+
+    const img = document.createElement('img')
+    img.src = url
+    img.alt = alt
+    img.loading = 'lazy'
+    el.append(img)
   }
 </script>
 
@@ -486,6 +563,24 @@
     font-size: 0.75em;
     text-transform: uppercase;
     letter-spacing: 0.03em;
+  }
+
+  /*
+    R14's attachment embed (KAN-1067/1068). `:global` for the same reason `.embed-board`'s rules
+    are: every node under `.embed-attachment` is built imperatively (`lib/markdown.ts`'s
+    placeholder, this component's own hydration), never by Svelte's template.
+  */
+  .rendered :global(.embed-attachment) {
+    display: inline-block;
+  }
+
+  .rendered :global(.embed-attachment-unavailable) {
+    display: inline-block;
+    padding: 0.1em 0.4em;
+    border: 1px dashed var(--edge);
+    border-radius: 0.25rem;
+    color: var(--muted);
+    font-size: 0.85em;
   }
 
   .rendered :global(th),

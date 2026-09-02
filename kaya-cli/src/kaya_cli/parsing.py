@@ -130,6 +130,11 @@ PRECONDITION_FLAG = "--if-updated-at"
 API_URL_FLAG = "--api-url"
 TOKEN_FLAG = "--token"
 QUERY_FLAG = "--q"
+OUT_FLAG = "--out"
+"""R12's single-note export flag: ``--out`` names the destination file for `note export`. The
+corpus verbs (`export-all`, `import-all`) take a plain positional directory instead — see
+`kaya_cli.verbs.EXPORT_ALL`/`IMPORT_ALL` for why they are not spelled as flags on `export`/
+`import`."""
 """KAN-559's search flag, on `note list` alone rather than on `output_flags()`'s shared parent —
 ``q`` is a request parameter `list_notes` forwards, not an output-shaping flag every verb inherits
 the way `--fields`/`--full` do, and `note get` already reads one note with no notion of a query."""

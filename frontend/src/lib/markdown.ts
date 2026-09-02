@@ -61,6 +61,13 @@
  * fields and turned into a placeholder element carrying `data-*` attributes — never a live fetch,
  * which would make this module reach the network mid-render. `PreviewPane.svelte` does the actual
  * fetch, after the fragment this function returns is in the DOM. See {@link boardEmbedElement}.
+ *
+ * ## Note attachments (R14, KAN-1067/1068)
+ *
+ * An `![alt](/api/v1/notes/{ref}/attachments/{id})` image — the exact shape
+ * `lib/attachments.ts`'s `uploadAttachment` hands back — is recognised the same way and for the
+ * same reason: never a live fetch here, a placeholder `PreviewPane.svelte` hydrates afterward. See
+ * {@link attachmentEmbedElement}.
  */
 
 import type { SyntaxNode, Tree } from '@lezer/common'
@@ -835,17 +842,70 @@ function anchor(href: string, content: Node[]): HTMLElement {
   return el
 }
 
+/** `AttachmentRead.markdown`'s own shape (`lib/attachments.ts`), and R14's whole reason there is
+ *  no direct R2 URL anywhere in a rendered note. */
+const ATTACHMENT_IMAGE_PATTERN = /^\/api\/v1\/notes\/([^/]+)\/attachments\/(\d+)$/
+
+interface ParsedAttachmentImage {
+  noteRef: string
+  id: number
+}
+
+/**
+ * Whether `raw` is exactly the same-origin path a note attachment's markdown reference puts
+ * between an image's parentheses — checked **before** `safeUrl`, because a relative path fails
+ * that check outright (there is nothing to resolve it against — see `safeUrl`'s own docstring) and
+ * this is the one relative target this renderer treats specially. Same shape as `FencedCode`'s
+ * `pandan-board` special case: recognised here as a placeholder, hydrated with a live fetch by
+ * `PreviewPane.svelte` once the fragment this function returns is in the DOM.
+ */
+function parseAttachmentImage(raw: string): ParsedAttachmentImage | null {
+  const match = ATTACHMENT_IMAGE_PATTERN.exec(raw.trim())
+  if (match === null) {
+    return null
+  }
+  return { noteRef: match[1], id: Number.parseInt(match[2], 10) }
+}
+
+/**
+ * A note attachment's pre-hydration placeholder (R14, KAN-1067/1068) — the `pandan-board` embed's
+ * inline sibling. `PreviewPane.svelte`'s hydration pass fetches the bytes **with the caller's own
+ * bearer**, turns them into a `blob:` URL, and replaces this element's child with a real `<img>`.
+ *
+ * Nothing here ever sets a fetchable `src` on anything: that is the whole of "never a direct R2
+ * URL" made structural rather than a convention `PreviewPane.svelte` merely happens to follow. The
+ * `data-*` attributes are inert strings this renderer already validated the shape of
+ * (`parseAttachmentImage`'s regex), so — like `boardEmbedElement`'s — there is no `safeUrl`-style
+ * check to run on them.
+ */
+function attachmentEmbedElement(attachment: ParsedAttachmentImage, alt: string): HTMLElement {
+  const el = element('span')
+  el.className = 'embed-attachment'
+  el.setAttribute('data-attachment-note', attachment.noteRef)
+  el.setAttribute('data-attachment-id', String(attachment.id))
+  el.setAttribute('data-attachment-alt', alt)
+  el.append(textNode(alt === '' ? 'Loading attachment…' : `Loading ${alt}…`))
+  return el
+}
+
 function imageInto(node: SyntaxNode, context: Context, into: ParentNode): void {
   const { source } = context
   const raw = target(node, context)
+  const marks = childrenOf(node).filter((child) => child.name === 'LinkMark')
+  const alt = source.slice(marks[0]?.to ?? node.from, marks[1]?.from ?? node.to)
+
+  const attachment = parseAttachmentImage(raw)
+  if (attachment !== null) {
+    into.append(attachmentEmbedElement(attachment, alt))
+    return
+  }
+
   const src = safeUrl(raw)
   if (src === null) {
     // Same visible refusal as a link's — including for a `javascript:` or `data:` src.
     into.append(unlinked(source.slice(node.from, node.to), raw))
     return
   }
-  const marks = childrenOf(node).filter((child) => child.name === 'LinkMark')
-  const alt = source.slice(marks[0]?.to ?? node.from, marks[1]?.from ?? node.to)
 
   const el = element('img') as HTMLImageElement
   el.setAttribute('src', src)

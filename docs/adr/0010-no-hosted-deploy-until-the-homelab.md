@@ -143,3 +143,44 @@ checkout and false of the download, and a reader who follows the install instruc
 build. That is a release cadence question rather than a deploy one, no card on board 18 covers it as
 of this amendment, and it is not this ADR's to answer. What this ADR owes it is one thing: the README
 must not describe the checkout's CLI as though it were the artifact it just told somebody to `curl`.
+
+## Amendment (2026-09-02, KAN-1044): pursue Fly independently, don't wait on the homelab
+
+The 2026-08-20 amendment above named three things that stay unproven without a remote origin and
+left `KAN-439` as the path to one. This amendment answers the question that same amendment posed —
+"if it slips badly, revisit Fly deliberately" — not because `KAN-439` has slipped on a deadline (it
+never had one), but because a 2026-09-01 planning pass (`docs/roadmap/FRAME.md`, `SHAPING.md`)
+concluded that waiting on it was never load-bearing to begin with. Nothing below reverses the original
+decision's reasoning about avoiding a *second* migration; it corrects the premise that kaya standing
+up its own Fly app and pandan's homelab move are the same migration.
+
+**What changed.** Board 5's `KAN-439` (migrate pandan itself to a self-hosted k8s homelab, 13 points)
+is still `todo`, unstarted, and — checked directly for this amendment — pandan-only in scope: new
+OAuth App, DNS/TLS cut, Postgres relocation, a rate-limiter assumption that breaks past one replica.
+It mentions kaya nowhere, and no coordination artifact ties the two efforts together. They would
+likely land on the same physical hardware eventually (one operator, one homelab), but as two
+independent migrations sharing an operator, not one migration two ADRs described from different
+sides. Treating kaya's deploy as gated on `KAN-439` was coupling kaya's release cadence to an
+unstarted, unscoped-for-kaya infrastructure project for no reason this ADR's own text required —
+§Consequences called `KAN-439` kaya's forcing function, never the other way around.
+
+**Decision.** Kaya pursues an independently reachable Fly.io deployment now, without waiting on
+`KAN-439`. This is exactly the escape hatch §Consequences reserved and priced at "roughly a `fly.toml`
+and a secrets push, measured in a day" — being exercised, not invented. Tracked as KAN-1045
+(provision the Fly app + Postgres), KAN-1046 (wire CI to deploy on tag push), KAN-1047 (DNS/TLS and a
+real end-to-end latency measurement against the hosted origin).
+
+**What this does not change.** The homelab is still the eventual destination this ADR named, and
+nothing here forecloses it — Fly is explicitly an interim target (per `SHAPING.md`'s R1), not a
+declared final one. The OCI artifact and Kubernetes manifests built for `KAN-439` stay exactly as
+useful as they were; a Fly deploy adds a `fly.toml` and secrets alongside them, it does not replace
+them. The three items the 2026-08-20 amendment left open — TLS on both hops, kaya's own cold start,
+and manifest behavior on non-k3d infrastructure — are still open; a Fly deploy will retire the first
+two (a real origin with real TLS, and a real scale-to-zero cold start to measure) but not the third,
+since Fly isn't Kubernetes.
+
+**Why now, not earlier.** The 2026-09-01 planning pass was the first time an independent deploy was
+weighed against the enterprise-direction work (multi-team, self-hosting) that motivated it, rather
+than against `KAN-439` in isolation — see `SHAPING.md` R1 and its Discussion point 3. Sequencing kaya's
+own deploy ahead of that larger, multi-month initiative is what makes it worth doing now rather than
+waiting for either the homelab or the enterprise design to land first.

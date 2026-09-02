@@ -1,5 +1,16 @@
 [project]
 name = "kaya-client"
+# 0.15.0 — KAN-1060..1063 add R12's export/import round trip: `KayaClient.export_note`,
+# `export_all`, `import_note`, `import_dir` and `claim_note`, plus a new `frontmatter` module
+# (`compose_document`/`parse_document`/`ParsedDocument`) for the front-matter file shape
+# `docs/roadmap/BREADBOARD.md` fixes. Export reads through `get_note`/`list_notes`; import writes
+# through `create_note` or, when the source file's own `kaya_ref` is free, through `claim_note`
+# (`PUT /api/v1/notes/{ref}`, `backend/app/api/note_claim.py` — the one new backend route this
+# epic needed, landing in the same PR) — so a re-imported note gets its exact ref back, per ADR
+# 0008 §Decision, and KAN-563's wikilink reconciliation runs unchanged either way. New public API,
+# so a minor bump; no existing method's signature or behaviour changed. `imported_from_ref`/
+# `ref_reused` on an imported note's record report what the file asked for and whether it was
+# actually honoured. See `KayaClient._import_document`'s docstring for the full decision.
 # 0.13.0 — KAN-559 adds ``q`` to `list_notes`, forwarded to `GET /api/v1/notes?q=` exactly as
 # `if_updated_at` is forwarded: an opaque string, ``None`` when the caller did not ask to search
 # (adding no query parameter at all, so a plain `list_notes()` is byte-identical to before) and
@@ -69,7 +80,7 @@ name = "kaya-client"
 # 0.3.0 — KAN-543 adds `provenance`, the build stamp both adapters read. 0.2.0 was KAN-540's
 # `KayaClient` and `render()` seam. A behavioural change to a shipped package bumps it in the same
 # PR (ADR 0007 §3, CLAUDE.md §Conventions §Versioning).
-version = "0.14.0"
+version = "0.15.0"
 description = "The shared core for kaya: the API client and the one payload-shaping seam"
 readme = "README.md"
 license = "Apache-2.0"

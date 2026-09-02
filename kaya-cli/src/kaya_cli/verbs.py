@@ -106,9 +106,23 @@ CREATE = "create"
 EDIT = "edit"
 MOVE = "move"
 DELETE = "delete"
+EXPORT = "export"
+IMPORT = "import"
 
 LINKS = "links"
 BACKLINKS = "backlinks"
+
+EXPORT_ALL = "export-all"
+IMPORT_ALL = "import-all"
+"""R12's corpus verbs (KAN-1062/1063) — top-level, like `links`/`backlinks`, but **not** spelled
+``export``/``import``: `mcp/tests/test_cli_parity.py`'s `declared_flags` keys `__main__.py`'s
+subparsers on the bare word alone and refuses (by its own docstring's design) two `add_parser`
+calls sharing one word, since it cannot then say which verb a flag belongs to. `note export` and
+`note import` already own those two words; a top-level verb with the same spelling BREADBOARD.md's
+R12 table originally used (`kaya export --all`, `kaya import --dir`) would be exactly the collision
+that guard exists to catch. `export-all`/`import-all` are single, self-describing words instead —
+"which subset" is answered by the word itself, so neither takes a marker flag the way the R12 draft
+had `--all` do that job."""
 """KAN-566's two verbs, and they are **top-level words rather than ``note`` subcommands**.
 
 SLICES §V5 build-plan step 6 spells them ``kaya links`` and ``kaya backlinks``, and the wording is
@@ -204,6 +218,28 @@ def _note_delete(client: KayaClient, args: Namespace) -> Payload:
     return client.delete_note(args.ref)
 
 
+def _note_export(client: KayaClient, args: Namespace) -> Payload:
+    """`note export <ref>` (R12/KAN-1060). ``--out`` is `args.out`, ``None`` when omitted — the
+    same "pass what argv carried, let the client decide the default" shape every write verb here
+    already has (see `KayaClient.export_note`'s own default)."""
+    return client.export_note(args.ref, args.out)
+
+
+def _note_import(client: KayaClient, args: Namespace) -> Payload:
+    """`note import <file>` (R12/KAN-1061). One argument, passed through untouched."""
+    return client.import_note(args.file)
+
+
+def _export_all(client: KayaClient, args: Namespace) -> Payload:
+    """`export-all <dir>` (R12/KAN-1062)."""
+    return client.export_all(args.directory)
+
+
+def _import_all(client: KayaClient, args: Namespace) -> Payload:
+    """`import-all <dir>` (R12/KAN-1063)."""
+    return client.import_dir(args.directory)
+
+
 def _links(client: KayaClient, args: Namespace) -> Payload:
     return client.links(args.ref)
 
@@ -254,8 +290,12 @@ VERBS: Mapping[tuple[str | None, str | None], Verb] = {
     (NOTE, EDIT): _note_edit,
     (NOTE, MOVE): _note_move,
     (NOTE, DELETE): _note_delete,
+    (NOTE, EXPORT): _note_export,
+    (NOTE, IMPORT): _note_import,
     (LINKS, None): _links,
     (BACKLINKS, None): _backlinks,
+    (EXPORT_ALL, None): _export_all,
+    (IMPORT_ALL, None): _import_all,
 }
 """``(command, subcommand)`` → the client method that answers it, for the verbs that need a session.
 
