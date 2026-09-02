@@ -18,6 +18,13 @@ already shipped and tested. And the exact per-item letter/number citations on al
 (`A1`, `B1–B3`, `G1–G3+G5`) are historical color from the lost draft, not something this file reproduces
 letter-for-letter — the shape below is authored fresh, grounded in the current codebase.
 
+**Update (2026-09-02).** The "lost" draft wasn't lost — it was recovered from an uncommitted working
+tree and committed as [`docs/roadmap/DETAIL.md`](DETAIL.md), alongside its own `FRAME.md`/`SHAPING.md`.
+It uses its own R0/R5.1–R5.3 numbering (pre-dating this file's R10–R15 renumbering) and carries detail
+this reconstruction couldn't recover verbatim, including the exact `A`/`B`/`G`-lettered fit checks cited
+above. Treat this file as the current record for what shipped; `DETAIL.md` as the fuller historical
+account of how it was shaped.
+
 ## R10: Graph view — shipped (KAN-1050)
 
 `GET /api/v1/graph` (`backend/app/api/graph.py`) returns every note the caller owns and every resolved
