@@ -48,6 +48,8 @@ from app.integrations.card_resolution import (
     default_resolver,
     default_upstream,
 )
+from app.integrations.storage import ObjectStorage
+from app.integrations.storage import default_storage as default_object_storage
 
 
 @lru_cache(maxsize=1)
@@ -92,6 +94,25 @@ def reset_board_embed() -> None:
     get_board_embed_upstream.cache_clear()
 
 
+@lru_cache(maxsize=1)
+def get_object_storage() -> ObjectStorage:
+    """Process-wide, for the reason `get_card_epic_upstream` gives: the real implementation's
+    `boto3` client pools connections, and building one per request would pay a handshake on every
+    upload or fetch. Built lazily, not at import — a fixture that repoints `KAYA_R2_*` must not
+    race an import that already read the old values.
+
+    Raises if R2 is not configured (`storage.py`'s `default_storage`) — the attachment routes are
+    the only callers, so that surfaces as a `500` on the first attachment request in an environment
+    with no bucket, rather than at process boot where every other route would go down with it."""
+    return default_object_storage(get_settings())
+
+
+def reset_object_storage() -> None:
+    """Drop the cached singleton. The twin of `reset_card_resolution`, needed for the identical
+    reason: a fixture repointing `KAYA_R2_*` must not have the previous test's client survive it."""
+    get_object_storage.cache_clear()
+
+
 def caller_bearer(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
 ) -> str | None:
@@ -121,3 +142,4 @@ def caller_bearer(
 CallerBearer = Annotated[str | None, Depends(caller_bearer)]
 CardResolver = Annotated[CardEpicResolver, Depends(get_card_epic_resolver)]
 BoardResolver = Annotated[BoardEmbedResolver, Depends(get_board_embed_resolver)]
+ObjectStorageDep = Annotated[ObjectStorage, Depends(get_object_storage)]
