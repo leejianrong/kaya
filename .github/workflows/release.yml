@@ -313,3 +313,42 @@ jobs:
             --title "kaya ${version}" \
             --notes-file "$notes" \
             --verify-tag
+
+  # KAN-1046. A sibling to `publish`, not a step inside it — deliberately. `publish` holds this
+  # workflow's one `contents: write` (to create the GitHub Release); this job needs no repo
+  # permission at all, only the `FLY_API_TOKEN` secret, so it stays outside that scope rather than
+  # borrowing it. It also does not `need: build` or `need: publish`: the CLI executable this
+  # workflow packages and the `kaya-jian` app image are two unrelated artifacts built from two
+  # unrelated Dockerfiles/toolchains (PyInstaller vs. `flyctl deploy`'s remote builder), and the
+  # commit landed on `main` with full `ci.yml` coverage (backend included) before this tag was ever
+  # cut — gating one artifact's release on the other's packaging step would only add coupling, not
+  # safety.
+  #
+  # Mirrors pandan's `deploy.yml` for the Fly mechanics themselves (`superfly/flyctl-actions/
+  # setup-flyctl`, a `FLY_API_TOKEN` secret, a named concurrency group) — but the TRIGGER is kaya's
+  # own tag push, not pandan's workflow_run-after-CI-on-main. kaya has no equivalent of pandan's
+  # KAN-586 GITHUB_TOKEN-merge gap to route around (nothing here auto-merges), and a tag is already
+  # the deliberate, reviewed release point ADR 0007 anchors everything else in this file to — so
+  # redeploying on that same tag, rather than on every merge, is the version of "ship what was just
+  # released" that fits how this repo already thinks about a release.
+  #
+  # Runs `scripts/fly-deploy.sh` rather than a bare `flyctl deploy`, so the image gets the same
+  # provenance build-args (`VERSION`/`GIT_REVISION`/`BUILD_DATE`) a local deploy would compute —
+  # see that script's own header for why a bare `flyctl deploy` leaves those labels reading
+  # "unknown".
+  deploy-fly:
+    name: Deploy kaya-jian to Fly.io
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-kaya-jian
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy
+        run: scripts/fly-deploy.sh --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
