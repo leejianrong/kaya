@@ -50,10 +50,15 @@ edit to this list should have to be argued for in a diff rather than land as a s
 schema change. ``owner_id`` is absent by ADR 0008's reasoning (it is always the caller, so it
 carries no information), and ``search_vector`` by KAN-557's — see the module docstring."""
 
-NOT_ON_THE_WIRE = {"owner_id", "search_vector"}
+NOT_ON_THE_WIRE = {"owner_id", "search_vector", "team_id"}
 """Columns of ``note`` deliberately kept out of the payload, each for a reason written down in
 ``app/models/note.py``. A new name appearing here is a decision; a new name appearing *only* in
-the table is an oversight, and the third test is the difference between them."""
+the table is an oversight, and the third test is the difference between them.
+
+``team_id`` (ADR 0011, R16) is withheld **for now**, not permanently: `KAN-1082` is schema-only, and
+`KAN-1086` (R16.5) is the card that adds it to `NoteRead` once note creation can actually set it.
+Move it out of this set and into `NOTE_PAYLOAD_KEYS` when that card lands, rather than leaving it
+here as though it were `owner_id`'s kind of never-on-the-wire."""
 
 
 def a_note() -> Note:
