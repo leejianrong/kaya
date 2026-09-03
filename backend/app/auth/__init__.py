@@ -47,7 +47,7 @@ from app.auth.dependencies import (
     get_team_access_resolver,
     reset_auth,
 )
-from app.auth.mirror import SqlAlchemyPrincipalMirror
+from app.auth.mirror import SqlAlchemyPrincipalMirror, ensure_team_mirrored
 from app.auth.principal import (
     Principal,
     PrincipalMirror,
@@ -78,6 +78,7 @@ __all__ = [
     "UpstreamUnavailable",
     "authorize_note",
     "digest",
+    "ensure_team_mirrored",
     "error_body",
     "get_principal",
     "get_resolver",

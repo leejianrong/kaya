@@ -36,7 +36,7 @@ Deliberately absent: paging of any shape.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.concurrency import enforce_precondition
@@ -53,6 +53,8 @@ from app.api.search import SearchTerm
 from app.auth import (
     Principal,
     TeamAccessResolver,
+    ensure_team_mirrored,
+    error_body,
     get_principal,
     get_team_access_resolver,
     notes_matching,
@@ -81,6 +83,8 @@ def create_note(
     principal: CurrentPrincipal,
     session: DbSession,
     response: Response,
+    bearer: CallerBearer,
+    team_resolver: CurrentTeamResolver,
 ) -> NoteRead:
     """Create a note owned by the caller.
 
@@ -90,6 +94,16 @@ def create_note(
 
     The owner is the resolved principal and is not a request field. There is no route by which a
     caller can file a note against somebody else's UUID.
+
+    **``team_id`` (ADR 0011, R16.5) is validated before anything is written.** The creating
+    principal must be a member of that team — checked live, before this session has touched the
+    database, the same "nothing has queried yet, so nothing to release" reasoning ``list_notes``
+    uses — mirroring how pandan validates `POST /api/v1/boards`' own `team_id`. A caller who is not
+    a member gets `403`, never a silent drop of the field: `NoteCreate`'s `extra="forbid"` already
+    means a field this route *doesn't* validate is a caller mistake worth surfacing, and this one is
+    no different. Once confirmed, ``ensure_team_mirrored`` makes the id addressable — the `team`
+    mirror row this note's foreign key needs might not exist yet, the same bootstrap problem
+    ``app/auth/mirror.py``'s user mirror solves for `owner_id`.
 
     KAN-562: the body's ``[[KAN-n]]`` / ``[[EPIC-n]]`` wikilinks are recorded in ``note_link`` in
     the same transaction as the note itself, via ``reconcile_note_links``. The explicit ``flush()``
@@ -108,6 +122,15 @@ def create_note(
     edit. Every note gets one, even ``NoteCreate``'s default empty body — "on every body write, no
     heuristic" (BREADBOARD.md's R13) draws no exception for a body that happens to be ``""``.
     """
+    if payload.team_id is not None:
+        team_ids = team_resolver.member_of(bearer) if bearer is not None else frozenset()
+        if payload.team_id not in team_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=error_body("team_forbidden", "you are not a member of this team"),
+            )
+        ensure_team_mirrored(session, payload.team_id)
+
     note = Note(owner_id=principal.id, **payload.model_dump())
     session.add(note)
     session.flush()
