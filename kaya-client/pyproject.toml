@@ -1,5 +1,12 @@
 [project]
 name = "kaya-client"
+# 0.16.0 — KAN-1087 adds `team_id` to `create_note` (ADR 0011/R16.6): `None` (the default) omits
+# the field exactly as `body`/`path` already do, so a caller who never mentions a team sends the
+# same request as before; a team id sends `{"team_id": <int>}` and the API is the one place
+# membership is checked (`403` otherwise) -- this method does not pre-validate. New public API on
+# an existing method's signature, so a minor bump, the same shape KAN-559's `q` on `list_notes`
+# took. No new columns and no new envelope key: `_note`'s response passthrough means `team_id`
+# reaches a caller's payload the moment the API returns it, with nothing here to change.
 # 0.15.0 — KAN-1060..1063 add R12's export/import round trip: `KayaClient.export_note`,
 # `export_all`, `import_note`, `import_dir` and `claim_note`, plus a new `frontmatter` module
 # (`compose_document`/`parse_document`/`ParsedDocument`) for the front-matter file shape
@@ -80,7 +87,7 @@ name = "kaya-client"
 # 0.3.0 — KAN-543 adds `provenance`, the build stamp both adapters read. 0.2.0 was KAN-540's
 # `KayaClient` and `render()` seam. A behavioural change to a shipped package bumps it in the same
 # PR (ADR 0007 §3, CLAUDE.md §Conventions §Versioning).
-version = "0.15.0"
+version = "0.16.0"
 description = "The shared core for kaya: the API client and the one payload-shaping seam"
 readme = "README.md"
 license = "Apache-2.0"

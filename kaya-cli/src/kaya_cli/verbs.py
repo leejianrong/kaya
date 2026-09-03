@@ -197,7 +197,9 @@ def _note_get(client: KayaClient, args: Namespace) -> Payload:
 
 
 def _note_create(client: KayaClient, args: Namespace) -> Payload:
-    return client.create_note(args.title, body=resolve_body(args), path=args.path)
+    return client.create_note(
+        args.title, body=resolve_body(args), path=args.path, team_id=args.team
+    )
 
 
 def _note_edit(client: KayaClient, args: Namespace) -> Payload:

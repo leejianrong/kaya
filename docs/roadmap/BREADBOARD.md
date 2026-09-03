@@ -169,7 +169,7 @@ decision record, and the fit-check matrix are in [ADR 0011](../adr/0011-team-sco
 | Failure mode | Soft. Pandan unreachable → `TeamAccessResolver` resolves "no memberships known" → a team-shared note behaves as not-found for a non-owner, exactly like an unresolved cross-link. The owner's own access never depends on this call succeeding. |
 | Note creation | `POST /api/v1/notes` gains optional `team_id`, validated the same way pandan validates `POST /api/v1/boards`'. |
 | Wikilinks | No change. `note_link` resolution already scopes through whatever the visible-notes query returns — verified, not assumed (a `KAN-1048` open question, now closed). |
-| CLI / MCP | `kaya note create --team <id>`; `kaya team list` proxies `GET /api/v1/teams` read-only — pandan owns team CRUD entirely, kaya never grows its own. No new MCP tool unless `team_id` doesn't fit the existing field vocabulary (checked against ADR 0006's frozen tool count first). |
+| CLI / MCP | `kaya note create --team <id>` (`kaya-client` 0.16.0, `kaya-cli` 0.15.0). **No `kaya team list`**: pandan's own CLI already ships `pandan team list` (M9 V69, KAN-1058), reachable with the identical PAT, so kaya duplicating it would be the same "no local team CRUD" principle stopping one step short — not just no writes, no read-list surface either when one already exists. No new MCP tool or tool parameter: the read tools (`get_note`/`list_notes`) surface `team_id` automatically, since `KayaClient`'s response passthrough means a field the backend added reaches a caller's payload with zero code changed here (proven, not assumed — `test_get_note_surfaces_team_id_with_no_code_change_here`); `create_note`'s MCP tool stays without a `team` parameter, a deliberate narrower-than-CLI cut consistent with `mcp/README.md`'s MCP ⊆ CLI direction. |
 | SPA | A read-only team badge on the note header and the right rail (the rail KAN-568 built). Creating/moving a note into a team from the browser is a stretch goal, not required. |
 
 **Affordances**
@@ -177,7 +177,6 @@ decision record, and the fit-check matrix are in [ADR 0011](../adr/0011-team-sco
 | Affordance | Place | Wires to |
 |------------|-------|----------|
 | `kaya note create --team <id>` | CLI | `POST /api/v1/notes` |
-| `kaya team list` | CLI | pandan `GET /api/v1/teams`, passthrough |
 | Team badge | SPA note header + right rail | `GET /api/v1/notes/{ref}` (carries `team_id`) |
 
 **Fit-check.** Purely additive migration (no existing behavior changes — `team_id IS NULL` is a no-op
