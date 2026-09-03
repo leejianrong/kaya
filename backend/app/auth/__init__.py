@@ -18,6 +18,14 @@ Import layering, deliberately one-way: ``principal`` ← ``cache``/``upstream``/
 ``Depends``, no request, no session — so the entire HTTP contract, status codes and error bodies
 included, is exercisable by the no-infrastructure test layer. ``dependencies`` is the only module
 that knows FastAPI's dependency machinery exists, and ``mirror`` the only one holding a session.
+
+**Team-default access (ADR 0011, R16) is a parallel, narrower stack**: ``team_cache``/
+``team_upstream`` ← ``team_resolver`` ← ``dependencies``. It never imports and is never imported by
+the identity stack above — a stampede on one bearer's team check has no business coalescing with,
+or queuing behind, a stampede on that same bearer's identity check (`team_resolver.py`'s module
+docstring). Where the identity stack turns a pandan outage into a hard `503` (ADR 0002's one
+exception), `team_resolver.TeamAccessResolver` never raises at all — ADR 0011 made that dependency
+soft.
 """
 
 from app.auth.authorization import (
@@ -33,7 +41,12 @@ from app.auth.authorization import (
     notes_titled,
 )
 from app.auth.cache import PrincipalCache, digest
-from app.auth.dependencies import get_principal, get_resolver, reset_auth
+from app.auth.dependencies import (
+    get_principal,
+    get_resolver,
+    get_team_access_resolver,
+    reset_auth,
+)
 from app.auth.mirror import SqlAlchemyPrincipalMirror
 from app.auth.principal import (
     Principal,
@@ -43,17 +56,24 @@ from app.auth.principal import (
 )
 from app.auth.resolver import PrincipalResolver, error_body, principal_from_bearer
 from app.auth.single_flight import SingleFlight
+from app.auth.team_cache import TeamMembershipCache
+from app.auth.team_resolver import TeamAccessResolver
+from app.auth.team_upstream import PandanTeamUpstream, TeamMembershipUpstream
 from app.auth.upstream import IdentityUpstream, PandanIdentityUpstream, split_timeout
 
 __all__ = [
     "IdentityUpstream",
     "PandanIdentityUpstream",
+    "PandanTeamUpstream",
     "Principal",
     "PrincipalCache",
     "PrincipalMirror",
     "PrincipalResolver",
     "SingleFlight",
     "SqlAlchemyPrincipalMirror",
+    "TeamAccessResolver",
+    "TeamMembershipCache",
+    "TeamMembershipUpstream",
     "TokenRejected",
     "UpstreamUnavailable",
     "authorize_note",
@@ -61,6 +81,7 @@ __all__ = [
     "error_body",
     "get_principal",
     "get_resolver",
+    "get_team_access_resolver",
     "note_addressed_as_id",
     "note_addressed_as_ref",
     "note_ids_owned_by",

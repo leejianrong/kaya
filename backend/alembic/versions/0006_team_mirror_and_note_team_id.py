@@ -10,8 +10,13 @@ Two changes, both additive:
 - ``team`` — the mirror of pandan's team, existing purely so ``note.team_id`` has a row to point at.
   **One column, on purpose** (``app/models/team.py``'s module docstring argues this in full): a
   name, a role list, or anything else pandan owns would go stale, the same reasoning migration
-  ``0001`` already applied to ``user``. ``id`` has no default, matching ``user.id`` — the value is
-  pandan's UUID, supplied by whichever later card (R16.2/R16.5) JIT-inserts the row.
+  ``0001`` already applied to ``user``. ``id`` has no default, matching ``user.id``'s reasoning —
+  the value is pandan's id, supplied by whichever later card (R16.2/R16.5) JIT-inserts the row.
+  **Unlike ``user.id``, this is a ``BigInteger``, not a ``Uuid``**: pandan's own ``Team.id`` is a
+  plain integer (verified against pandan's ``backend/app/models.py``), not a UUID the way its
+  `User.id` is — corrected here before this migration ever reached a shared database (Fly's
+  ``release_command`` only runs ``alembic upgrade head`` on a tagged release, and none has been cut
+  since this landed), rather than layered on as a follow-up ``ALTER COLUMN``.
 - ``note.team_id`` — nullable ``FK -> team.id``, ``ON DELETE RESTRICT``. Every existing note gets
   ``team_id = NULL``, i.e. today's behavior, byte-for-byte — the same consequence pandan's own ADR
   0021 recorded for ``board.team_id``. ``RESTRICT`` rather than ``SET NULL``: a locally mirrored
@@ -44,10 +49,10 @@ def upgrade() -> None:
     """Upgrade schema."""
     op.create_table(
         "team",
-        sa.Column("id", sa.Uuid(), nullable=False),
+        sa.Column("id", sa.BigInteger(), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_team")),
     )
-    op.add_column("note", sa.Column("team_id", sa.Uuid(), nullable=True))
+    op.add_column("note", sa.Column("team_id", sa.BigInteger(), nullable=True))
     op.create_index(op.f("ix_note_team_id"), "note", ["team_id"], unique=False)
     op.create_foreign_key(
         op.f("fk_note_team_id_team"),

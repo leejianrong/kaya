@@ -89,6 +89,46 @@ class Settings(BaseSettings):
     a retry loop must not become one pandan round trip per request. Kept well under the positive
     TTL so a token that was rejected because it hadn't been minted yet becomes usable quickly."""
 
+    team_access_connect_timeout_seconds: float = Field(
+        default=3.0,
+        validation_alias="KAYA_TEAM_ACCESS_CONNECT_TIMEOUT_SECONDS",
+    )
+    """Per-request connect budget for `TeamAccessResolver`'s `GET /api/v1/teams` call (R16.2, ADR
+    0011). Deliberately **not** `pandan_connect_timeout_seconds`: identity's long budget exists so a
+    cold pandan gets a fair chance to answer *who you are*, which every request needs. Team-default
+    access is the softer dependency ADR 0011 deliberately makes it — a note's owner is never gated
+    on this call, and a teammate's access degrading to "not found" during a slow pandan is the
+    accepted outcome, not a failure worth waiting out. Same reasoning as
+    `card_resolution_connect_timeout_seconds`/`board_embed_connect_timeout_seconds`, its own field
+    rather than reusing either: this protects a third, distinct call shape."""
+
+    team_access_read_timeout_seconds: float = Field(
+        default=3.0,
+        validation_alias="KAYA_TEAM_ACCESS_READ_TIMEOUT_SECONDS",
+    )
+    """Per-request read budget for the same call. See `team_access_connect_timeout_seconds` for why
+    this is a separate, short knob rather than identity's 30s allowance."""
+
+    team_access_cache_ttl_seconds: float = Field(
+        default=60.0,
+        validation_alias="KAYA_TEAM_ACCESS_CACHE_TTL_SECONDS",
+    )
+    """How long a resolved team-membership set is trusted before `TeamAccessResolver` asks pandan
+    again. Matches `principal_cache_ttl_seconds` by default (ADR 0011: "the same positive/negative
+    TTL split as `PrincipalCache`") — it is its own field rather than a reuse of that one, because
+    the two answer different questions and a future change to one must not silently move the
+    other."""
+
+    team_access_negative_cache_ttl_seconds: float = Field(
+        default=10.0,
+        validation_alias="KAYA_TEAM_ACCESS_NEGATIVE_CACHE_TTL_SECONDS",
+    )
+    """How long "pandan could not be asked" is remembered before `TeamAccessResolver` tries again.
+    Matches `principal_negative_cache_ttl_seconds` by default, for the same load-shedding reason —
+    the difference is what a miss decays to: identity's negative cache remembers a *rejection*, this
+    one remembers "unknown, so treated as no memberships" (ADR 0011's soft-fail decision), which is
+    exactly as safe to keep serving for a few seconds as it is to compute fresh."""
+
     card_resolution_connect_timeout_seconds: float = Field(
         default=3.0,
         validation_alias="KAYA_CARD_RESOLUTION_CONNECT_TIMEOUT_SECONDS",
