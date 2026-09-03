@@ -61,14 +61,23 @@ def test_the_environment_wins_over_the_config_file(
     assert script.load_origin(config_path=config) == "https://from-the-environment"
 
 
-def test_the_pandan_cli_config_is_read_from_its_section(
-    script: ModuleType, tmp_path: Path
-) -> None:
+def test_the_pandan_cli_config_is_read_from_its_section(script: ModuleType, tmp_path: Path) -> None:
     config = tmp_path / "config.toml"
     config.write_text('[pandan]\ntoken = "from-the-file"\napi_url = "https://from-the-file"\n')
 
     assert script.load_credential(env={}, config_path=config) == "from-the-file"
     assert script.load_origin(env={}, config_path=config) == "https://from-the-file"
+
+
+def test_the_kan_table_is_read_too(script: ModuleType, tmp_path: Path) -> None:
+    """KAN-1081: the current `pandan` CLI writes `[kan]`, not `[pandan]` — both must resolve."""
+    config = tmp_path / "config.toml"
+    config.write_text(
+        '[kan]\ntoken = "from-the-kan-table"\napi_url = "https://from-the-kan-table"\n'
+    )
+
+    assert script.load_credential(env={}, config_path=config) == "from-the-kan-table"
+    assert script.load_origin(env={}, config_path=config) == "https://from-the-kan-table"
 
 
 def test_an_unreadable_config_is_the_same_as_no_config(script: ModuleType, tmp_path: Path) -> None:
