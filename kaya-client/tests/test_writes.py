@@ -117,6 +117,35 @@ def test_create_without_a_title_is_a_usage_error() -> None:
         client.create_note(None)  # type: ignore[arg-type]
 
 
+def test_create_sends_a_team_id_when_given() -> None:
+    """ADR 0011/R16.6. The same omit-rather-than-null rule as `body`/`path`."""
+    handler = recorder(201)
+    with client_over(handler) as client:
+        client.create_note("Groceries", team_id=501)
+
+    assert sent(handler) == {"title": "Groceries", "team_id": 501}
+
+
+def test_no_team_id_is_the_pre_r16_request_byte_for_byte() -> None:
+    handler = recorder(201)
+    with client_over(handler) as client:
+        client.create_note("Groceries")
+
+    assert sent(handler) == {"title": "Groceries"}, "team_id must not appear at all when omitted"
+
+
+def test_a_created_notes_team_id_reaches_the_payload_record() -> None:
+    """`_note` passes the API's response through unchanged — no transformation drops or renames a
+    field, `team_id` included. `field_names()` (kaya_client.payloads) is what turns this into a
+    `--fields team_id` a caller can actually ask for."""
+    handler = recorder(201, body={**GROCERIES, "team_id": 501})
+    with client_over(handler) as client:
+        payload = client.create_note("Groceries", team_id=501)
+
+    assert payload.record["team_id"] == 501
+    assert "team_id" not in payload.columns, "default row stays narrow; ask for it with --fields"
+
+
 # -------------------------------------------------------------------------------- edit
 
 
