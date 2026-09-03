@@ -26,6 +26,7 @@ function note(ref: string, overrides: Partial<Note> = {}): Note {
     path: 'design/adr.md',
     created_at: '2026-08-09T10:00:00+00:00',
     updated_at: '2026-08-09T10:00:00.123456+00:00',
+    team_id: null,
     ...overrides,
   }
 }

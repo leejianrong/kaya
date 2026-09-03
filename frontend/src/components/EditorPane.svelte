@@ -876,6 +876,18 @@
       />
       <p class="meta">
         <code>{note.ref}</code>
+        {#if note.team_id !== null}
+          <!-- ADR 0011, R16.7: read-only. A plain id is all there is to show — kaya never mirrors
+               a team's name (app/models/team.py), and creating or moving a note into a team from
+               the SPA is this card's own stretch goal, not required. -->
+          <span
+            class="team-badge"
+            title="Shared by default with team {note.team_id}"
+            data-testid="team-badge"
+          >
+            Team {note.team_id}
+          </span>
+        {/if}
         <!-- KAN-1043, BREADBOARD.md A3: an editable path field in place of the old static span.
              A note may legitimately have no path (ADR 0008: path is metadata, not identity), and two
              of the seeded notes do — the placeholder says so rather than the field reading empty for
@@ -1042,6 +1054,17 @@
 
   .stamp {
     font-family: var(--mono);
+  }
+
+  .team-badge {
+    padding: 0.05rem 0.45rem;
+    border: 1px solid var(--edge);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
   }
 
   /* Sits where the old static path span did — same size, same muted color — until you hover or

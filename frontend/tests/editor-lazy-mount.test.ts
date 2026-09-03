@@ -55,6 +55,7 @@ function note(overrides: Partial<Note> = {}): Note {
     path: 'journal/weekly.md',
     created_at: '2026-08-09T09:00:00+00:00',
     updated_at: '2026-08-09T10:00:00.123456+00:00',
+    team_id: null,
     ...overrides,
   }
 }
