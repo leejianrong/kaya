@@ -26,6 +26,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Computed,
     DateTime,
     ForeignKey,
@@ -132,8 +133,8 @@ class Note(Base):
     """Owner. Every read is scoped by this (`authorize_note`, KAN-535); Postgres does not index
     the referencing side of a foreign key on its own, hence `index=True`."""
 
-    team_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid(),
+    team_id: Mapped[int | None] = mapped_column(
+        BigInteger,
         # RESTRICT, matching `owner_id`'s own reasoning exactly: a locally mirrored `team` row
         # (app/models/team.py) is not the authority on whether a note's team association should
         # end, so a future cleanup job that prunes stale team mirrors fails loudly instead of

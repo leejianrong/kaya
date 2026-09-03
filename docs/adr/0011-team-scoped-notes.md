@@ -40,12 +40,15 @@ the rework the spike already paid down. Tracked as `EPIC-136`, cards `KAN-1082`�
 
 ### Fork 2 — shape: mirror pandan's, minus the rung kaya doesn't have
 
-- **`team` (new table): `id` only** — pandan's UUID for the team, verbatim, no other column. This is
+- **`team` (new table): `id` only** — pandan's id for the team, verbatim, no other column. This is
   the exact reasoning `app/models/user.py`'s docstring already gives for the user mirror: any column
   beyond an id goes stale, and the first caller to trust a stale copy is right to be annoyed. JIT-
   inserted the same way a user mirror row is, `ON DELETE RESTRICT` for the same reason too — a locally
   mirrored row is not the authority on whether a note should keep existing, so a future cleanup job
-  fails loudly rather than silently orphaning a note's team association.
+  fails loudly rather than silently orphaning a note's team association. **Unlike `user.id`, this is
+  a `BigInteger`, not a `Uuid`** — pandan's own `Team.id` is a plain integer (verified against
+  pandan's `backend/app/models.py`), so the mirror matches the wire type rather than assuming every
+  pandan identity is UUID-shaped the way a `User` happens to be.
 - **`note.team_id`** — nullable `FK → team.id`, additive, mirrors `board.team_id`'s shape in pandan ADR
   0021 exactly. Every existing note gets `team_id = NULL`, i.e. today's behavior, byte-for-byte — the
   same consequence ADR 0021 recorded for `board`.

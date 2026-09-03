@@ -69,3 +69,24 @@ class FakeMirror:
 
     def ensure(self, principal: Principal) -> None:
         self.ensured.append(principal)
+
+
+class FakeTeamUpstream:
+    """A ``TeamMembershipUpstream`` backed by a dict, counting every call it receives — same shape
+    as ``FakeUpstream``, for the same reason: the call count is what tells "the cache did nothing"
+    apart from "the answer happens to be right anyway"."""
+
+    def __init__(self, known: dict[str, frozenset[int]] | None = None) -> None:
+        self.known = dict(known or {})
+        self.available = True
+        self.calls: list[str] = []
+
+    def member_teams(self, bearer: str) -> frozenset[int]:
+        self.calls.append(bearer)
+        if not self.available:
+            raise UpstreamUnavailable("https://pandan.invalid/api/v1/teams is unreachable")
+        return self.known.get(bearer, frozenset())
+
+    @property
+    def call_count(self) -> int:
+        return len(self.calls)
