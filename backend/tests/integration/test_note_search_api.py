@@ -52,6 +52,7 @@ NOTE_PAYLOAD_KEYS = [
     "path",
     "created_at",
     "updated_at",
+    "team_id",
 ]
 """``tests/unit/test_note_payload_keys.py``'s pin, repeated here because a search is a *different
 code path returning the same schema* and the unit pin only ever sees ``NoteRead``. Duplicated rather

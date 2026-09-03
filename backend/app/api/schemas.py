@@ -63,6 +63,11 @@ class NoteRead(BaseModel):
     path: str
     created_at: datetime
     updated_at: datetime
+    team_id: int | None = None
+    """The team this note defaults to team-wide access for (ADR 0011, R16.5) — ``None`` for the
+    overwhelming majority of notes, which stay personal. Unlike ``owner_id``, this *does* carry
+    information a reader doesn't already have (which of the caller's several teams, if any), so it
+    is on the wire where ``owner_id`` deliberately is not."""
 
     @classmethod
     def of(cls, note: Note) -> "NoteRead":
@@ -106,6 +111,11 @@ class NoteCreate(BaseModel):
 
     body: str = ""
     path: str = Field(default="", max_length=PATH_MAX)
+    team_id: int | None = None
+    """Optional team-default sharing (ADR 0011, R16.5). The route validates the creating principal
+    is actually a member before this reaches the database — see `app/api/notes.py`'s
+    `create_note`, never this schema, which only shapes the request and validates nothing about
+    who the caller is (ADR 0004 draws that line at the client/schema boundary generally)."""
 
 
 class NoteUpdate(BaseModel):

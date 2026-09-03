@@ -395,6 +395,7 @@ def test_the_list_is_an_envelope_with_a_named_key(client: Any) -> None:
         "path",
         "created_at",
         "updated_at",
+        "team_id",
     }
 
 

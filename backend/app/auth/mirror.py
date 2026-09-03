@@ -16,7 +16,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.auth.principal import Principal
-from app.models import User
+from app.models import Team, User
 
 
 class SqlAlchemyPrincipalMirror:
@@ -43,3 +43,25 @@ class SqlAlchemyPrincipalMirror:
         # rather than part of its work, and a route that rolls back — a 409, a validation failure —
         # must not also un-mirror a user who legitimately exists.
         self._session.commit()
+
+
+def ensure_team_mirrored(session: Session, team_id: int) -> None:
+    """``team``'s equivalent of ``SqlAlchemyPrincipalMirror.ensure`` — ADR 0011, R16.5.
+
+    A plain function rather than a class: there is no ``TeamMirror`` Protocol to satisfy, because
+    nothing here ever needs faking behind a seam the way the identity mirror does (there is no
+    external upstream in this call — `TeamAccessResolver` already confirmed membership before this
+    runs, over its own seam). ``ON CONFLICT DO NOTHING`` for the identical reason
+    ``SqlAlchemyPrincipalMirror`` uses it: two callers creating their first note in a team at once
+    must not race a read-then-insert into an `IntegrityError`.
+
+    Called from ``app/api/notes.py``'s ``create_note``, and only after the caller's membership is
+    confirmed — this function does not itself check anything, it only makes the id addressable, the
+    same separation of concerns ``app/models/team.py``'s module docstring draws between "who may
+    set this" and "does a row exist to point at".
+    """
+    statement = insert(Team).values(id=team_id).on_conflict_do_nothing(index_elements=[Team.id])
+    session.execute(statement)
+    # Not committed here, unlike the principal mirror: create_note's own transaction covers the
+    # note insert and this row together, and there is no route that could roll back the note while
+    # wanting the team row to survive — the two either both land or neither does.

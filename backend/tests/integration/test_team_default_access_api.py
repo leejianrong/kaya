@@ -248,3 +248,71 @@ def test_a_team_note_appears_in_a_members_list_and_not_a_strangers(
 
     carols_view = client.get(NOTES, headers=auth(carol_token))
     assert carols_view.json()["notes"] == []
+
+
+# --- ADR 0011/R16.5: POST /api/v1/notes gains optional team_id -----------------------------------
+
+
+@pytest.mark.usefixtures("bob")
+def test_creating_a_note_with_a_team_you_belong_to_succeeds(
+    client: Any, team_upstream: FakeTeamUpstream
+) -> None:
+    """The team's own `team` mirror row does not exist yet anywhere -- this is the first time
+    anyone has ever mentioned `PLATFORM_TEAM_ID` to kaya. `ensure_team_mirrored` has to create it
+    just-in-time, in the same request, or the note insert fails its own foreign key."""
+    team_upstream.known[BOB_TOKEN] = frozenset({PLATFORM_TEAM_ID})
+
+    response = client.post(
+        NOTES,
+        json={"title": "a team note", "team_id": PLATFORM_TEAM_ID},
+        headers=auth(BOB_TOKEN),
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["team_id"] == PLATFORM_TEAM_ID
+
+
+@pytest.mark.usefixtures("bob")
+def test_creating_a_note_with_a_team_you_do_not_belong_to_is_a_403(
+    client: Any, team_upstream: FakeTeamUpstream
+) -> None:
+    # bob is not in team_upstream.known at all.
+    response = client.post(
+        NOTES,
+        json={"title": "not actually bob's team", "team_id": PLATFORM_TEAM_ID},
+        headers=auth(BOB_TOKEN),
+    )
+
+    assert response.status_code == 403, response.text
+    assert response.json()["error"]["code"] == "team_forbidden"
+
+
+@pytest.mark.usefixtures("bob")
+def test_a_403_on_create_leaves_no_note_and_no_team_row_behind(
+    client: Any, team_upstream: FakeTeamUpstream
+) -> None:
+    """The validation runs before anything is written -- a rejected create must not leave a
+    half-made note, and must not JIT-mirror a team bob was never confirmed to belong to."""
+    from sqlalchemy import select
+
+    from app.db import get_sessionmaker
+    from app.models import Note, Team
+
+    response = client.post(
+        NOTES,
+        json={"title": "should not exist", "team_id": PLATFORM_TEAM_ID},
+        headers=auth(BOB_TOKEN),
+    )
+    assert response.status_code == 403
+
+    with get_sessionmaker()() as session:
+        assert session.scalars(select(Note).where(Note.title == "should not exist")).first() is None
+        assert session.scalars(select(Team).where(Team.id == PLATFORM_TEAM_ID)).first() is None
+
+
+@pytest.mark.usefixtures("bob")
+def test_team_id_is_absent_by_default_and_omitting_it_still_works(client: Any) -> None:
+    response = client.post(NOTES, json={"title": "a personal note"}, headers=auth(BOB_TOKEN))
+
+    assert response.status_code == 201, response.text
+    assert response.json()["team_id"] is None
