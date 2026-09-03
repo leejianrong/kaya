@@ -22,6 +22,7 @@ const DOOMED: Note = {
   path: 'journal/2026/08/weekly-review.md',
   created_at: '2026-08-09T10:00:00+00:00',
   updated_at: '2026-08-09T10:00:00.123456+00:00',
+  team_id: null,
 }
 
 const OTHER: Note = {
