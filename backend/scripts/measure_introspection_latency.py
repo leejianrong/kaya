@@ -92,9 +92,13 @@ def _pandan_config(path: Path | None) -> dict[str, Any]:
         parsed = tomllib.loads((path or PANDAN_CONFIG).read_text())
     except (OSError, tomllib.TOMLDecodeError):
         return {}
-    # The CLI nests under `[pandan]`; tolerate a flat file too rather than guessing wrong.
-    section = parsed.get("pandan")
-    return section if isinstance(section, dict) else parsed
+    # The CLI nests under `[kan]` (KAN-1081); `[pandan]` is tolerated too for an older config, and
+    # a flat file rather than guessing wrong.
+    for name in ("kan", "pandan"):
+        section = parsed.get(name)
+        if isinstance(section, dict):
+            return section
+    return parsed
 
 
 def load_credential(
