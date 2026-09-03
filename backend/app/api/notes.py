@@ -50,8 +50,16 @@ from app.api.schemas import (
     NoteVersionRead,
 )
 from app.api.search import SearchTerm
-from app.auth import Principal, get_principal, notes_matching, notes_owned_by
+from app.auth import (
+    Principal,
+    TeamAccessResolver,
+    get_principal,
+    get_team_access_resolver,
+    notes_matching,
+    notes_owned_by,
+)
 from app.db import get_session
+from app.integrations.dependencies import CallerBearer
 from app.models import Note
 from app.note_links import reconcile_note_links, resolve_pending_note_links
 from app.note_versions import cut_version, note_versions
@@ -60,6 +68,7 @@ router = APIRouter(prefix="/api/v1", tags=["notes"])
 
 CurrentPrincipal = Annotated[Principal, Depends(get_principal)]
 DbSession = Annotated[Session, Depends(get_session)]
+CurrentTeamResolver = Annotated[TeamAccessResolver, Depends(get_team_access_resolver)]
 
 
 @router.post(
@@ -114,7 +123,13 @@ def create_note(
 
 
 @router.get("/notes", summary="List the caller's notes, or search them with ?q=")
-def list_notes(principal: CurrentPrincipal, session: DbSession, term: SearchTerm) -> NoteList:
+def list_notes(
+    principal: CurrentPrincipal,
+    session: DbSession,
+    term: SearchTerm,
+    bearer: CallerBearer,
+    team_resolver: CurrentTeamResolver,
+) -> NoteList:
     """Every note the caller owns, newest first — or, with ``?q=``, the ones that match it.
 
     Scoped in SQL by ``notes_owned_by``, not filtered afterwards: SLICES §V1 asks for another user's
@@ -122,6 +137,12 @@ def list_notes(principal: CurrentPrincipal, session: DbSession, term: SearchTerm
     happened. Composing here cannot lose that clause (KAN-535), and ``notes_matching`` composes onto
     the very same statement, so KAN-558's "another user's matching note must never appear" is that
     one clause rather than a second implementation of it.
+
+    **Team membership is resolved before this session has run a single query** (ADR 0011, R16.3) —
+    unlike the single-note path in ``app/api/refs.py``, there is no owner check to fail first and
+    defer on, since a list has to know every team it should widen for before it can build the
+    ``WHERE``. No connection is held across the call for the same reason it never is in
+    ``resolve_note``: nothing here has queried yet, so there is nothing to release.
 
     **Two orders, because they answer two different questions, and each one is deterministic.**
 
@@ -145,10 +166,11 @@ def list_notes(principal: CurrentPrincipal, session: DbSession, term: SearchTerm
     when one does. It is deliberately not added *with* search either — a `limit` would need a
     documented interaction with ranking, and that is a second undiscussed contract.
     """
+    team_ids = team_resolver.member_of(bearer) if bearer is not None else frozenset()
     statement = (
-        notes_owned_by(principal).order_by(Note.updated_at.desc(), Note.id.desc())
+        notes_owned_by(principal, team_ids).order_by(Note.updated_at.desc(), Note.id.desc())
         if term is None
-        else notes_matching(principal, term)
+        else notes_matching(principal, term, team_ids)
     )
     return NoteList(notes=[NoteRead.of(note) for note in session.scalars(statement)])
 
