@@ -112,6 +112,76 @@ def test_ownership_is_the_uuid_and_nothing_else() -> None:
     assert authorize_note(renamed, mine) is mine
 
 
+# --- ADR 0011/R16.3: the team-default rung -------------------------------------------------------
+
+PLATFORM_TEAM_ID = 501
+DESIGN_TEAM_ID = 502
+
+
+def team_note(*, title: str = "a team note") -> Note:
+    """A detached note owned by Bob and shared with the Platform team."""
+    note = note_owned_by(BOB, title=title)
+    note.team_id = PLATFORM_TEAM_ID
+    return note
+
+
+def test_a_team_member_reaches_a_teammates_team_shared_note() -> None:
+    shared = team_note()
+
+    assert authorize_note(ALICE, shared, frozenset({PLATFORM_TEAM_ID})) is shared
+
+
+def test_the_owner_still_gets_their_own_team_note_back_with_no_team_ids_at_all() -> None:
+    """The owner check runs first and never needs team_ids — the default `frozenset()` is enough
+    for the note's own owner, exactly as it always was."""
+    shared = team_note()
+
+    assert authorize_note(BOB, shared) is shared
+
+
+def test_no_team_ids_on_a_team_note_is_still_a_403() -> None:
+    """The default (`frozenset()`) reproduces pre-R16 behaviour exactly: a caller who is not the
+    owner and supplies no team_ids is refused, whether that's because they belong to no team or
+    because ADR 0011's soft-fail decided pandan couldn't say."""
+    shared = team_note()
+
+    with pytest.raises(HTTPException) as raised:
+        authorize_note(ALICE, shared)
+
+    assert raised.value.status_code == 403
+
+
+def test_membership_in_a_different_team_grants_nothing() -> None:
+    shared = team_note()
+
+    with pytest.raises(HTTPException) as raised:
+        authorize_note(ALICE, shared, frozenset({DESIGN_TEAM_ID}))
+
+    assert raised.value.status_code == 403
+
+
+def test_a_personal_note_is_unaffected_by_team_ids() -> None:
+    """`note.team_id is None` short-circuits the team rung entirely — team_ids naming every team
+    in existence still would not grant access to a note that was never shared."""
+    personal = note_owned_by(BOB)
+
+    with pytest.raises(HTTPException) as raised:
+        authorize_note(ALICE, personal, frozenset({PLATFORM_TEAM_ID, DESIGN_TEAM_ID}))
+
+    assert raised.value.status_code == 403
+
+
+def test_team_default_access_is_never_a_404() -> None:
+    """A team note a caller cannot reach is exactly the "somebody else's note" case — `403`, the
+    existence-revealing refusal ADR 0002/PLAN §Authorization already chose, never a `404`."""
+    shared = team_note()
+
+    with pytest.raises(HTTPException) as raised:
+        authorize_note(ALICE, shared)
+
+    assert raised.value.status_code != 404
+
+
 # --- Many notes: the WHERE ----------------------------------------------------------------------
 
 
@@ -139,7 +209,12 @@ def test_two_callers_get_two_different_statements() -> None:
 
 def test_composing_onto_the_statement_cannot_lose_the_scoping() -> None:
     """The reason this returns a ``Select``. A route adds a search term, an ordering and a page;
-    none of those can remove a clause that is already on the statement."""
+    none of those can remove a clause that is already on the statement.
+
+    The owner clause is parenthesised once a second ``.where()`` ANDs onto it (ADR 0011's ``OR``
+    needs the parens to keep its precedence), so this checks for the clause rather than for
+    ``WHERE`` immediately preceding it — the same property, tolerant of the wrapping.
+    """
     paged = (
         notes_owned_by(ALICE)
         .where(Note.title.ilike("%meeting%"))
@@ -149,7 +224,7 @@ def test_composing_onto_the_statement_cannot_lose_the_scoping() -> None:
 
     sql, params = compiled(paged)
 
-    assert "WHERE note.owner_id = " in sql
+    assert "note.owner_id = " in sql
     assert ALICE.id in params.values()
     assert "LIMIT" in sql
 

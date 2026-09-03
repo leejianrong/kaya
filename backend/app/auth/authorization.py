@@ -46,7 +46,7 @@ import uuid
 from collections.abc import Iterable
 
 from fastapi import HTTPException, status
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, or_, select
 
 from app.auth.principal import Principal
 from app.auth.resolver import error_body
@@ -80,7 +80,9 @@ def note_addressed_as_id(note_id: int) -> Select[tuple[Note]]:
     return select(Note).where(Note.id == note_id)
 
 
-def authorize_note(principal: Principal, note: Note | None) -> Note:
+def authorize_note(
+    principal: Principal, note: Note | None, team_ids: frozenset[int] = frozenset()
+) -> Note:
     """The whole authorization contract for a single note, with none of FastAPI's plumbing.
 
     Sibling of ``principal_from_bearer``: an ordinary function over ordinary objects. It **returns
@@ -88,6 +90,14 @@ def authorize_note(principal: Principal, note: Note | None) -> Note:
     comes away with a ``Note`` rather than a ``Note | None``. That is the point of the return value
     — the check sits on the path to the value instead of beside it, and a route that forgot to call
     it is left holding an optional it has to explain.
+
+    ``team_ids`` (ADR 0011, R16.3) is the caller's own team memberships, resolved by
+    ``TeamAccessResolver`` — a **plain value**, never a live resolver or a bearer, because this
+    function stays what its docstring already promised: no framework, no network, no session, so
+    the whole contract (this rung included) is assertable in the no-infrastructure test layer
+    against nothing more than a `frozenset[int]` a test built by hand. Defaults to ``frozenset()``,
+    which reproduces every existing call site's behaviour byte-for-byte — a caller that never
+    learned about teams is a caller for whom this rung is never reached.
     """
     if note is None:
         # No identifier in the message, and none available to put there. That is what keeps
@@ -97,25 +107,39 @@ def authorize_note(principal: Principal, note: Note | None) -> Note:
             detail=error_body("note_not_found", "no such note"),
         )
 
-    if note.owner_id != principal.id:
-        # `403` rather than `404`, which tells the caller the note exists. That is a decision, not
-        # an oversight: the card, ADR 0002 §"The resolver", PLAN §Authorization and SLICES §V1's
-        # end-to-end list all name `403` explicitly. The existence bit is cheap to give up here —
-        # refs come from one global sequence and already leak a rough note count across all users
-        # (ADR 0008 §Consequences) — and in exchange someone who mistyped a ref learns what actually
-        # happened instead of hunting a note that is sitting right there. Per-note sharing (Q8) is
-        # the change that would make this line worth revisiting; hardening it to a blanket `404`
-        # unilaterally is not.
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=error_body("note_forbidden", "this note belongs to another user"),
-        )
+    if note.owner_id == principal.id:
+        return note
 
-    return note
+    if note.team_id is not None and note.team_id in team_ids:
+        # ADR 0011's second rung: team-default access. Kaya has no per-note explicit share to slot
+        # in between owner and team-default the way pandan's board check does (Q8: owner-only) — so
+        # this is a two-step check, not pandan's four, and it grants exactly the access an owner
+        # has. Kaya's note model has never distinguished read from write access below "owner or
+        # not"; a team-default grant does not invent a narrower tier that does not exist anywhere
+        # else in this schema.
+        return note
+
+    # `403` rather than `404`, which tells the caller the note exists. That is a decision, not
+    # an oversight: the card, ADR 0002 §"The resolver", PLAN §Authorization and SLICES §V1's
+    # end-to-end list all name `403` explicitly. The existence bit is cheap to give up here —
+    # refs come from one global sequence and already leak a rough note count across all users
+    # (ADR 0008 §Consequences) — and in exchange someone who mistyped a ref learns what actually
+    # happened instead of hunting a note that is sitting right there. Per-note sharing (Q8) is
+    # the change that would make this line worth revisiting; hardening it to a blanket `404`
+    # unilaterally is not. A team note a caller cannot reach (no membership, or team-membership
+    # unknown because pandan could not be asked — ADR 0011's soft-fail) gets this same `403`,
+    # unchanged: it is exactly the "somebody else's note" case, whatever the reason.
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=error_body("note_forbidden", "this note belongs to another user"),
+    )
 
 
-def notes_owned_by(principal: Principal) -> Select[tuple[Note]]:
-    """Every list of notes starts here: ``WHERE owner_id = :caller``, before anything else.
+def notes_owned_by(
+    principal: Principal, team_ids: frozenset[int] = frozenset()
+) -> Select[tuple[Note]]:
+    """Every list of notes starts here: ``WHERE owner_id = :caller``, before anything else — or,
+    since ADR 0011 (R16.3), ``owner_id = :caller OR team_id IN (:team_ids)``.
 
     Handed back as a ``Select`` rather than as rows so a route composes onto it — ``.where()`` for a
     search term, ``.order_by()``, ``.limit()`` for a page — and cannot lose the scoping while doing
@@ -123,11 +147,22 @@ def notes_owned_by(principal: Principal) -> Select[tuple[Note]]:
     tempting alternative, a helper that runs the query and returns a list, forces every future
     filter either into this signature or into a Python loop over rows that were fetched anyway.
 
-    ``tests/unit/test_no_unscoped_note_query.py`` holds the other half of the guarantee: ``Note``
-    reaches a ``select()`` in this module and nowhere else under ``app/``, so an unscoped list query
-    fails the suite rather than depending on a reviewer noticing.
+    ``team_ids`` is a **plain, caller-supplied set of integers**, never a subquery — kaya's team
+    membership lives in pandan, resolved over HTTP by ``TeamAccessResolver`` (ADR 0011), so there is
+    no local ``team_member`` table this statement could join against the way pandan's own
+    ``visible_board_ids`` joins one. Defaulting to ``frozenset()`` reproduces the pre-R16 statement
+    exactly: SQLAlchemy renders an empty ``.in_()`` as a static falsehood rather than ``IN ()``
+    (invalid SQL), so the extra clause contributes nothing for the overwhelming majority of callers
+    who belong to no team, and every existing caller of this function needs no change at all.
+
+    ``tests/unit/test_no_unscoped_note_query.py``'s rule 2 has an explicit, written argument for
+    this exact shape (see that file's ``owner_predicates``/`` SAMPLE_ARGUMENTS``) — the guard does
+    not merely tolerate the widening, it names it as the transaction this file exists to force
+    before an ``IN`` form is added. ``Note`` still reaches a ``select()`` in this module and nowhere
+    else under ``app/`` (rule 1), so an unscoped list query still fails the suite rather than
+    depending on a reviewer noticing.
     """
-    return select(Note).where(Note.owner_id == principal.id)
+    return select(Note).where(or_(Note.owner_id == principal.id, Note.team_id.in_(team_ids)))
 
 
 SEARCH_CONFIG = "english"
@@ -147,13 +182,17 @@ psycopg 3, both spellings return ``'foo' & 'bar'`` for ``foo bar`` (KAN-558's ex
 constant in this file either way, so nothing user-supplied is ever near the position."""
 
 
-def notes_matching(principal: Principal, term: str) -> Select[tuple[Note]]:
+def notes_matching(
+    principal: Principal, term: str, team_ids: frozenset[int] = frozenset()
+) -> Select[tuple[Note]]:
     """The caller's notes matching ``term``, best match first, in a **deterministic** order.
 
     KAN-558, SLICES §V4. Composed onto ``notes_owned_by``, so "another user's matching note must
     never appear" is the ``WHERE owner_id = :caller`` that is already on the statement — a clause
     cannot be composed away, and there is no point at which a row of somebody else's prose is
-    fetched and then dropped.
+    fetched and then dropped. ``team_ids`` passes straight through to ``notes_owned_by`` (ADR
+    0011): a team-shared note is exactly as findable by search as it is by the plain list, rather
+    than the two commands disagreeing about what "the caller's notes" means.
 
     **``websearch_to_tsquery`` rather than the other two, because the input is a human's.** Measured
     against Postgres 17 on this card: ``to_tsquery('english', '&|!()')`` and ``to_tsquery('english',
@@ -196,7 +235,7 @@ def notes_matching(principal: Principal, term: str) -> Select[tuple[Note]]:
     """
     tsquery = func.websearch_to_tsquery(SEARCH_CONFIG, term)
     return (
-        notes_owned_by(principal)
+        notes_owned_by(principal, team_ids)
         .where(Note.search_vector.bool_op("@@")(tsquery))
         .order_by(func.ts_rank(Note.search_vector, tsquery).desc(), Note.id.desc())
     )
