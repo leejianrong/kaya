@@ -84,9 +84,9 @@ underway since.
 - **Browser single sign-on.** Needs a shared apex domain, which arrives with the homelab (Q7). PAT
   auth carries the MVP, which is the path the primary actor uses anyway.
 - **Attachments and images.** Text-only markdown in Postgres. Object storage when genuinely needed
-  (Q35). **Now under active build** — R14, BREADBOARD.md.
+  (Q35). **Shipped post-MVP** — R14, BREADBOARD.md.
 - **Per-note sharing and ACLs.** Owner-only, mirroring pandan's pre-M5 stance (Q8) — still true for an
-  *explicit* per-note share. **Team-default access is now under active build** — R16, BREADBOARD.md,
+  *explicit* per-note share. **Team-default access has since shipped** — R16, BREADBOARD.md,
   ADR 0011, following the org/team spike (R15) and pandan's own Teams milestone shipping.
 - **Real-time collaboration and local-first sync.** Poll/refresh, per pandan ADR 0007. Local-first is
   a different and much harder product (Q22). Still out; no post-MVP epic touches this.
@@ -95,7 +95,7 @@ underway since.
   shipped post-MVP** — R10, R11, BREADBOARD.md.
 - **A plugin ecosystem.** Never (Q38).
 - **Export and import.** Not built, but the `NOTE-n` ref is designed to survive it, because
-  retrofitting identity is the expensive kind of change (Q18). **Now under active build** — R12,
+  retrofitting identity is the expensive kind of change (Q18). **Shipped post-MVP** — R12,
   BREADBOARD.md.
 
 ## Beyond the MVP
@@ -107,14 +107,19 @@ unrelated post-MVP work would collide with a requirement that's already shipped.
 [`docs/roadmap/BREADBOARD.md`](roadmap/BREADBOARD.md); the board (pandan board 18, EPIC-134 through
 EPIC-137) is where the day-to-day state lives.
 
+**This table is synced from BREADBOARD.md, not the other way round** — when a status here and there
+disagree, BREADBOARD.md is current and this table is stale; fix this table in the same PR that notices
+the drift (last synced 2026-09-05, KAN-1155).
+
 | ID | Requirement | Status |
 |----|-------------|--------|
 | R10 | A graph view over `note_link` | Shipped (KAN-1050) |
 | R11 | A live pandan board/view embedded read-only in a note | Shipped (KAN-1049) |
-| R12 | A note's `NOTE-n` ref survives export and re-import, single-note and whole-corpus | In progress |
-| R13 | Every note body write is a recoverable version, listable and restorable in the SPA | In progress |
-| R14 | A note can carry a non-text attachment, stored in R2, never leaked to another owner | In progress |
-| R15 | Kaya's data model supports a team/org scope, not just single-owner | Under investigation (spike) |
+| R12 | A note's `NOTE-n` ref survives export and re-import, single-note and whole-corpus | Shipped (KAN-1060–1063) |
+| R13 | Every note body write is a recoverable version, listable and restorable in the SPA | Shipped (KAN-1064–1066) |
+| R14 | A note can carry a non-text attachment, stored in R2, never leaked to another owner | Shipped (KAN-1067–1069) |
+| R15 | Investigate whether kaya's data model can support a team/org scope, not just single-owner | Done — spike (KAN-1048), superseded by R16 |
+| R16 | A note can be shared with everyone on a pandan team by default (ADR 0011) | Shipped (KAN-1082–1088) |
 
 ## Requirements
 
