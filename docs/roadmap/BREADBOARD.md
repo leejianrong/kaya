@@ -186,3 +186,42 @@ notion of read vs. write beyond owner-or-not today. No MCP tool count change ass
 **Cards:** `KAN-1082` (schema), `KAN-1083` (`TeamAccessResolver`), `KAN-1084` (authorization rung +
 guard widening), `KAN-1085` (`[mutate]` guardrail proof), `KAN-1086` (notes API), `KAN-1087` (CLI/MCP),
 `KAN-1088` (SPA badge). All under `EPIC-136`.
+
+## Discovery: link to pandan from kaya's nav (KAN-1156–1158, KAY-E12)
+
+**Unnumbered, deliberately.** This section documents a shipped slice but does not claim the next
+`R`-number. `docs/PLAN.md`'s Beyond-the-MVP table stops at R16, and board 18's `EPIC-163` ("Shape
+R17+: kaya's next increment", `KAY-E13`) exists specifically to run a shaping pass over what comes
+after it — its own description names this Discovery pair (`KAY-E12` here, `PAN-E36` on pandan's board
+5) as "an easy first R17 slice since they're already scoped", but leaves that call to that future
+session, not to this one. Assigning `R17` here would pre-empt a shaping pass that hasn't happened yet
+over a scope this card was never asked to set. If EPIC-163's shaping pass later folds this in as R17
+(or otherwise), update this heading then.
+
+**Requirement.** `docs/kaya-vision.md`'s integration contract — settled before either app had a line
+of code — names three parts: shared identity, cross-linking (both directions), and discovery, the last
+being "each app links to the other in its nav when the sibling origin is configured (an env var — no
+hard dependency; either runs standalone)". The first two shipped in the MVP itself (V1's identity
+forwarding, V5's wikilinks); discovery was the one leg of that original contract nothing had built.
+`KAY-E12` (`EPIC-161`) is kaya's half of closing it.
+
+**What shipped.** `GET /api/v1/meta` and `pandanHref`'s scheme-validating parse (`frontend/src/lib/
+meta.ts`) both predate this epic — they're KAN-555, built for the landing page's sign-in copy. What
+KAN-1156–1158 added is the rest of the chain:
+
+| Part | Mechanism |
+|------|-----------|
+| Shared resolution | `resolvePandanHref` (KAN-1156, `lib/meta.ts`) lifts the fetch-then-validate-then-swallow-errors chain `Landing.svelte` already had inline into one function, so the authenticated shell can reuse it rather than duplicating it. |
+| Nav link | `App.svelte`'s topbar renders a `pandan` link (`data-testid="pandan-link"`) once `resolvePandanHref` resolves to a non-null href, authenticated visitors only (KAN-1157). Hidden entirely, never shown-and-disabled, when the origin is unset, unsafe, or unreachable — same convention as the landing page's own link and `Sidebar.svelte`'s view toggle. |
+| Test coverage | `frontend/tests/shell.test.ts`'s `describe('the pandan nav link (KAN-1157)')` block, extended by KAN-1158 with an end-to-end unsafe-scheme case and an unmount-before-fetch-resolves race, both exercised at the authenticated-shell level rather than only against `resolvePandanHref` in isolation (`frontend/tests/meta.test.ts`). |
+
+No new backend route and no new `Settings` field: the mechanism is the same `KAYA_PANDAN_URL` →
+`GET /api/v1/meta` path the landing page already used, pointed at a second consumer.
+
+**Pairing, not dependency.** `KAY-E12` pairs with a matching pandan-side card on pandan's own board 5
+(`PAN-E36`) — pandan's nav gaining a link back to kaya, configured by its own `PANDAN_*`/`KAYA_*`-style
+env var. Per the vision doc's own framing ("no hard dependency; either runs standalone"), the two sides
+ship independently: kaya's half being done here does not block or require pandan's, and vice versa.
+
+**Cards:** `KAN-1156` (shared `resolvePandanHref`), `KAN-1157` (the nav link + its own test coverage),
+`KAN-1158` (this discovery: coverage audit + this section). All under `EPIC-161` (`KAY-E12`).
