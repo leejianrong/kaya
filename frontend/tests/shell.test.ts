@@ -389,4 +389,53 @@ describe('the pandan nav link (KAN-1157)', () => {
 
     expect(target.querySelector('[data-testid="pandan-link"]')).toBeNull()
   })
+
+  it('is hidden, not linked, when meta resolves to an unsafe scheme', async () => {
+    // `tests/meta.test.ts` already proves `pandanHref('javascript:…')` returns `null` at the unit
+    // level. That is a different claim from this one: this asserts `App.svelte` itself only ever
+    // renders the *resolved* `pandanHref` state, never `meta.pandan_url` raw — a template edit that
+    // swapped in the unvalidated value (or read the meta response a second, unguarded way) would
+    // pass every test above it in this file while putting `javascript:` in a real `href` inside
+    // kaya's own origin, which is exactly the mistake `lib/meta.ts`'s `pandanHref` docstring exists
+    // to prevent. CLAUDE.md's rule that a structural/unit guard doesn't cover a behavioural claim at
+    // a different altitude, turned into a test at the shell.
+    stubFetch(() => jsonResponse(200, { pandan_url: 'javascript:alert(1)' }))
+    auth.setToken(FAKE_TOKEN)
+    const target = render(App, {})
+    await settle()
+
+    expect(target.querySelector('[data-testid="pandan-link"]')).toBeNull()
+    expect(target.innerHTML).not.toContain('javascript:')
+  })
+
+  it('unmounting before GET /api/v1/meta resolves neither throws nor renders a stale link', async () => {
+    // The nav-link effect's cleanup (`return () => abort.abort()`, `App.svelte`) fires on unmount
+    // before the fetch below ever settles. `resolvePandanHref` folds the resulting `AbortError` into
+    // `null` the same as any other failure (`lib/meta.ts`), so the risk here isn't an uncaught
+    // rejection — it's the `.then` still running after the component is gone and writing to `$state`
+    // nobody will read, which Svelte tolerates silently today. Worth pinning as a known-safe race now
+    // that what's gated on it is a real nav link, not sign-in copy nobody could navigate away from
+    // mid-fetch.
+    let resolveMeta: ((response: Response) => void) | undefined
+    stubFetch(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveMeta = resolve
+        }),
+    )
+    auth.setToken(FAKE_TOKEN)
+    const instance = mount(App, { target: host, props: {} })
+    flushSync()
+
+    expect(() => {
+      unmount(instance)
+      flushSync()
+    }).not.toThrow()
+
+    // Resolve only after the component is gone — nothing should observe it.
+    resolveMeta?.(jsonResponse(200, { pandan_url: PANDAN }))
+    await settle()
+
+    expect(host.querySelector('[data-testid="pandan-link"]')).toBeNull()
+  })
 })
