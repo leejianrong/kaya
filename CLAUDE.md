@@ -244,6 +244,17 @@ than restating it.
 **Adding a package directory turns on its CI jobs**, gated on the directory existing. A new package
 needs from its first commit: a committed lockfile, lint passing, at least one real test.
 
+**Sprint retros.** Retro notes live in kaya itself, not a pandan card field — the maintainer's
+2026-09-04 call, mirrored from the same decision for pandan's own retros, so kaya dogfoods itself for
+its own project's retros. Shape: a running index note at `meta/retros` links out to one dated note per
+sprint (`retros/sprint-N`, `N` matching the pandan cycle number). Whoever closes out a sprint on board
+18 — its cycle's last card done, or its `ends_on` passed — writes that sprint's note before opening the
+next sprint's planning; there's no automation for this yet, it's a human/PM-agent habit. This closes
+the retro leg of the loop epic 165 (`KAY-E15`, "Adopt real Scrum cadence") asks for, on top of the
+2-week/6-sprint-per-PI cadence KAN-1160 recorded (comments 624/625 on that epic). First sprint this
+applies to is Sprint 3 (cycle 11, the live one) — Sprints 1–2 were backdated (KAN-1159) and get no
+retroactive note.
+
 ## Board access
 
 The `pandan` CLI drives board 18 ("kaya — Notes"). **Never print or paste the PAT** — it lives in
