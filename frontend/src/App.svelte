@@ -7,6 +7,7 @@
   import Sidebar from './components/Sidebar.svelte'
   import { ApiError } from './lib/api'
   import { clearToken, credentialState } from './lib/auth'
+  import { resolvePandanHref } from './lib/meta'
   import { createNote, getNote, listNotes } from './lib/notes'
   import {
     currentRoute,
@@ -272,6 +273,26 @@
     return credentialState()
   })
 
+  /**
+   * The pandan origin for the topbar's nav link (KAN-1157), resolved the same way `Landing`
+   * resolves it for the sign-in copy (KAN-1156) — `resolvePandanHref` already swallows a failed
+   * fetch and an unset/unsafe origin into `null`, so there is nothing to branch on here beyond
+   * "did we get a link".
+   *
+   * Fetched once per mount rather than gated on `authed`: this file is mounted for the app's whole
+   * lifetime (see the docstring at the top), so there is no re-mount for a toggle of `authed` to
+   * trigger, and re-asking `/api/v1/meta` every time a credential is pasted or cleared would just
+   * repeat a request whose answer cannot have changed. The link itself only *renders* while
+   * `authed`, in the template below.
+   */
+  let pandanHref: string | null = $state(null)
+
+  $effect(() => {
+    const abort = new AbortController()
+    resolvePandanHref({ signal: abort.signal }).then((resolved) => (pandanHref = resolved))
+    return () => abort.abort()
+  })
+
   $effect(() => onNavigate((next) => (route = next)))
 
   $effect(() => {
@@ -386,6 +407,23 @@
   <header class="topbar">
     <a class="brand" href="/" onclick={(event) => interceptClick(event, '/')}>kaya</a>
     <span class="tagline">markdown notes, API-first</span>
+    {#if authed && pandanHref}
+      <!--
+        KAN-1157. Hidden entirely rather than shown-and-disabled when `pandanHref` is `null` — the
+        same convention `Sidebar.svelte` uses for its view toggle during a search, and the one
+        `Landing.svelte` already applies to this exact link: an operator who has not configured
+        pandan gets no link, not a dead one.
+      -->
+      <a
+        class="pandan-link"
+        href={pandanHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        data-testid="pandan-link"
+      >
+        pandan
+      </a>
+    {/if}
     {#if authed}
       <button
         class="toggle"
@@ -509,6 +547,17 @@
   .tagline {
     color: var(--muted);
     font-size: 0.85rem;
+  }
+
+  .pandan-link {
+    color: var(--muted);
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+
+  .pandan-link:hover {
+    color: var(--accent);
+    text-decoration: underline;
   }
 
   .credential {
