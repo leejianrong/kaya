@@ -241,7 +241,7 @@
     flex: 1 1 18rem;
     min-width: 0;
     padding: 0.5rem 0.65rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-radius: 0.35rem;
     background: transparent;
     color: inherit;
@@ -251,7 +251,7 @@
 
   .paste button {
     padding: 0.5rem 0.9rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-radius: 0.35rem;
     background: transparent;
     color: inherit;

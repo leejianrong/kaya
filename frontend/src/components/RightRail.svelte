@@ -82,6 +82,8 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
+    background: var(--surface-2);
+    border-left: 1px solid var(--border);
   }
 
   .team-note {
@@ -113,7 +115,7 @@
   }
 
   .tabs button.active {
-    border-color: var(--edge);
+    border-color: var(--border);
     border-bottom-color: transparent;
     color: inherit;
   }

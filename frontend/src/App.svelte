@@ -494,7 +494,8 @@
     gap: 0.75rem;
     grid-area: topbar;
     padding: 0.85rem 1.25rem;
-    border-bottom: 1px solid var(--edge);
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border);
   }
 
   .brand {
@@ -572,7 +573,7 @@
 
   .toggle {
     padding: 0.2rem 0.5rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-radius: 0.3rem;
     background: transparent;
     color: var(--muted);
@@ -582,14 +583,14 @@
   }
 
   .toggle.on {
-    border-color: color-mix(in srgb, var(--accent) 45%, var(--edge));
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     color: var(--accent);
   }
 
   .clear {
     padding: 0.2rem 0.5rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-radius: 0.3rem;
     background: transparent;
     color: var(--muted);

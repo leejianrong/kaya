@@ -1039,7 +1039,7 @@
 
   .title-input:hover,
   .title-input:focus {
-    border-color: var(--edge);
+    border-color: var(--border);
     outline: none;
   }
 
@@ -1083,7 +1083,7 @@
 
   .path-input:hover,
   .path-input:focus {
-    border-color: var(--edge);
+    border-color: var(--border);
     outline: none;
   }
 
@@ -1100,9 +1100,9 @@
 
   button {
     padding: 0.35rem 0.9rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-radius: 0.35rem;
-    color: var(--paper);
+    color: var(--bg);
     background: var(--accent);
     font: inherit;
     font-size: 0.85rem;
@@ -1135,14 +1135,14 @@
   }
 
   .delete:hover:not(:disabled) {
-    border-color: color-mix(in srgb, #c0392b 55%, var(--edge));
-    color: #c0392b;
+    border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+    color: var(--danger);
   }
 
   .conflict {
     margin: 0;
     padding: 0.75rem 1rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-left: 3px solid var(--accent);
     border-radius: 0.35rem;
     font-size: 0.85rem;
@@ -1153,7 +1153,7 @@
     min-height: 12rem;
     overflow: auto;
     padding: 0.25rem 0;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-radius: 0.4rem;
   }
 </style>
