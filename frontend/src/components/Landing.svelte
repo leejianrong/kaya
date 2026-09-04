@@ -13,7 +13,7 @@
 -->
 <script lang="ts">
   import { isUsableToken, setToken } from '../lib/auth'
-  import { fetchMeta, pandanHref } from '../lib/meta'
+  import { resolvePandanHref } from '../lib/meta'
 
   const {
     rejected = null,
@@ -51,14 +51,13 @@
 
   $effect(() => {
     const abort = new AbortController()
-    fetchMeta({ signal: abort.signal })
-      .then((meta) => (origin = pandanHref(meta.pandan_url)))
-      // Deliberately empty, and deliberately not `console.error(error)`: nothing is logged on any
-      // path in this component. The failure is already visible — no link — and the fallback text
-      // below says what to do instead. Q41/Q42's rule is about the token, and the discipline of
-      // "this component logs nothing" is cheaper to keep than a per-call judgement about whether
-      // some particular error object was built from a request that carried one.
-      .catch(() => (origin = null))
+    // `resolvePandanHref` (KAN-1156) already swallows both a failed fetch and an unsafe/unset
+    // origin into `null` — nothing is logged on any path in this component, deliberately: the
+    // failure is already visible as "no link", and the fallback text below says what to do
+    // instead. Q41/Q42's rule is about the token, and "this component logs nothing" is cheaper to
+    // keep than a per-call judgement about whether some particular error object carried one.
+    resolvePandanHref({ signal: abort.signal })
+      .then((resolved) => (origin = resolved))
       .finally(() => (asking = false))
     return () => abort.abort()
   })
