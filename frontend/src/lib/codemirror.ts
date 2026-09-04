@@ -143,7 +143,7 @@ export const HISTORY_ISOLATION: readonly Annotation<unknown>[] = [isolateHistory
 const theme = EditorView.theme({
   '&': {
     backgroundColor: 'transparent',
-    color: 'var(--ink)',
+    color: 'var(--text)',
     fontFamily: 'var(--mono)',
     fontSize: '0.9rem',
     height: '100%',
@@ -151,7 +151,7 @@ const theme = EditorView.theme({
   '.cm-scroller': { fontFamily: 'inherit', lineHeight: '1.6' },
   '.cm-content': { caretColor: 'var(--accent)' },
   '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)' },
-  '.cm-gutters': { backgroundColor: 'transparent', borderRight: '1px solid var(--edge)' },
+  '.cm-gutters': { backgroundColor: 'transparent', borderRight: '1px solid var(--border)' },
   '.cm-activeLine': { backgroundColor: 'color-mix(in srgb, var(--accent) 6%, transparent)' },
   '&.cm-focused': { outline: 'none' },
   '.cm-placeholder': { color: 'var(--muted)' },
