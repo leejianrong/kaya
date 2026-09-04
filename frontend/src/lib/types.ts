@@ -23,6 +23,13 @@ export interface Note {
   created_at: string
   /** ADR 0009's concurrency token. Opaque: never parsed, never reformatted. */
   updated_at: string
+  /**
+   * The team this note defaults to team-wide access for (ADR 0011, R16.7) — `null` for the
+   * overwhelming majority of notes, which stay personal. A plain id: kaya never fetches a team's
+   * name (`app/models/team.py`'s mirror carries only an id, on purpose), so that is all a badge
+   * can ever show.
+   */
+  team_id: number | null
 }
 
 /** `GET /api/v1/notes`. A named envelope so `summary` and `next_cursor` can be added later. */

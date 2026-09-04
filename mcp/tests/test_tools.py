@@ -88,6 +88,16 @@ def test_get_note_reports_a_404_as_a_tool_error(answering) -> None:
     assert "note_not_found" in call_error("get_note", ref="NOTE-999")
 
 
+def test_get_note_surfaces_team_id_with_no_code_change_here(answering) -> None:
+    """ADR 0011/R16.6: `get_note`'s tool body is one `client.get_note(ref)` call
+    (`kaya_mcp.tools`), and `KayaClient._note` passes the API's response through unchanged — so a
+    field the backend added reaches this tool's structured output for free. Proves the card's own
+    "no new tool needed" claim rather than just asserting it."""
+    answering(200, {**GROCERIES, "team_id": 501})
+    result = call("get_note", ref="NOTE-12")
+    assert result.structured_content["team_id"] == 501
+
+
 # -------------------------------------------------------------------------------- create_note
 
 

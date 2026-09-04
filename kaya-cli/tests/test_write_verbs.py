@@ -87,6 +87,26 @@ def test_create_without_a_title_is_a_usage_error(capsys) -> None:
     assert "title" in capsys.readouterr().err
 
 
+def test_create_with_a_team_sends_the_id(answering) -> None:
+    """ADR 0011/R16.6. A plain numeric id — a team has no ref of its own to spell instead."""
+    seen = answering(201, {**GROCERIES, "team_id": 501})
+
+    assert main(["note", "create", "Groceries", "--team", "501"]) == 0
+    assert body_of(seen[0]) == {"title": "Groceries", "team_id": 501}
+
+
+def test_a_non_numeric_team_is_a_usage_error(capsys) -> None:
+    assert main(["note", "create", "Groceries", "--team", "platform"]) == 2
+    assert "--team" in capsys.readouterr().err
+
+
+def test_omitting_team_sends_the_pre_r16_request(answering) -> None:
+    seen = answering(201, GROCERIES)
+    main(["note", "create", "Groceries"])
+
+    assert "team_id" not in body_of(seen[0])
+
+
 # -------------------------------------------------------------------------------- edit
 
 

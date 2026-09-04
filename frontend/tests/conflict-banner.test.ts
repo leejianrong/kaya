@@ -51,6 +51,7 @@ function note(overrides: Partial<Note> = {}): Note {
     path: 'design/conflicts.md',
     created_at: '2026-08-09T09:00:00+00:00',
     updated_at: READ_AT,
+    team_id: null,
     ...overrides,
   }
 }

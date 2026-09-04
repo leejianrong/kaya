@@ -114,6 +114,7 @@ def test_both_versions_are_whole_notes_rather_than_the_changed_fields() -> None:
             "path",
             "created_at",
             "updated_at",
+            "team_id",
         }
 
 

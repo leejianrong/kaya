@@ -46,6 +46,7 @@ function note(overrides: Partial<Note> = {}): Note {
     path: 'journal/2026/08/weekly-review.md',
     created_at: '2026-08-09T09:00:00+00:00',
     updated_at: READ_AT,
+    team_id: null,
     ...overrides,
   }
 }
@@ -961,5 +962,31 @@ describe('the path field (KAN-1043, BREADBOARD.md A3)', () => {
     await editorArrived(host)
 
     expect(pathInput().value).toBe('architecture.md')
+  })
+})
+
+describe("the team badge (ADR 0011, R16.7)", () => {
+  function teamBadge(): HTMLElement | null {
+    return host.querySelector('[data-testid="team-badge"]')
+  }
+
+  it('is absent for a personal note', async () => {
+    await open(note())
+    expect(teamBadge()).toBeNull()
+  })
+
+  it('shows the team id for a team-shared note', async () => {
+    await open(note({ team_id: 501 }))
+    expect(teamBadge()!.textContent).toContain('501')
+  })
+
+  it('updates when a different note opens', async () => {
+    const { opened } = await open(note({ team_id: 501 }))
+
+    opened.value = note({ ref: 'NOTE-7', title: 'Architecture notes', team_id: null })
+    flushSync()
+    await editorArrived(host)
+
+    expect(teamBadge()).toBeNull()
   })
 })

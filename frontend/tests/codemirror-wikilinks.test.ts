@@ -61,6 +61,7 @@ function note(overrides: Partial<Note> = {}): Note {
     path: '',
     created_at: '2026-08-09T09:00:00+00:00',
     updated_at: '2026-08-09T09:00:00.000000+00:00',
+    team_id: null,
     ...overrides,
   }
 }

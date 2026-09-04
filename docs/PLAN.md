@@ -85,8 +85,9 @@ underway since.
   auth carries the MVP, which is the path the primary actor uses anyway.
 - **Attachments and images.** Text-only markdown in Postgres. Object storage when genuinely needed
   (Q35). **Now under active build** — R14, BREADBOARD.md.
-- **Per-note sharing and ACLs.** Owner-only, mirroring pandan's pre-M5 stance (Q8). **Under
-  investigation post-MVP** as part of an org/team model spike — R15, BREADBOARD.md.
+- **Per-note sharing and ACLs.** Owner-only, mirroring pandan's pre-M5 stance (Q8) — still true for an
+  *explicit* per-note share. **Team-default access is now under active build** — R16, BREADBOARD.md,
+  ADR 0011, following the org/team spike (R15) and pandan's own Teams milestone shipping.
 - **Real-time collaboration and local-first sync.** Poll/refresh, per pandan ADR 0007. Local-first is
   a different and much harder product (Q22). Still out; no post-MVP epic touches this.
 - **A graph view** (Q36) and **an embedded live board view** (Q37). Both become cheap once

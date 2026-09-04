@@ -18,6 +18,7 @@ from app.models.note import (
 )
 from app.models.note_link import NoteLink
 from app.models.note_version import NoteVersion
+from app.models.team import Team
 from app.models.user import User
 
 __all__ = [
@@ -29,5 +30,6 @@ __all__ = [
     "Note",
     "NoteLink",
     "NoteVersion",
+    "Team",
     "User",
 ]

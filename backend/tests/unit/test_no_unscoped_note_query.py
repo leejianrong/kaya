@@ -232,12 +232,14 @@ def test_the_sanctioned_query_exists_and_is_scoped_on_the_owner() -> None:
     """The other half. Without this, deleting ``notes_owned_by`` makes the guard above pass.
 
     The literal is brittle on purpose: this is the one line in the package whose exact shape is the
-    contract, and an edit to it should stop and be argued for rather than land quietly.
+    contract, and an edit to it should stop and be argued for rather than land quietly. It changed
+    once, deliberately, for ADR 0011/R16.3: the caller's own team ids join the clause as an ``OR``,
+    never a replacement — the owner equality this literal pins is still there, unconditionally.
     """
     source = SCOPING_MODULE.read_text(encoding="utf-8")
 
     assert note_queries(source) != [], "the sanctioned query moved; this guard now proves nothing"
-    assert "select(Note).where(Note.owner_id == principal.id)" in source
+    assert "or_(Note.owner_id == principal.id, Note.team_id.in_(team_ids))" in source
 
 
 def test_the_guard_catches_every_shape_of_the_bug() -> None:
@@ -264,6 +266,7 @@ SAMPLE_ARGUMENTS: dict[object, object] = {
     int: 7,
     Iterable[str]: ("a value nothing here asserts against",),
     Iterable[int]: (7,),
+    frozenset[int]: frozenset({1, 2}),
 }
 """One sample value per parameter annotation the scoping module's factories use.
 
@@ -431,6 +434,70 @@ def test_the_allow_list_is_consulted_rather_than_decorative() -> None:
             f"`{name}` is owner-scoped now, so its UNSCOPED_BY_DESIGN entry is stale and is "
             "silently excusing a rule it no longer needs excusing from. Delete the entry."
         )
+
+
+def team_id_in_predicate(statement: Select) -> bool:
+    """Whether ``statement``'s ``WHERE`` contains ``note.team_id IN (<bound values>)``.
+
+    ADR 0011/R16.3's own widening, checked directly rather than left to pass by accident because
+    the pre-existing owner equality is still present alongside it. This is the "edit with an
+    argument in it" ``owner_predicates``'s docstring named in advance for the day an ``IN`` form was
+    needed — a sibling check rather than a change to ``owner_predicates`` itself, because the two
+    ask different questions: one proves the owner clause survived, this one proves the team clause
+    is real and not decoration.
+    """
+    where = statement.whereclause
+    if where is None:
+        return False
+    for element in iterate(where):
+        if not isinstance(element, BinaryExpression) or element.operator is not operators.in_op:
+            continue
+        left = element.left
+        if (
+            isinstance(left, ColumnClause)
+            and left.name == "team_id"
+            and left.table is not None
+            and getattr(left.table, "name", None) == Note.__tablename__
+        ):
+            return True
+    return False
+
+
+def test_notes_owned_by_widens_to_team_default_without_losing_owner_scoping() -> None:
+    """ADR 0011/R16.3: the statement `GET /api/v1/notes` composes onto gains an `OR` branch, and
+    the pre-existing owner clause is still there, unconditionally — not replaced, not narrowed."""
+    factories = note_selector_factories()
+    statement = statement_from("notes_owned_by", factories["notes_owned_by"])
+
+    assert owner_predicates(statement) != [], (
+        "the team-default widening must never remove the owner equality — that would turn "
+        "`notes_owned_by` into a query no caller's own notes are guaranteed to appear in"
+    )
+    assert team_id_in_predicate(statement), (
+        "notes_owned_by's SAMPLE_ARGUMENTS team_ids did not produce a `note.team_id IN (...)` "
+        "clause — the widening this file's docstring anticipated is missing or was written "
+        "differently than ADR 0011/R16.3 describes"
+    )
+
+
+def test_an_empty_team_ids_set_is_the_pre_r16_statement_in_every_case_that_matters() -> None:
+    """The default (`team_ids=frozenset()`) must reproduce every existing caller's behaviour.
+
+    Not a claim about SQL text — `.in_(())` and a plain owner equality are not the same string —
+    but about what the statement can ever match: an empty `IN` matches nothing, ever, so the `OR`
+    branch is dead weight rather than a behaviour change for the overwhelming majority of callers
+    who belong to no team.
+    """
+    from app.auth.authorization import notes_owned_by
+
+    statement = notes_owned_by(ALICE)
+
+    assert owner_predicates(statement) != [], "the owner clause must be present with no team_ids"
+    assert team_id_in_predicate(statement), (
+        "the OR's second branch should still be `team_id IN (...)`, just with an empty operand — "
+        "its presence is what proves this is the same code path as a caller who does belong to a "
+        "team, not a special-cased one"
+    )
 
 
 def test_the_owner_scoping_probe_catches_every_shape_of_the_bug() -> None:

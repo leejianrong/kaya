@@ -237,6 +237,11 @@ they are named here rather than written inline at three call sites."""
 CONTENT_FIELDS = (TITLE_FIELD, BODY_FIELD, PATH_FIELD)
 """The three columns a `PATCH` may write, in the order a refusal lists them."""
 
+TEAM_ID_FIELD = "team_id"
+"""ADR 0011/R16.6's one new request field, on `create_note` alone — `NoteUpdate` gains no way to
+move a note into or out of a team after the fact, because nothing has asked for that yet and
+`NoteCreate`'s own field is the only one `backend/app/api/schemas.py` defines."""
+
 EXPORT_NOUN = "export"
 EXPORT_ENVELOPE = "exports"
 """R12's third noun, alongside ``note`` and ``link``. `note export` is a new **entity** kind for the
@@ -367,6 +372,7 @@ class KayaClient:
         *,
         body: str | None = None,
         path: str | None = None,
+        team_id: int | None = None,
     ) -> Payload:
         """``POST /api/v1/notes``. The note comes back whole, with the ref Postgres allocated.
 
@@ -376,12 +382,22 @@ class KayaClient:
         database say what an unset field is, and it keeps this method's request byte-identical to
         the minimal ``{"title": "…"}`` that `test_migration_0001` says is a complete creation.
 
+        ``team_id`` (ADR 0011, R16.6) follows the identical omit-rather-than-null rule — ``None``
+        means "a personal note", the same meaning the column's own default carries, so a caller who
+        never mentions a team sends the exact request they always sent. The API is the one place
+        membership is checked (`403` for a team the caller does not belong to); this method does not
+        pre-validate, the same "the schema shapes, it does not authorize" line `NoteCreate`'s own
+        docstring draws.
+
         The response is a `201` carrying the full note plus a ``Location`` header. The header is
         ignored on purpose: it holds ``/api/v1/notes/NOTE-12``, which is the ``ref`` the body
         already carries, and a client that read identity out of a header would have a second way to
         learn a note's name (ADR 0008 allows one).
         """
-        return self._note(self._request("POST", NOTES_PATH, self._content(title, body, path)))
+        content = self._content(title, body, path)
+        if team_id is not None:
+            content[TEAM_ID_FIELD] = team_id
+        return self._note(self._request("POST", NOTES_PATH, content))
 
     def update_note(
         self,

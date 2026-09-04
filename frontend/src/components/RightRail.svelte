@@ -37,6 +37,14 @@
 </script>
 
 <div class="right-rail">
+  {#if note?.team_id != null}
+    <!-- ADR 0011, R16.7: sits above the tab strip rather than inside either tab's pane, since it
+         is a fact about the note itself — not about its backlinks or its history — and stays
+         visible whichever tab is open. -->
+    <p class="team-note" data-testid="rail-team-badge">
+      Shared by default with team {note.team_id}
+    </p>
+  {/if}
   <div class="tabs" role="tablist" aria-label="Note details">
     <button
       type="button"
@@ -76,6 +84,13 @@
     min-height: 0;
     background: var(--surface-2);
     border-left: 1px solid var(--border);
+  }
+
+  .team-note {
+    flex: none;
+    margin: 0.75rem 0.5rem 0;
+    color: var(--muted);
+    font-size: 0.75rem;
   }
 
   .tabs {

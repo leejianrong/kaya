@@ -18,6 +18,13 @@ already shipped and tested. And the exact per-item letter/number citations on al
 (`A1`, `B1–B3`, `G1–G3+G5`) are historical color from the lost draft, not something this file reproduces
 letter-for-letter — the shape below is authored fresh, grounded in the current codebase.
 
+**Update (2026-09-02).** The "lost" draft wasn't lost — it was recovered from an uncommitted working
+tree and committed as [`docs/roadmap/DETAIL.md`](DETAIL.md), alongside its own `FRAME.md`/`SHAPING.md`.
+It uses its own R0/R5.1–R5.3 numbering (pre-dating this file's R10–R15 renumbering) and carries detail
+this reconstruction couldn't recover verbatim, including the exact `A`/`B`/`G`-lettered fit checks cited
+above. Treat this file as the current record for what shipped; `DETAIL.md` as the fuller historical
+account of how it was shaped.
+
 ## R10: Graph view — shipped (KAN-1050)
 
 `GET /api/v1/graph` (`backend/app/api/graph.py`) returns every note the caller owns and every resolved
@@ -129,11 +136,53 @@ by it.
 **Cards:** KAN-1067 (upload path), KAN-1068 (authenticated render), KAN-1069 (auth guardrail proof,
 `[mutate]`).
 
-## R15: Org/team model — investigation only (KAN-1048)
+## R15: Org/team model spike — done (KAN-1048)
 
-No shape yet — this is a spike, not a build. The questions on the table: which tables gain a team/org
-scope column: does `authorize_note`'s owner check become a team-membership check; how the SPA's
-credential model (one PAT, one `sessionStorage` token) changes if a PAT can act on behalf of a team; and
-what pandan#322's eventual answer needs to hand kaya for any of this to be buildable. This section gets
-filled in once the spike reports back — the card is the source of truth until then (`pandan get
-KAN-1048 --full`).
+The investigation this section originally deferred to. `KAN-1048` mapped every kaya-side touchpoint an
+org/team model would need (file:line, across `app/auth/{authorization,principal,resolver}.py`,
+`app/models/{note,user}.py`, `app/api/{notes,graph,embeds}.py`, `note_links.py`, `frontend/src/lib/
+auth.ts`) and left seven open questions for a future design pass, with "pandan Milestone 9 landing" as
+the last blocker. Both pandan#322 (design) and pandan#323 (self-host audit) closed 2026-09-01, and
+pandan's Teams milestone (`V65`–`V70`, `EPIC-138`) has since shipped in full. R16 below is that design
+pass.
+
+## R16: Team-scoped notes (KAN-1082–1088, ADR 0011)
+
+**Requirement.** A note can be shared with everyone on a pandan `team` by default, the same way a
+pandan board is, without inventing a second authorization vocabulary or a second per-note sharing
+mechanism kaya doesn't have yet (Q8 stays owner-only otherwise).
+
+**Decision, in one line.** Mirror pandan ADR 0021's shape — a nullable `team_id`, team membership as a
+*default* grant — and make the pandan dependency it introduces soft, not hard: your own notes are never
+gated on pandan being reachable; a teammate's team-shared note is. Full reasoning, the fork-by-fork
+decision record, and the fit-check matrix are in [ADR 0011](../adr/0011-team-scoped-notes.md) and the
+`kaya-teams-decision` artifact (published 2026-09-03) — not repeated here.
+
+**Shape**
+
+| Part | Mechanism |
+|------|-----------|
+| Team mirror | New `team` table, `id` only (no name, no roles — same staleness reasoning as the existing `user` mirror), JIT-inserted, `ON DELETE RESTRICT`. |
+| Schema | Nullable `note.team_id → team.id`. Additive; every existing note is `team_id = NULL`, unchanged. |
+| Membership | New `TeamAccessResolver` (`app/auth/`), shaped like `PrincipalResolver`: calls pandan's `GET /api/v1/teams` for the caller's bearer, cached on `sha256(token)` with `PrincipalCache`'s TTL split. Never holds a Postgres connection while calling out (same rule as `/links`). |
+| Authorization | `authorize_note` gains a second rung — owner, then team-default, then deny (two steps, not pandan's four: kaya has no per-note explicit share to slot in). The AST guard (`test_no_unscoped_note_query.py`) widens to accept the team-membership subquery it already anticipates. |
+| Failure mode | Soft. Pandan unreachable → `TeamAccessResolver` resolves "no memberships known" → a team-shared note behaves as not-found for a non-owner, exactly like an unresolved cross-link. The owner's own access never depends on this call succeeding. |
+| Note creation | `POST /api/v1/notes` gains optional `team_id`, validated the same way pandan validates `POST /api/v1/boards`'. |
+| Wikilinks | No change. `note_link` resolution already scopes through whatever the visible-notes query returns — verified, not assumed (a `KAN-1048` open question, now closed). |
+| CLI / MCP | `kaya note create --team <id>` (`kaya-client` 0.16.0, `kaya-cli` 0.15.0). **No `kaya team list`**: pandan's own CLI already ships `pandan team list` (M9 V69, KAN-1058), reachable with the identical PAT, so kaya duplicating it would be the same "no local team CRUD" principle stopping one step short — not just no writes, no read-list surface either when one already exists. No new MCP tool or tool parameter: the read tools (`get_note`/`list_notes`) surface `team_id` automatically, since `KayaClient`'s response passthrough means a field the backend added reaches a caller's payload with zero code changed here (proven, not assumed — `test_get_note_surfaces_team_id_with_no_code_change_here`); `create_note`'s MCP tool stays without a `team` parameter, a deliberate narrower-than-CLI cut consistent with `mcp/README.md`'s MCP ⊆ CLI direction. |
+| SPA | A read-only team badge on the note header and the right rail (the rail KAN-568 built). Creating/moving a note into a team from the browser is a stretch goal, not required. |
+
+**Affordances**
+
+| Affordance | Place | Wires to |
+|------------|-------|----------|
+| `kaya note create --team <id>` | CLI | `POST /api/v1/notes` |
+| Team badge | SPA note header + right rail | `GET /api/v1/notes/{ref}` (carries `team_id`) |
+
+**Fit-check.** Purely additive migration (no existing behavior changes — `team_id IS NULL` is a no-op
+everywhere). No new authorization vocabulary — team roles are irrelevant to kaya, since a note has no
+notion of read vs. write beyond owner-or-not today. No MCP tool count change assumed until measured.
+
+**Cards:** `KAN-1082` (schema), `KAN-1083` (`TeamAccessResolver`), `KAN-1084` (authorization rung +
+guard widening), `KAN-1085` (`[mutate]` guardrail proof), `KAN-1086` (notes API), `KAN-1087` (CLI/MCP),
+`KAN-1088` (SPA badge). All under `EPIC-136`.

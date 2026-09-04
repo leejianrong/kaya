@@ -44,11 +44,18 @@ NOTE_PAYLOAD_KEYS = [
     "path",
     "created_at",
     "updated_at",
+    "team_id",
 ]
 """Every key in a note payload, in order. Brittle on purpose: this is a published contract, and an
 edit to this list should have to be argued for in a diff rather than land as a side effect of a
 schema change. ``owner_id`` is absent by ADR 0008's reasoning (it is always the caller, so it
-carries no information), and ``search_vector`` by KAN-557's — see the module docstring."""
+carries no information), and ``search_vector`` by KAN-557's — see the module docstring.
+
+``team_id`` (ADR 0011, R16.5, `KAN-1086`) is on the wire, unlike ``owner_id``: it *does* carry
+information a reader doesn't already have — which of the caller's possibly-several teams, if any,
+this note defaults to sharing with. It was withheld from `KAN-1082` (schema-only) through `KAN-1084`
+(authorization only) and joins the payload only once `create_note` can actually set it to something
+other than ``NULL``."""
 
 NOT_ON_THE_WIRE = {"owner_id", "search_vector"}
 """Columns of ``note`` deliberately kept out of the payload, each for a reason written down in

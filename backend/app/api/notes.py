@@ -36,7 +36,7 @@ Deliberately absent: paging of any shape.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.concurrency import enforce_precondition
@@ -50,8 +50,18 @@ from app.api.schemas import (
     NoteVersionRead,
 )
 from app.api.search import SearchTerm
-from app.auth import Principal, get_principal, notes_matching, notes_owned_by
+from app.auth import (
+    Principal,
+    TeamAccessResolver,
+    ensure_team_mirrored,
+    error_body,
+    get_principal,
+    get_team_access_resolver,
+    notes_matching,
+    notes_owned_by,
+)
 from app.db import get_session
+from app.integrations.dependencies import CallerBearer
 from app.models import Note
 from app.note_links import reconcile_note_links, resolve_pending_note_links
 from app.note_versions import cut_version, note_versions
@@ -60,6 +70,7 @@ router = APIRouter(prefix="/api/v1", tags=["notes"])
 
 CurrentPrincipal = Annotated[Principal, Depends(get_principal)]
 DbSession = Annotated[Session, Depends(get_session)]
+CurrentTeamResolver = Annotated[TeamAccessResolver, Depends(get_team_access_resolver)]
 
 
 @router.post(
@@ -72,6 +83,8 @@ def create_note(
     principal: CurrentPrincipal,
     session: DbSession,
     response: Response,
+    bearer: CallerBearer,
+    team_resolver: CurrentTeamResolver,
 ) -> NoteRead:
     """Create a note owned by the caller.
 
@@ -81,6 +94,16 @@ def create_note(
 
     The owner is the resolved principal and is not a request field. There is no route by which a
     caller can file a note against somebody else's UUID.
+
+    **``team_id`` (ADR 0011, R16.5) is validated before anything is written.** The creating
+    principal must be a member of that team — checked live, before this session has touched the
+    database, the same "nothing has queried yet, so nothing to release" reasoning ``list_notes``
+    uses — mirroring how pandan validates `POST /api/v1/boards`' own `team_id`. A caller who is not
+    a member gets `403`, never a silent drop of the field: `NoteCreate`'s `extra="forbid"` already
+    means a field this route *doesn't* validate is a caller mistake worth surfacing, and this one is
+    no different. Once confirmed, ``ensure_team_mirrored`` makes the id addressable — the `team`
+    mirror row this note's foreign key needs might not exist yet, the same bootstrap problem
+    ``app/auth/mirror.py``'s user mirror solves for `owner_id`.
 
     KAN-562: the body's ``[[KAN-n]]`` / ``[[EPIC-n]]`` wikilinks are recorded in ``note_link`` in
     the same transaction as the note itself, via ``reconcile_note_links``. The explicit ``flush()``
@@ -99,6 +122,15 @@ def create_note(
     edit. Every note gets one, even ``NoteCreate``'s default empty body — "on every body write, no
     heuristic" (BREADBOARD.md's R13) draws no exception for a body that happens to be ``""``.
     """
+    if payload.team_id is not None:
+        team_ids = team_resolver.member_of(bearer) if bearer is not None else frozenset()
+        if payload.team_id not in team_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=error_body("team_forbidden", "you are not a member of this team"),
+            )
+        ensure_team_mirrored(session, payload.team_id)
+
     note = Note(owner_id=principal.id, **payload.model_dump())
     session.add(note)
     session.flush()
@@ -114,7 +146,13 @@ def create_note(
 
 
 @router.get("/notes", summary="List the caller's notes, or search them with ?q=")
-def list_notes(principal: CurrentPrincipal, session: DbSession, term: SearchTerm) -> NoteList:
+def list_notes(
+    principal: CurrentPrincipal,
+    session: DbSession,
+    term: SearchTerm,
+    bearer: CallerBearer,
+    team_resolver: CurrentTeamResolver,
+) -> NoteList:
     """Every note the caller owns, newest first — or, with ``?q=``, the ones that match it.
 
     Scoped in SQL by ``notes_owned_by``, not filtered afterwards: SLICES §V1 asks for another user's
@@ -122,6 +160,12 @@ def list_notes(principal: CurrentPrincipal, session: DbSession, term: SearchTerm
     happened. Composing here cannot lose that clause (KAN-535), and ``notes_matching`` composes onto
     the very same statement, so KAN-558's "another user's matching note must never appear" is that
     one clause rather than a second implementation of it.
+
+    **Team membership is resolved before this session has run a single query** (ADR 0011, R16.3) —
+    unlike the single-note path in ``app/api/refs.py``, there is no owner check to fail first and
+    defer on, since a list has to know every team it should widen for before it can build the
+    ``WHERE``. No connection is held across the call for the same reason it never is in
+    ``resolve_note``: nothing here has queried yet, so there is nothing to release.
 
     **Two orders, because they answer two different questions, and each one is deterministic.**
 
@@ -145,10 +189,11 @@ def list_notes(principal: CurrentPrincipal, session: DbSession, term: SearchTerm
     when one does. It is deliberately not added *with* search either — a `limit` would need a
     documented interaction with ranking, and that is a second undiscussed contract.
     """
+    team_ids = team_resolver.member_of(bearer) if bearer is not None else frozenset()
     statement = (
-        notes_owned_by(principal).order_by(Note.updated_at.desc(), Note.id.desc())
+        notes_owned_by(principal, team_ids).order_by(Note.updated_at.desc(), Note.id.desc())
         if term is None
-        else notes_matching(principal, term)
+        else notes_matching(principal, term, team_ids)
     )
     return NoteList(notes=[NoteRead.of(note) for note in session.scalars(statement)])
 

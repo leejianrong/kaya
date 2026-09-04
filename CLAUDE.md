@@ -15,11 +15,12 @@ on an adapter.
 CLI, V3 SPA editor, V4 search, V5 cross-linking including wikilink autocomplete, V6 MCP — all six MCP
 tools work); `docs/PLAN.md`'s R0–R9 are a closed, frozen record. Work now underway is **post-MVP**,
 tracked as R10 onward in `docs/PLAN.md` §Beyond the MVP and shaped in
-[`docs/roadmap/BREADBOARD.md`](docs/roadmap/BREADBOARD.md): a graph view and an embedded board view have
-shipped, export/import/version-history/attachments are being built, an org/team model is under
-investigation (spike, no decision yet), and an independent Fly.io deploy is scoped but **deliberately
-parked** — the maintainer's explicit call, not a blocker. Pandan board 18 ("kaya — Notes") is the
-day-to-day source of truth for what's in flight; read it before trusting this paragraph's snapshot.
+[`docs/roadmap/BREADBOARD.md`](docs/roadmap/BREADBOARD.md): a graph view, an embedded board view,
+export/import, version history, attachments, and an independent Fly.io deploy have all shipped
+(EPIC-135's own DNS/TLS finishing touch is the one piece still open, needs-human on a domain the
+maintainer chose to defer). An org/team model (R16, ADR 0011) is now under active build, unblocked once
+pandan shipped its own Teams milestone. Pandan board 18 ("kaya — Notes") is the day-to-day source of
+truth for what's in flight; read it before trusting this paragraph's snapshot.
 **The published binary lags `main`** — check `gh release list --repo leejianrong/kaya` and each
 package's `pyproject.toml` version before trusting a specific number quoted in any doc, this file
 included. Full slice-by-slice history, every measured number, and the KAN-card provenance behind each

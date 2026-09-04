@@ -83,6 +83,10 @@ k3d: ## Apply deploy/k8s to a local k3d cluster and prove the pod serves
 k3d-down: ## Delete the local k3d cluster
 	@scripts/k3d-up.sh --down
 
+.PHONY: fly-deploy
+fly-deploy: ## Deploy kaya to Fly.io (needs FLY_API_TOKEN — see docs/deploy/fly.md)
+	@scripts/fly-deploy.sh
+
 .PHONY: db-reset
 db-reset: ## Stop Postgres and DELETE its volume
 	@docker compose down -v
