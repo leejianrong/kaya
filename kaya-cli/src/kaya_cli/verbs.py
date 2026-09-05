@@ -1,5 +1,5 @@
-"""The verbs: `note {list,get,create,edit,move,delete}`, `config {set,show,path}`, `links`,
-`backlinks`, and bare `kaya`.
+"""The verbs: `note {list,get,create,edit,move,delete}`, `config {set,show,path}`,
+`context {install,uninstall,status,print}`, `links`, `backlinks`, and bare `kaya`.
 
 ### What a verb is allowed to be
 
@@ -39,6 +39,14 @@ on the machine where it is needed.
 `tests/test_verbs.py` asserts the union of the two matches the parser exactly, and that they are
 disjoint, so a word cannot be added to one table, forgotten in the other, and silently dispatch to
 whichever was checked first.
+
+**KAN-1198 joins `config`'s three verbs in `LOCAL_VERBS` for the identical reason.**
+`context install`/`uninstall`/`status` read and write `.claude/settings.json` and resolve kaya's
+own credential, but never open a `KayaClient` session of their own — `context print` is the one
+context verb that does (it calls `client.recent_notes`, same as bare `kaya`), so it is the one
+context row in `VERBS`. See `kaya_cli.context`'s module docstring for the hook mechanism itself;
+`--hook` mode bypasses both tables entirely (`__main__.main` dispatches it directly, before
+`verbs.run`).
 
 ### The ref is passed through untouched, on six verbs now
 
@@ -97,6 +105,7 @@ from kaya_client import (
     write_settings,
 )
 
+from kaya_cli import context
 from kaya_cli.parsing import resolve_body
 
 NOTE = "note"
@@ -144,6 +153,16 @@ CONFIG = "config"
 SET = "set"
 SHOW = "show"
 PATH = "path"
+
+CONTEXT = "context"
+INSTALL = "install"
+UNINSTALL = "uninstall"
+STATUS = "status"
+PRINT = "print"
+"""R18/KAN-1198's ambient `SessionStart` hook (`kaya-cli/context.py`): `context
+{install,uninstall,status,print}`. `print` rather than pandan's own `show` — see `context.py`'s
+module docstring for why `show` was unavailable (`config show` already owns that word, and
+`mcp/tests/test_cli_parity.py`'s reader refuses two verbs sharing a bare word)."""
 
 BARE: tuple[None, None] = (None, None)
 """ADR 0005 §contract 7's bare `kaya`, as a row in ``VERBS`` like everything else (KAN-549).
@@ -298,6 +317,7 @@ VERBS: Mapping[tuple[str | None, str | None], Verb] = {
     (BACKLINKS, None): _backlinks,
     (EXPORT_ALL, None): _export_all,
     (IMPORT_ALL, None): _import_all,
+    (CONTEXT, PRINT): context.cmd_print,
 }
 """``(command, subcommand)`` → the client method that answers it, for the verbs that need a session.
 
@@ -310,6 +330,9 @@ LOCAL_VERBS: Mapping[tuple[str, str], LocalVerb] = {
     (CONFIG, SET): _config_set,
     (CONFIG, SHOW): _config_show,
     (CONFIG, PATH): _config_path,
+    (CONTEXT, INSTALL): context.cmd_install,
+    (CONTEXT, UNINSTALL): context.cmd_uninstall,
+    (CONTEXT, STATUS): context.cmd_status,
 }
 """The verbs that never open a session. See this module's docstring for why they are a second table.
 
