@@ -225,3 +225,105 @@ ship independently: kaya's half being done here does not block or require pandan
 
 **Cards:** `KAN-1156` (shared `resolvePandanHref`), `KAN-1157` (the nav link + its own test coverage),
 `KAN-1158` (this discovery: coverage audit + this section). All under `EPIC-161` (`KAY-E12`).
+
+## Shaping pass: R17+ (EPIC-163, KAY-E13)
+
+Board 18 was fully drained on 2026-09-05 (1 `todo` blocked on pandan's own unshipped work, 1
+`in_progress` parked needs-human, everything else `done`). `EPIC-163`'s own description named the
+Discovery pair above as "an easy first R17 slice" — by shaping time that pair had already shipped
+under its own unnumbered heading, so it wasn't available to claim. This section is the shaping pass
+`EPIC-163` exists for: cross-referencing `docs/PLAN.md` §Scope, `docs/SLICES.md` §Out of scope, and
+`docs/QUESTIONS.md` turned up exactly two items marked genuinely open (not permanently rejected, not
+parked by explicit maintainer choice): **a published docs site** (Q34) and **ambient session context**
+(ADR 0005, ¶"Ambient session context (pandan V48) is not in the MVP... Post-MVP", deferred specifically
+until kaya held "enough notes for ambient state to be worth injecting" — now true, since kaya dogfoods
+its own retro notes and design-decision artifacts). Both have a working, documented precedent in the
+pandan repo to mirror rather than invent: `zensical.toml` + `docs-tooling/` + `.github/workflows/
+docs.yml` for the site, `pandan_cli/context.py` + `pandan_cli/skills/pandan/SKILL.md` for ambient
+context.
+
+## R17: A published docs site (Q34)
+
+**Requirement.** kaya's planning corpus (`PLAN.md`, the ADR chain, `ENGINEERING_NOTES.md`, this file,
+`QUESTIONS.md`, `SLICES.md`) is the MVP's documentation and stays exactly where it is — engineering
+history, not user-facing. What's missing is the other half: install, CLI usage, agent/MCP setup and
+self-hosting, reachable as a browsable site rather than only as files in the repo. Same requirement
+pandan settled at its own Q34-equivalent (`KAN-173`), same answer.
+
+**Key finding that shrinks the scope.** Zensical builds *everything* under `docs_dir` and has no
+`exclude_docs` option — an unlisted file is unlisted-but-reachable, not excluded. Pandan's fix was
+pointing `docs_dir` at a subtree (`docs/guide`) rather than the repo's whole `docs/`, leaving every
+planning file exactly where it is and every existing `docs/adr/...` link in `CLAUDE.md` and elsewhere
+untouched. Kaya copies that shape exactly: new content lives under `docs/guide/`, nothing under
+`docs/{PLAN.md,SLICES.md,QUESTIONS.md,ENGINEERING_NOTES.md,adr/,roadmap/}` moves. A link from a guide
+page to a planning doc must be an absolute GitHub URL — a relative `.md` link out of the build tree
+fails `--strict`, same constraint pandan's own config documents.
+
+**Shape**
+
+| Part | Mechanism |
+|------|-----------|
+| Toolchain | A new `docs-tooling/` uv project (`tool.uv.package = false`, mirroring pandan's), pinning `zensical` in its own lockfile so the docs build doesn't touch `backend`/`frontend`/`kaya-client`/`kaya-cli`/`mcp`'s environments. |
+| Config | `zensical.toml` at the repo root: `docs_dir = "docs/guide"`, `site_dir = "site"` (gitignored, CI rebuilds fresh every run), `site_url = "https://leejianrong.github.io/kaya/"`. Palette pinned to kaya's Zinc/Teal tokens (KAN-1169) via `extra_css`, `primary`/`accent` = `"custom"` so no built-in Material color fights `frontend/src/app.css`. Two `[[project.theme.palette]]` blocks keyed by `media` (light/dark), matching `app.css`'s own `prefers-color-scheme` default. |
+| Nav | Explicit `nav` list sized to kaya's actual five-package surface — Get started, CLI, Agents & MCP, Self-hosting, Reference, About — not pandan's eleven-section nav copied wholesale; kaya has no boards/cards/dashboard tutorial to write. |
+| CI: build check | A new `docs.yml` workflow, `Docs build check` job running `uv run --project docs-tooling --frozen zensical build --strict --clean` from the repo root on every PR and every push — gate-safe, same philosophy as `check`'s other jobs: it always runs and reports so a required check never hangs at "Expected". |
+| CI: publish | A second job, `Deploy docs to GitHub Pages`, gated on `github.event_name != 'pull_request'`, `needs: build`, using `actions/upload-pages-artifact` + `actions/deploy-pages`. `permissions: pages: write, id-token: write` added to the workflow only (least-privilege, unchanged everywhere else). |
+| One-time setup | GitHub repo setting (Settings → Pages → Source = "GitHub Actions") — a maintainer action outside CI, confirmed with the maintainer before flipping (it makes the docs site publicly reachable). Until it's set, the build-check job still runs and gates PRs; only the deploy step needs it. |
+
+**Affordances**
+
+| Affordance | Place | Wires to |
+|------------|-------|----------|
+| Browsable docs site | `https://leejianrong.github.io/kaya/` | Static, built from `docs/guide/**` |
+| Docs build-check | Every PR | `docs.yml`'s `build` job |
+
+**Fit-check.** No new backend route, no new package's worth of runtime code — this is a CI/docs-only
+addition, so ADR 0007's version-bump guard does not apply (no `[project]` table changes) and no
+package directory's CI jobs turn on by the "new directory" convention, because `docs-tooling/` isn't a
+shipped package (mirrors pandan's own `tool.uv.package = false` reasoning).
+
+**Cards:** `KAN-1194` (toolchain + config + nav skeleton + CI build-check job), `KAN-1195` (Get-started
++ CLI guide pages), `KAN-1196` (Agents & MCP guide pages), `KAN-1197` (Self-hosting + Reference + About
+pages + GitHub Pages publish job, pending the maintainer's one-time repo setting). All under
+`EPIC-172` (`KAY-E16`).
+
+## R18: Ambient session context (pandan V48, ADR 0005)
+
+**Requirement.** An agent session that starts inside kaya's repo, or configured to work against a
+kaya deployment, should already know the caller's recent notes and how many they hold — the same
+value pandan's `V48`/`KAN-431` shipped for board state — instead of needing to call for it as its
+first action.
+
+**Key finding that shrinks the scope.** The payload half of this already shipped, incidentally, as
+part of V2b: bare `kaya` (`kaya_client/overview.py`, KAN-549) already prints the executable, a
+one-line description, `RECENT_NOTES` recent notes and the count aggregate, and exits `0`. This epic
+does not build that payload again — it wires an existing, tested output into a session's start rather
+than requiring the agent to invoke it. What's actually missing, mirroring the gap `pandan_cli/
+context.py` + `pandan_cli/skills/pandan/SKILL.md` closed on the pandan side, is (1) a hook that runs
+`kaya` at `SessionStart` and (2) a packaged skill documenting how an agent drives kaya at all — kaya
+ships no skill today, unlike pandan.
+
+**Shape**
+
+| Part | Mechanism |
+|------|-----------|
+| Hook command | `kaya install-context` / `kaya uninstall-context` (new `kaya-cli` verbs, `verbs.py` → `kaya-client`, no new client payload — both idempotent, a no-op with a clear message when no credential/API URL is configured). Installs a Claude Code `SessionStart` hook entry (project `.claude/settings.json`-shaped, written the way `update-config`-style tooling writes one) that runs bare `kaya` and feeds its stdout into the session. |
+| Soft-fail | Bounded timeout on the hook's own invocation (mirrors `KAYA_PANDAN_*_TIMEOUT_SECONDS`'s existing pattern — a new, small `Settings`-free constant local to the hook script, since this runs client-side, not through the backend) — kaya unreachable, no token set, or a slow cold start must never block session start. A soft-fail here is a **new** guarantee, not a reuse of ADR 0003's (that ADR covers kaya-the-server tolerating pandan being down; this is kaya-the-client-side-hook tolerating kaya itself being down). |
+| Packaged skill | `kaya-cli/skills/kaya/SKILL.md`, checked in (mirrors `pandan_cli/skills/pandan/SKILL.md`'s in-repo placement) — how an agent authenticates, reads/writes/searches notes, and reads wikilinks/backlinks through the CLI, with an honest "known gaps" section if any MCP-only or CLI-only asymmetry exists (`mcp/README.md`'s MCP ⊆ CLI direction says which way to check). |
+| Guardrail proof | `[mutate]`: break the hook's soft-fail path (point it at an unreachable API URL, or truncate its timeout to 0), confirm session start is not blocked and the failure is visible but non-fatal, restore. Same mutation-testing discipline as R16.4/KAN-1085. |
+
+**Affordances**
+
+| Affordance | Place | Wires to |
+|------------|-------|----------|
+| `kaya install-context` / `kaya uninstall-context` | CLI | writes/removes a `SessionStart` hook entry |
+| Packaged skill | `kaya-cli/skills/kaya/SKILL.md` | read by any agent harness that discovers skills, same as pandan's |
+
+**Fit-check.** No `render()` signature change (ADR 0005 frozen contract untouched) — the hook shells
+out to the existing bare-invocation path rather than adding a fifth `render()` step. No new backend
+route, no new `kaya-client` payload shape. `kaya-cli` version bumps (ADR 0007) for the two new verbs.
+
+**Cards:** `KAN-1198` (`install-context`/`uninstall-context` verbs + hook-writing logic), `KAN-1199`
+(bounded-timeout soft-fail wiring, client-side), `KAN-1200` (packaged skill,
+`kaya-cli/skills/kaya/SKILL.md`), `KAN-1201` (`[mutate]` guardrail proof). All under `EPIC-173`
+(`KAY-E17`).
