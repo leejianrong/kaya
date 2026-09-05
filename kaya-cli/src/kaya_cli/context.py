@@ -65,6 +65,7 @@ this build's version") and carries the same meaning with no collision.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import shlex
@@ -76,6 +77,9 @@ from typing import Any
 import httpx
 from kaya_client import RECENT_NOTES, KayaClient, MissingCredential, Payload, UsageError
 from kaya_client.config import TOKEN_SET, TOKEN_UNSET, api_url, token
+from kaya_client.provenance import SOURCE_CHECKOUT, build_sha
+
+from kaya_cli import __version__
 
 PROG = "kaya"
 """The one console script (ADR 0007 §4, Q39) — spelled again here rather than imported from
@@ -112,6 +116,10 @@ fragment of our own command line is what makes `install` idempotent and `uninsta
 marker key is not used because the settings schema requires only `type`/`command`, and a marker key
 is not guaranteed to survive a hand round-trip of the file the way this text is."""
 
+_SKILL_RELPATH = Path("skills") / "kaya" / "SKILL.md"
+"""Where `install` lays the packaged skill down, relative to the Claude config dir — mirrors
+pandan's own `Path("skills") / "pandan" / "SKILL.md"` (KAN-1200)."""
+
 
 # --- paths -------------------------------------------------------------------------------------
 
@@ -132,6 +140,198 @@ def settings_path() -> Path:
 def _settings_arg(args: argparse.Namespace) -> Path:
     raw = getattr(args, "settings", None)
     return Path(raw).expanduser() if raw else settings_path()
+
+
+def skill_target_path() -> Path:
+    """Where `install` lays the packaged skill down."""
+    return claude_config_dir() / _SKILL_RELPATH
+
+
+def packaged_skill_path() -> Path | None:
+    """The in-repo copy of the `kaya` skill that `install` distributes, or `None` when this build
+    doesn't carry one.
+
+    The skill lives *inside* the package (`kaya_cli/skills/kaya/SKILL.md`, i.e.
+    `src/kaya_cli/skills/kaya/SKILL.md` in this repo's src layout) so a wheel picks it up as package
+    data, and the release workflow's `--add-data "kaya_cli/skills:kaya_cli/skills"` (mirroring
+    pandan's own PyInstaller invocation) carries it into the onefile too, where it unpacks under
+    `sys._MEIPASS`. Returning `None` rather than raising is deliberate: an older binary built before
+    that `--add-data` line still installs the hook, and just says the skill wasn't bundled.
+    """
+    roots: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        roots.append(Path(meipass) / "kaya_cli" / "skills")
+    roots.append(Path(__file__).resolve().parent / "skills")
+    for root in roots:
+        candidate = root / "kaya" / "SKILL.md"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+# --- skill provenance (mirrors pandan's KAN-505 stamp/compare mechanism) -------------------------
+#
+# The bug this exists to kill: comparing an installed skill against *this build's* packaged copy
+# and calling any difference "locally modified" when the packaged copy legitimately changed between
+# releases — the wrong baseline produces confident, wrong output, and the obvious response
+# (`--force-skill`) is exactly the action that then does the wrong thing (downgrades a newer skill).
+# Content comparison alone cannot supply a direction ("differs" is symmetric), so `install` writes a
+# build stamp into the copy it lays down, and comparison becomes version-aware. A stamp cannot
+# retrofit provenance onto a copy already on disk from before this mechanism existed, so `unknown`
+# is a real, permanent outcome for those and must degrade honestly rather than guess a direction.
+
+SKILL_STAMP_PREFIX = "<!-- kaya-cli: skill installed by kaya "
+SKILL_STAMP_SUFFIX = " -->"
+"""An HTML comment, deliberately **not** a YAML frontmatter key: the frontmatter is the harness's
+own skill-metadata contract (`name`/`description` drive discovery), so an unrecognised key there is
+a schema risk in a file Claude Code actually parses. An HTML comment is inert in Markdown and, as
+agent instructions, carries no imperative — it names a build, it does not tell the model to do
+anything. It goes on the **last** line so it can never displace the skill's opening framing."""
+
+SKILL_ABSENT = "absent"  # nothing installed
+SKILL_NO_PACKAGED = "no_packaged"  # this build carries no copy to compare against
+SKILL_MATCH = "match"  # byte-identical body — no question to answer
+SKILL_NEWER = "newer"  # stamped by a NEWER build: the *binary* is stale
+SKILL_OLDER = "older"  # stamped by an OLDER build: the *skill* is stale
+SKILL_MODIFIED = "modified"  # stamped by THIS build, body differs → hand-edited
+SKILL_UNKNOWN = "unknown"  # differs, direction genuinely not decidable
+
+
+def stamp_line() -> str:
+    """The one-line build stamp, e.g.
+    `<!-- kaya-cli: skill installed by kaya 0.17.0 (2f03276) -->`.
+
+    Reads `__version__`/`build_sha()` off this module's own names rather than taking them as
+    parameters, so a test drives any build's stamp the way every other seam in this module is
+    tested — `monkeypatch.setattr(context, "build_sha", ...)` / `monkeypatch.setattr(context,
+    "__version__", ...)` — rather than through an injected default argument.
+    """
+    sha = (build_sha() or "").strip()
+    return f"{SKILL_STAMP_PREFIX}{__version__} ({sha or SOURCE_CHECKOUT}){SKILL_STAMP_SUFFIX}"
+
+
+def parse_stamp(text: str) -> tuple[str, str] | None:
+    """`(version, build_sha)` from a skill body's stamp, or `None` when it has none. `build_sha` is
+    `""` for a source-checkout stamp.
+
+    Only the **last** non-empty line is considered: the stamp is something we appended, and scanning
+    the whole file would let prose inside the skill (which documents `--version` output, so it
+    genuinely contains version-shaped text) masquerade as provenance.
+    """
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines:
+        return None
+    line = lines[-1].strip()
+    if not line.startswith(SKILL_STAMP_PREFIX) or not line.endswith(SKILL_STAMP_SUFFIX):
+        return None
+    inner = line[len(SKILL_STAMP_PREFIX) : -len(SKILL_STAMP_SUFFIX)].strip()
+    version, _, rest = inner.partition(" ")
+    sha = rest.strip().lstrip("(").rstrip(")").strip()
+    if sha == SOURCE_CHECKOUT:
+        sha = ""
+    return (version, sha) if version else None
+
+
+def strip_stamp(payload: bytes) -> bytes:
+    """`payload` without its trailing stamp line — the form that is compared.
+
+    Comparison has to happen on the *body*: once `install` stamps what it writes, an unmodified
+    installed copy is no longer byte-identical to the packaged one, and a naive compare would report
+    every install as modified. Non-UTF-8 bytes are returned untouched (and will simply compare
+    unequal) rather than raising: a status command must never crash on a mangled file.
+    """
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError:
+        return payload
+    if parse_stamp(text) is None:
+        return payload
+    kept: list[str] = []
+    lines = text.split("\n")
+    dropped = False
+    for line in reversed(lines):
+        if not dropped and line.strip().startswith(SKILL_STAMP_PREFIX):
+            dropped = True
+            continue
+        kept.append(line)
+    return "\n".join(reversed(kept)).encode("utf-8")
+
+
+def _version_tuple(raw: str) -> tuple[int, ...] | None:
+    """`"0.17.0"` -> `(0, 17, 0)`; anything not purely numeric -> `None`.
+
+    `None` deliberately propagates to `SKILL_UNKNOWN`. An unparseable version is exactly the case
+    where inventing an ordering would re-create this bug one level up."""
+    parts = raw.strip().split(".")
+    try:
+        return tuple(int(part) for part in parts)
+    except ValueError:
+        return None
+
+
+def compare_skill(installed: bytes | None, packaged: bytes | None) -> tuple[str, str]:
+    """`(state, detail)` for an installed skill copy against this build's.
+
+    Pure over its two byte arguments — no filesystem, no globals besides this module's own
+    `__version__`/`build_sha()` — because this is the decision the whole card turns on, and it has
+    to be testable at every build skew without producing real binaries. `detail` is the stamped
+    build's version when one was read, else `""`.
+
+    The ordering of the branches is the honesty contract:
+
+    * identical bodies short-circuit, so a stale stamp on an unmodified copy is harmless and
+      `install` needn't rewrite the file just to refresh it;
+    * a **newer** stamp is the case a naive compare gets backwards — the binary is behind, and
+      `--force-skill` would *downgrade* the skill, so callers must not offer it;
+    * an **older** stamp means the skill is behind, where `--force-skill` is the correct upgrade;
+    * equal version **and** equal commit is the only situation in which a differing body proves a
+      hand edit;
+    * everything else — no stamp at all, an unparseable version, or one version number covering two
+      different builds — is `UNKNOWN`, and says so instead of picking a direction.
+    """
+    if installed is None:
+        return SKILL_ABSENT, ""
+    if packaged is None:
+        return SKILL_NO_PACKAGED, ""
+    if strip_stamp(installed) == strip_stamp(packaged):
+        return SKILL_MATCH, ""
+
+    try:
+        stamp = parse_stamp(installed.decode("utf-8"))
+    except UnicodeDecodeError:
+        stamp = None
+    if stamp is None:
+        return SKILL_UNKNOWN, ""
+
+    stamped_version, stamped_sha = stamp
+    theirs = _version_tuple(stamped_version)
+    ours = _version_tuple(__version__)
+    if theirs is None or ours is None:
+        return SKILL_UNKNOWN, stamped_version
+    if theirs > ours:
+        return SKILL_NEWER, stamped_version
+    if theirs < ours:
+        return SKILL_OLDER, stamped_version
+    if stamped_sha == (build_sha() or "").strip():
+        return SKILL_MODIFIED, stamped_version
+    # One version number, two different builds — refuse to guess.
+    return SKILL_UNKNOWN, stamped_version
+
+
+def _stamped(payload: bytes) -> bytes:
+    """`payload` with this build's stamp as its last line.
+
+    This is the half of the mechanism that makes provenance *decidable* going forward: a copy on
+    disk can now name the build that wrote it, so "differs" acquires a direction. It does nothing
+    for a copy already installed before this mechanism shipped — those stay `SKILL_UNKNOWN`
+    forever, which is why that state has to be honest rather than a default nobody expects to hit.
+    """
+    body = strip_stamp(payload)
+    text = body.decode("utf-8", errors="strict")
+    if not text.endswith("\n"):
+        text += "\n"
+    return (text + stamp_line() + "\n").encode("utf-8")
 
 
 # --- settings file I/O ---------------------------------------------------------------------------
@@ -457,6 +657,21 @@ _HOOK_COLUMNS = (
     "budget_seconds",
     "hook_timeout_seconds",
     "command",
+    "skill",
+    "skill_path",
+)
+
+_UNINSTALL_COLUMNS = ("removed", "settings", "skill", "skill_path")
+
+_STATUS_COLUMNS = (
+    "settings",
+    "hook",
+    "command",
+    "timeout",
+    "token",
+    "api_url",
+    "skill",
+    "skill_path",
 )
 
 
@@ -535,7 +750,7 @@ def cmd_uninstall(args: argparse.Namespace) -> Payload:
     record: dict[str, Any] = {"removed": removed, "settings": str(path)}
     record.update(_uninstall_skill(args))
     return Payload.entity(
-        noun="hook", envelope_key="hook", record=record, columns=("removed", "settings")
+        noun="hook", envelope_key="hook", record=record, columns=_UNINSTALL_COLUMNS
     )
 
 
@@ -557,33 +772,182 @@ def cmd_status(args: argparse.Namespace) -> Payload:
         "token": TOKEN_SET if _has_token() else TOKEN_UNSET,
         "api_url": api_url(),
     }
+    record.update(_skill_status_fields())
     return Payload.entity(
         noun="hook",
         envelope_key="hook",
         record=record,
-        columns=("settings", "hook", "command", "timeout", "token", "api_url"),
+        columns=_STATUS_COLUMNS,
     )
 
 
-# --- extension point for KAN-1200 (packaged skill) ---------------------------------------------
+# --- skill distribution (KAN-1200) ---------------------------------------------------------------
 #
 # Pandan's own `cmd_install`/`cmd_uninstall` call `_install_skill`/`_uninstall_skill` as one more
-# step after the hook write, laying down `pandan_cli/skills/pandan/SKILL.md` beside it. Kaya ships
-# no skill file yet — `kaya-cli/skills/kaya/SKILL.md` is KAN-1200, a separate card — so these are
-# deliberately empty for now. They exist so KAN-1200 only has to fill them in, exactly where
-# pandan's equivalent calls already sit in its own `cmd_install`/`cmd_uninstall`, rather than
-# re-wiring either command.
+# step after the hook write, laying down `pandan_cli/skills/pandan/SKILL.md` beside it. This is
+# kaya's equivalent, adapted to this package's record-based `Payload` shape (extra dict fields
+# folded into the hook's record) rather than pandan's own list of printed lines.
 
 
 def _install_skill(args: argparse.Namespace) -> dict[str, Any]:
-    """Extra record fields `cmd_install` folds in after laying down (or refusing to touch) a
-    packaged skill. Returns `{}` until KAN-1200 gives this something to do."""
-    return {}
+    """Lay the packaged `kaya` skill down beside the hook. Extra record fields `cmd_install` folds
+    in after laying down (or refusing to touch) it.
+
+    Never clobbers a locally edited or newer skill without `--force-skill`: the file is the user's,
+    and silently reverting their edits (or downgrading a newer build's skill) is the kind of
+    surprise that stops people trusting an installer. Writing identical bytes over identical bytes
+    is a no-op, which is what keeps `install` idempotent here too.
+    """
+    if getattr(args, "no_skill", False):
+        return {"skill": "skipped (--no-skill)", "skill_path": None}
+
+    source = packaged_skill_path()
+    if source is None:
+        return {
+            "skill": (
+                "not bundled in this build — install it by hand from "
+                "kaya-cli/src/kaya_cli/skills/kaya/SKILL.md"
+            ),
+            "skill_path": None,
+        }
+
+    target = skill_target_path()
+    payload = source.read_bytes()
+    forced = bool(getattr(args, "force_skill", False))
+
+    if target.is_file():
+        state, detail = compare_skill(target.read_bytes(), payload)
+        if state == SKILL_MATCH:
+            return {"skill": "up to date", "skill_path": str(target)}
+        if not forced:
+            # The refusal message is per-state, and only the states where overwriting is an
+            # *upgrade* (or at worst same-version) may point at --force-skill. Offering it under
+            # SKILL_NEWER is what would make a false alarm dangerous rather than merely wrong.
+            if state == SKILL_NEWER:
+                return {
+                    "skill": (
+                        f"left alone — installed copy is NEWER than this build (laid down by "
+                        f"{detail}, this is {__version__}) — your binary is stale; re-download "
+                        "the release rather than forcing this older copy over it"
+                    ),
+                    "skill_path": str(target),
+                }
+            if state == SKILL_OLDER:
+                return {
+                    "skill": (
+                        f"left alone (from an older build {detail}, or locally modified) — "
+                        "pass --force-skill to overwrite it with this build's copy"
+                    ),
+                    "skill_path": str(target),
+                }
+            if state == SKILL_UNKNOWN:
+                return {
+                    "skill": (
+                        "left alone (differs from this build; no build stamp, so local edits "
+                        "and a different build are indistinguishable) — pass --force-skill to "
+                        "overwrite it with this build's copy"
+                    ),
+                    "skill_path": str(target),
+                }
+            # SKILL_MODIFIED
+            return {
+                "skill": (
+                    "left alone (locally modified) — pass --force-skill to overwrite it with "
+                    "this build's copy"
+                ),
+                "skill_path": str(target),
+            }
+        verb = "overwrote"
+        downgraded = state == SKILL_NEWER
+    else:
+        verb = "installed"
+        downgraded = False
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(_stamped(payload))
+    skill_field = verb
+    if downgraded:
+        # --force-skill stays an escape hatch — refusing it outright would leave no way back to an
+        # older skill — but it is labelled, so a downgrade is never silent.
+        skill_field += " (WARNING: this DOWNGRADED the skill — the copy you replaced was newer)"
+    return {"skill": skill_field, "skill_path": str(target)}
 
 
 def _uninstall_skill(args: argparse.Namespace) -> dict[str, Any]:
-    """`_install_skill`'s uninstall-side counterpart. Returns `{}` until KAN-1200."""
-    return {}
+    """`_install_skill`'s uninstall-side counterpart: remove the skill only when it is
+    byte-identical to what this build ships, so a user's own edits (or a newer build's skill) are
+    never deleted by an uninstall."""
+    if getattr(args, "keep_skill", False):
+        return {"skill": "kept (--keep-skill)", "skill_path": str(skill_target_path())}
+
+    target = skill_target_path()
+    if not target.is_file():
+        return {"skill": "not installed", "skill_path": None}
+
+    source = packaged_skill_path()
+    state, _detail = compare_skill(
+        target.read_bytes(), source.read_bytes() if source is not None else None
+    )
+    if state != SKILL_MATCH:
+        # Compared on the **body**, so our own stamp doesn't make an otherwise untouched copy look
+        # edited and thus undeletable.
+        return {
+            "skill": (
+                "kept (locally modified or unknown build) — delete it by hand if you meant to "
+                "remove it"
+            ),
+            "skill_path": str(target),
+        }
+
+    target.unlink()
+    with contextlib.suppress(OSError):
+        target.parent.rmdir()  # only succeeds when we left it empty
+    return {"skill": "removed", "skill_path": str(target)}
+
+
+def _skill_status_fields() -> dict[str, Any]:
+    """The `skill`/`skill_path` fields of `context status` — one state description, plus advice
+    where there is something safe to advise.
+
+    The state that must never carry "pass --force-skill" is the one where the installed copy is
+    newer than this build, because there the flag downgrades it — the same reasoning
+    `_install_skill`'s refusal messages already apply, restated here for a read-only report.
+    """
+    target = skill_target_path()
+    packaged = packaged_skill_path()
+    state, detail = compare_skill(
+        target.read_bytes() if target.is_file() else None,
+        packaged.read_bytes() if packaged is not None else None,
+    )
+    if state == SKILL_ABSENT:
+        text = "not installed"
+    elif state == SKILL_NO_PACKAGED:
+        text = "installed (this build carries no copy to compare against)"
+    elif state == SKILL_MATCH:
+        text = "installed (matches this build)"
+    elif state == SKILL_NEWER:
+        text = (
+            f"installed copy is NEWER than this build (laid down by {detail}, this is "
+            f"{__version__}) — your binary is stale; do NOT pass --force-skill, it would "
+            "downgrade the skill"
+        )
+    elif state == SKILL_OLDER:
+        text = (
+            f"installed (from an older build {detail}, or locally modified) — re-run "
+            "`kaya context install --force-skill` to update it to this build's copy"
+        )
+    elif state == SKILL_MODIFIED:
+        text = (
+            "installed (locally modified) — pass --force-skill to overwrite it with this "
+            "build's copy"
+        )
+    else:
+        text = (
+            "installed (differs from this build; no build stamp, so local edits and a different "
+            "build are indistinguishable) — check `kaya --version` against the build you "
+            "installed it with before passing --force-skill"
+        )
+    return {"skill": text, "skill_path": str(target)}
 
 
 # --- argument validation, shared with __main__'s parser wiring ------------------------------------

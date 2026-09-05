@@ -529,12 +529,15 @@ def _add_config_verbs(config_commands, flags: argparse.ArgumentParser) -> None:
 
 
 def _add_context_verbs(context_commands, flags: argparse.ArgumentParser) -> None:
-    """`context {install,uninstall,status,print}` — R18/KAN-1198's ambient `SessionStart` hook.
+    """`context {install,uninstall,status,print}` — R18/KAN-1198's ambient `SessionStart` hook, plus
+    KAN-1200's packaged skill riding along on `install`/`uninstall`/`status`.
 
     See `kaya_cli.context`'s module docstring for the hook mechanism (mirroring pandan V48/KAN-431's
     `pandan_cli/context.py`) and for why the fourth word is `print` rather than pandan's own `show`
     (kaya already has `config show`, and `mcp/tests/test_cli_parity.py`'s reader refuses two verbs
-    sharing a bare word).
+    sharing a bare word). `--no-skill`/`--force-skill` (on `install`) and `--keep-skill` (on
+    `uninstall`) mirror pandan's own flags of the same names, over `kaya_cli.context`'s
+    `compare_skill`/`_install_skill`/`_uninstall_skill`.
 
     All four carry the output flags like every other verb (ADR 0005 §contract 1), including
     `print --hook` — whose parser still accepts `--format`/`--fields`/`--full`, even though `--hook`
@@ -580,14 +583,27 @@ def _add_context_verbs(context_commands, flags: argparse.ArgumentParser) -> None
         metavar="N",
         help=f"max notes in the ambient block (default {context.DEFAULT_NOTE_LIMIT})",
     )
+    install.add_argument(
+        "--no-skill",
+        action="store_true",
+        help="install the hook only; don't lay down the packaged kaya skill (KAN-1200)",
+    )
+    install.add_argument(
+        "--force-skill",
+        action="store_true",
+        help="overwrite a locally modified ~/.claude/skills/kaya/SKILL.md",
+    )
 
     uninstall = context_commands.add_parser(
         verbs.UNINSTALL,
         parents=[flags],
-        help="remove the hook (idempotent, needs no configuration)",
+        help="remove the hook (and the skill, if unmodified) — idempotent, needs no configuration",
         description="Remove the SessionStart hook. Safe to run whether or not kaya is configured.",
     )
     _add_context_settings_arg(uninstall)
+    uninstall.add_argument(
+        "--keep-skill", action="store_true", help="leave the installed skill in place"
+    )
 
     status = context_commands.add_parser(
         verbs.STATUS,
