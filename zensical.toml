@@ -53,16 +53,24 @@ repo_name = "leejianrong/kaya"
 # because Zensical builds everything under docs_dir, an unlisted file would
 # still ship as an orphan page nobody can navigate to.
 #
-# This card (KAN-1194) only lays the skeleton: one index.md stub per
-# top-level section, sized to kaya's actual five-package surface (backend
-# API, kaya-cli, kaya-client, mcp, frontend SPA) rather than pandan's eleven
-# sections — kaya has no boards/cards/dashboard tutorial to write. Real
-# content pages land in KAN-1195 (Get started + CLI), KAN-1196 (Agents & MCP)
-# and KAN-1197 (Self-hosting + Reference + About), each extending this list.
+# This card (KAN-1194) laid the skeleton: one index.md stub per top-level
+# section, sized to kaya's actual five-package surface (backend API,
+# kaya-cli, kaya-client, mcp, frontend SPA) rather than pandan's eleven
+# sections — kaya has no boards/cards/dashboard tutorial to write.
+# KAN-1195 fills in "Get started" and turns "CLI" into a sub-nav of five
+# pages, matching pandan's own CLI section shape. KAN-1196 (Agents & MCP)
+# and KAN-1197 (Self-hosting + Reference + About) still extend this list.
 nav = [
   { "Home" = "index.md" },
   { "Get started" = "get-started/index.md" },
-  { "CLI" = "cli/index.md" },
+  { "CLI" = [
+    "cli/index.md",
+    "cli/configure.md",
+    "cli/reading.md",
+    "cli/writing.md",
+    "cli/output-formats.md",
+    "cli/errors-and-exit-codes.md",
+  ] },
   { "Agents & MCP" = "agents/index.md" },
   { "Self-hosting" = "self-hosting/index.md" },
   { "Reference" = "reference/index.md" },
