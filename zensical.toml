@@ -58,8 +58,9 @@ repo_name = "leejianrong/kaya"
 # kaya-cli, kaya-client, mcp, frontend SPA) rather than pandan's eleven
 # sections — kaya has no boards/cards/dashboard tutorial to write.
 # KAN-1195 fills in "Get started" and turns "CLI" into a sub-nav of five
-# pages, matching pandan's own CLI section shape. KAN-1196 (Agents & MCP)
-# and KAN-1197 (Self-hosting + Reference + About) still extend this list.
+# pages, matching pandan's own CLI section shape. KAN-1196 turns "Agents &
+# MCP" into a four-page sub-nav the same way. KAN-1197 (Self-hosting +
+# Reference + About) still extends this list.
 nav = [
   { "Home" = "index.md" },
   { "Get started" = "get-started/index.md" },
@@ -71,7 +72,12 @@ nav = [
     "cli/output-formats.md",
     "cli/errors-and-exit-codes.md",
   ] },
-  { "Agents & MCP" = "agents/index.md" },
+  { "Agents & MCP" = [
+    "agents/index.md",
+    "agents/mcp-setup.md",
+    "agents/mcp-tools.md",
+    "agents/workflows.md",
+  ] },
   { "Self-hosting" = "self-hosting/index.md" },
   { "Reference" = "reference/index.md" },
   { "About" = "about/index.md" },
