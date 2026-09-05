@@ -3,6 +3,22 @@
 # (pandan ADR 0018 §Package-name reality). That constrains the distribution name only. The console
 # script is `kaya`, and there is exactly one of them (Q39).
 name = "kaya-notes"
+# 0.16.0 — KAN-1198 (R18/EPIC-173, ADR 0005) adds `context {install,uninstall,status,print}`, the
+# ambient Claude Code SessionStart hook that gives an agent session the caller's recent notes
+# before it has to ask (mirrors pandan V48/KAN-431's `pandan_cli/context.py`). `context install`
+# writes an idempotent hook entry into a `.claude/settings.json` (read-modify-write, refusing a
+# non-object `hooks`/`hooks.SessionStart` key rather than overwriting it); `context uninstall`
+# removes exactly the matching entries and needs no configuration; `context status` is read-only;
+# `context print` reuses `KayaClient.recent_notes` — the exact call bare `kaya` already makes, no
+# new client payload shape — through the normal render() pipeline, while `context print --hook` is
+# a *new*, separate code path with its own tight timeout (`HOOK_TIMEOUT_SECONDS = 5.0`, independent
+# of `kaya_client.client.DEFAULT_READ_TIMEOUT`'s 40 s cold-start budget) that never raises and never
+# exits non-zero — a caught failure is one line on stderr, discarded by the hook harness's exit 0,
+# with nothing at all on stdout. Card originally guessed flat `install-context`/`uninstall-context`
+# verbs; this ships pandan's actual nested `context` group instead, with the fourth word spelled
+# `print` rather than pandan's own `show` (kaya already has `config show`, and
+# `mcp/tests/test_cli_parity.py`'s reader refuses two verbs sharing a bare word). Behavioural — four
+# new words that used to be usage errors now do something — so a minor bump.
 # 0.15.0 — KAN-1087 adds `--team ID` to `note create` alone (ADR 0011/R16.6), forwarded to
 # `kaya-client` 0.16.0's new `create_note(team_id=...)`. A plain numeric id — a team has no ref of
 # its own to spell instead, and `pandan team list` (pandan owns team CRUD entirely, kaya never
@@ -92,7 +108,7 @@ name = "kaya-notes"
 # 0.2.0 — KAN-543 gives the CLI argument parsing and ADR 0007's build-stamped `--version`. A
 # behavioural change to a shipped package bumps it in the same PR (ADR 0007 §3, CLAUDE.md
 # §Conventions §Versioning).
-version = "0.15.0"
+version = "0.16.0"
 description = "kaya — the notes CLI"
 readme = "README.md"
 license = "Apache-2.0"
