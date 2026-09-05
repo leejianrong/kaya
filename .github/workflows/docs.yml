@@ -1,33 +1,42 @@
 name: Docs
 
-# Docs-as-code (KAN-1194, EPIC-172/R17): render docs/guide to a static site with
-# Zensical (https://zensical.org, the successor to Material for MkDocs).
+# Docs-as-code (KAN-1194/1197, EPIC-172/R17): render docs/guide to a static site
+# with Zensical (https://zensical.org, the successor to Material for MkDocs),
+# and publish it to GitHub Pages.
 #
-# Build-check only, for now — every PR and every push to main. `zensical build
-# --strict` turns build warnings (notably a broken internal .md link) into a
-# non-zero exit, so a docs break fails the check BEFORE it can reach main.
+# Two responsibilities, mirroring pandan's own docs.yml:
+#   - build-check on every PR — `zensical build --strict` turns build warnings
+#     (notably a broken internal .md link) into a non-zero exit, so a docs
+#     break fails the check BEFORE it can reach main.
+#   - publish on merge to main — the same build is uploaded to GitHub Pages.
 #
 # GATE-SAFE, same philosophy as ci.yml: the `Docs build check` job runs and
 # reports on EVERY pull request (it is fast — a frozen install plus a small
 # build), so if it is wired in as a required status check it never leaves a PR
-# hanging at "Expected".
+# hanging at "Expected". The deploy job is gated to non-PR events, so PRs build
+# but never publish.
 #
-# No publish job yet, and no `pages`/`id-token` permissions — those land in
-# KAN-1197 alongside the maintainer's one-time repo setting (Settings → Pages
-# → "Build and deployment" → Source = "GitHub Actions") and real content worth
-# publishing. Until then this workflow only ever reads the repo.
+# One-time repo setup (maintainer, in the GitHub UI, NOT part of this
+# workflow): Settings → Pages → "Build and deployment" → Source = "GitHub
+# Actions". Until that is set, the build-check job still runs and gates PRs;
+# only the deploy job on a push to main needs it, and fails harmlessly without
+# it (the artifact upload/deploy has nowhere to publish to).
 #
-# Action pin: astral-sh/setup-uv takes an exact patch tag, matching ci.yml —
+# Action pins: astral-sh/setup-uv takes an exact patch tag, matching ci.yml —
 # see that file's header for why (setup-uv stopped publishing floating major/
-# minor tags at v8.0.0).
+# minor tags at v8.0.0). actions/upload-pages-artifact and actions/deploy-pages
+# are pinned to the same major pandan's own docs.yml uses.
 
 on:
   pull_request:
   push:
     branches: [main]
 
+# Least-privilege token, plus the extra grants GitHub Pages deployment needs.
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -52,3 +61,24 @@ jobs:
       # included); `--clean` rebuilds from scratch.
       - name: Build docs (strict)
         run: uv run --project docs-tooling --frozen zensical build --strict --clean
+
+      # Only carry the artifact forward to the deploy job on main.
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+  deploy:
+    name: Deploy docs to GitHub Pages
+    # Publish only from main — never from a pull request.
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
