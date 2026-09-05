@@ -1,0 +1,33 @@
+# Copy this file to docker-compose.override.yml (gitignored — `docker compose` loads it
+# automatically alongside docker-compose.yml, no extra flag needed) to route kaya's `app` service
+# through a machine-wide Traefik dev proxy at http://kaya.localhost/ instead of only the directly-
+# published port. Requires that proxy already running with an external `proxy` network — see the
+# traefik-dev-proxy skill's dev-proxy-compose.yml.
+#
+# Nothing here is required: docker-compose.yml keeps working standalone with no override present
+# (including in CI), publishing `app` directly on KAYA_APP_PORT (default 8000) either way. This
+# file only ever adds a second way in, never replaces the first.
+services:
+  app:
+    # `default` (this project's own implicit network, needed for `app` to reach `db`) plus `proxy`
+    # (Traefik's network) — list both explicitly, since an override's own `networks:` isn't merged
+    # with the base file's implicit one, it replaces it.
+    networks:
+      - default
+      - proxy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.kaya.rule=Host(`kaya.localhost`)
+      - traefik.http.services.kaya.loadbalancer.server.port=8000
+      # No Host-rewrite middleware: `app` (Dockerfile, `backend/app/spa.py`) serves `npm run
+      # build`'s static output through FastAPI's StaticFiles, not a live Vite dev server — no HMR,
+      # no websocket upgrade, so there is no strict Host-header check on `kaya.localhost` (no port)
+      # to work around. The native `make dev` Vite process (frontend/vite.config.ts, port 5173) is
+      # a separate, non-Docker path this override doesn't route — if that ever gets Dockerized and
+      # fronted here instead, revisit this: Vite's HMR upgrade does validate `hostname:port`
+      # strictly and would need the header-rewrite middleware the traefik-dev-proxy skill's example
+      # documents.
+
+networks:
+  proxy:
+    external: true

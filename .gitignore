@@ -4,6 +4,8 @@
 !.env.example
 .mcp.json
 !.mcp.json.example
+docker-compose.override.yml
+!docker-compose.override.yml.example
 *.pem
 *.key
 secrets/
