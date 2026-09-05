@@ -1,0 +1,147 @@
+# Zensical configuration for the kaya documentation site (KAN-1194, EPIC-172/R17).
+#
+# Zensical (https://zensical.org) is the successor to Material for MkDocs from
+# the same team. It renders a markdown tree to a static site/ directory.
+#
+#   uv run --project docs-tooling --frozen zensical build --strict --clean
+#
+# `--strict` turns build warnings (notably broken internal .md links) into a
+# non-zero exit, which is what gates the docs build-check job in CI.
+#
+# The generated site/ directory is a build artifact — it is gitignored and CI
+# rebuilds it fresh on every run.
+#
+# ---------------------------------------------------------------------------
+# WHY docs_dir IS docs/guide AND NOT docs
+#
+# This site is USER documentation: how to install kaya, use the notes API,
+# drive it from the CLI, and wire it to an agent over MCP. The repo's planning
+# material (kaya-vision.md, PLAN.md, the ADRs, SLICES.md, QUESTIONS.md,
+# ENGINEERING_NOTES.md, the roadmap) is engineering history and is
+# deliberately NOT published.
+#
+# Zensical has no `exclude_docs` / `not_in_nav` option: EVERY file under
+# docs_dir is built and served, and `nav` only controls what is *listed*. So
+# omitting a file from nav is not enough to keep it off the site — it just
+# makes it unlisted-but-reachable.
+#
+# Pointing docs_dir at the docs/guide subtree is what actually excludes the
+# planning docs. It also leaves every planning file exactly where it is, so
+# every existing `docs/adr/...`-style link in CLAUDE.md and the cross-links
+# between planning docs all keep working. Pandan settled the same shape at
+# its own Q34-equivalent (KAN-173); this mirrors it.
+#
+# Consequence to remember: a link from a page here to a planning doc must be
+# an absolute GitHub URL, because the planning file is outside the build tree
+# and a relative .md link to it fails --strict.
+# ---------------------------------------------------------------------------
+
+[project]
+site_name = "kaya"
+site_description = "kaya is a cloud-hosted markdown notes app, API-first and agent-drivable."
+site_author = "Jian"
+site_url = "https://leejianrong.github.io/kaya/"
+copyright = "Copyright &copy; 2026 kaya"
+
+docs_dir = "docs/guide"
+site_dir = "site"
+
+repo_url = "https://github.com/leejianrong/kaya"
+repo_name = "leejianrong/kaya"
+
+# Explicit navigation. Every published file is listed here on purpose:
+# because Zensical builds everything under docs_dir, an unlisted file would
+# still ship as an orphan page nobody can navigate to.
+#
+# This card (KAN-1194) only lays the skeleton: one index.md stub per
+# top-level section, sized to kaya's actual five-package surface (backend
+# API, kaya-cli, kaya-client, mcp, frontend SPA) rather than pandan's eleven
+# sections — kaya has no boards/cards/dashboard tutorial to write. Real
+# content pages land in KAN-1195 (Get started + CLI), KAN-1196 (Agents & MCP)
+# and KAN-1197 (Self-hosting + Reference + About), each extending this list.
+nav = [
+  { "Home" = "index.md" },
+  { "Get started" = "get-started/index.md" },
+  { "CLI" = "cli/index.md" },
+  { "Agents & MCP" = "agents/index.md" },
+  { "Self-hosting" = "self-hosting/index.md" },
+  { "Reference" = "reference/index.md" },
+  { "About" = "about/index.md" },
+]
+
+# The site's palette is matched to the app's "Graphite (Zinc & Teal)" theme in
+# frontend/src/app.css (KAN-1169), so the docs and the product read as one
+# thing. `primary`/`accent` are "custom" so no built-in Material colour rule
+# fights that stylesheet.
+extra_css = ["assets/stylesheets/kaya.css"]
+
+[project.theme]
+language = "en"
+features = [
+  "navigation.tabs",
+  "navigation.sections",
+  "navigation.top",
+  "navigation.footer",
+  "navigation.indexes",
+  "toc.follow",
+  "content.code.copy",
+  "search.suggest",
+  "search.highlight",
+  "search.share",
+  "announce.dismiss",
+]
+
+# Two palettes with a `media` key each, so the site follows the reader's OS
+# preference by default and the toggle overrides it. This mirrors kaya's own
+# frontend/src/app.css, whose bare `:root` (no media query) IS the light
+# palette, with `@media (prefers-color-scheme: dark)` as the explicit
+# override — so light is listed first here, matching the default. Without
+# `media` the site would always open light regardless of the reader's OS
+# preference.
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "custom"
+accent = "custom"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "custom"
+accent = "custom"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+# Markdown extensions — the sensible-default set Zensical scaffolds, kept so
+# admonitions, code highlighting, content tabs, keyboard keys and mermaid
+# diagrams render.
+[project.markdown_extensions.abbr]
+[project.markdown_extensions.admonition]
+[project.markdown_extensions.attr_list]
+[project.markdown_extensions.def_list]
+[project.markdown_extensions.footnotes]
+[project.markdown_extensions.md_in_html]
+[project.markdown_extensions.toc]
+permalink = true
+[project.markdown_extensions.pymdownx.betterem]
+[project.markdown_extensions.pymdownx.caret]
+[project.markdown_extensions.pymdownx.details]
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = true
+line_spans = "__span"
+pygments_lang_class = true
+[project.markdown_extensions.pymdownx.inlinehilite]
+[project.markdown_extensions.pymdownx.keys]
+[project.markdown_extensions.pymdownx.mark]
+[project.markdown_extensions.pymdownx.superfences]
+custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
+[project.markdown_extensions.pymdownx.tabbed]
+alternate_style = true
+combine_header_slug = true
+[project.markdown_extensions.pymdownx.tasklist]
+custom_checkbox = true
+[project.markdown_extensions.pymdownx.tilde]

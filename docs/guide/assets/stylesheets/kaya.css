@@ -1,0 +1,396 @@
+/* ==========================================================================
+   kaya docs theme.
+
+   Carries the app's "Graphite (Zinc & Teal)" palette onto the documentation
+   site so the two read as one product. The token values here are copied from
+   frontend/src/app.css (KAN-1194); when that palette changes, change this
+   file with it.
+
+   kaya's app.css has no --agent or --label-* roles (no agent concept, no
+   labels in kaya), so this stylesheet is trimmed the same way pandan's own
+   docs stylesheet is trimmed to the roles pandan's app actually uses — just
+   the other direction. Green, amber and red stay semantic.
+   ========================================================================== */
+
+/* --- Light scheme (kaya's default: app.css's bare :root, no media query) - */
+
+[data-md-color-scheme="default"] {
+  --kaya-bg: #f6f7f8;
+  --kaya-surface: #ffffff;
+  --kaya-surface-2: #eceef1;
+  --kaya-border: #dcdfe4;
+  --kaya-text: #1a1d21;
+  --kaya-muted: #616870;
+  --kaya-accent: #0d9488;
+  --kaya-accent-soft: #d5f1ec;
+  --kaya-success: #16a34a;
+  --kaya-success-soft: #dcf3e3;
+  --kaya-warning: #b45309;
+  --kaya-warning-soft: #fbeccd;
+  --kaya-danger: #dc2626;
+  --kaya-danger-soft: #fde4e4;
+  --kaya-shadow: 0 1px 1px rgba(20, 25, 30, 0.08),
+    0 8px 20px -12px rgba(20, 25, 30, 0.28);
+
+  /* Material's own tokens, remapped. */
+  --md-default-bg-color: var(--kaya-bg);
+  --md-default-fg-color: var(--kaya-text);
+  --md-default-fg-color--light: var(--kaya-muted);
+  --md-default-fg-color--lighter: #8b929a;
+  --md-default-fg-color--lightest: var(--kaya-border);
+  --md-primary-fg-color: var(--kaya-surface);
+  --md-primary-bg-color: var(--kaya-text);
+  --md-primary-bg-color--light: var(--kaya-muted);
+  --md-accent-fg-color: var(--kaya-accent);
+  --md-typeset-color: var(--kaya-text);
+  --md-typeset-a-color: var(--kaya-accent);
+  --md-code-bg-color: var(--kaya-surface-2);
+  --md-code-fg-color: var(--kaya-text);
+  --md-footer-bg-color: #15191c;
+  --md-footer-bg-color--dark: #101315;
+}
+
+/* --- Dark scheme (kaya's @media (prefers-color-scheme: dark) override) --- */
+
+[data-md-color-scheme="slate"] {
+  --kaya-bg: #101315;
+  --kaya-surface: #1a1f23;
+  --kaya-surface-2: #15191c;
+  --kaya-border: #2b3238;
+  --kaya-text: #e8ebed;
+  --kaya-muted: #99a2ab;
+  --kaya-accent: #2dd4bf;
+  --kaya-accent-soft: #0f312d;
+  --kaya-success: #4ade80;
+  --kaya-success-soft: #14301f;
+  --kaya-warning: #fbbf24;
+  --kaya-warning-soft: #3a2c10;
+  --kaya-danger: #f87171;
+  --kaya-danger-soft: #3a1717;
+  --kaya-shadow: 0 10px 28px -14px rgba(0, 0, 0, 0.8);
+
+  --md-default-bg-color: var(--kaya-bg);
+  --md-default-fg-color: var(--kaya-text);
+  --md-default-fg-color--light: var(--kaya-muted);
+  --md-default-fg-color--lighter: #6f7880;
+  --md-default-fg-color--lightest: var(--kaya-border);
+  --md-primary-fg-color: var(--kaya-surface-2);
+  --md-primary-bg-color: var(--kaya-text);
+  --md-primary-bg-color--light: var(--kaya-muted);
+  --md-accent-fg-color: var(--kaya-accent);
+  --md-typeset-color: var(--kaya-text);
+  --md-typeset-a-color: var(--kaya-accent);
+  --md-code-bg-color: var(--kaya-surface-2);
+  --md-code-fg-color: var(--kaya-text);
+  --md-footer-bg-color: #0b0e10;
+  --md-footer-bg-color--dark: #080a0b;
+}
+
+/* --- Header and navigation ------------------------------------------------
+   The app's top bar is a surface with a hairline border, not a saturated
+   brand bar, so the docs header matches that restraint in both schemes. */
+
+.md-header {
+  background-color: var(--kaya-surface);
+  color: var(--kaya-text);
+  border-bottom: 1px solid var(--kaya-border);
+  box-shadow: none;
+}
+
+.md-header__title {
+  font-weight: 600;
+}
+
+/* Tabs sit under the header on the same surface. */
+.md-tabs {
+  background-color: var(--kaya-surface);
+  color: var(--kaya-text);
+  border-bottom: 1px solid var(--kaya-border);
+}
+
+.md-tabs__link {
+  color: var(--kaya-muted);
+  opacity: 1;
+  font-weight: 500;
+}
+
+.md-tabs__link:hover,
+.md-tabs__link--active {
+  color: var(--kaya-accent);
+}
+
+/* Search field reads as an app input. */
+.md-search__form {
+  background-color: var(--kaya-surface-2);
+  border: 1px solid var(--kaya-border);
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.md-search__form:hover {
+  background-color: var(--kaya-surface-2);
+  border-color: var(--kaya-accent);
+}
+
+/* Active page in the sidebar gets the teal treatment. */
+.md-nav__link--active,
+.md-nav__link--active code {
+  color: var(--kaya-accent);
+  font-weight: 600;
+}
+
+.md-nav__title {
+  color: var(--kaya-muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* --- Typography -----------------------------------------------------------
+   Headings are set in sentence case throughout the docs, so they want a
+   little more weight and a little less size than the Material defaults. */
+
+.md-typeset {
+  font-size: 0.8rem;
+  line-height: 1.7;
+}
+
+.md-typeset h1 {
+  font-weight: 700;
+  font-size: 2rem;
+  letter-spacing: -0.02em;
+  color: var(--kaya-text);
+  margin-bottom: 0.6em;
+}
+
+.md-typeset h2 {
+  font-weight: 650;
+  font-size: 1.35rem;
+  letter-spacing: -0.01em;
+  margin-top: 2.2em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--kaya-border);
+}
+
+.md-typeset h3 {
+  font-weight: 600;
+  font-size: 1.08rem;
+  margin-top: 1.8em;
+}
+
+.md-typeset h4 {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.md-typeset a {
+  text-decoration-color: color-mix(in srgb, var(--kaya-accent) 35%, transparent);
+  text-underline-offset: 0.2em;
+}
+
+.md-typeset a:hover {
+  text-decoration-color: var(--kaya-accent);
+}
+
+/* --- Code ----------------------------------------------------------------- */
+
+.md-typeset code {
+  background-color: var(--kaya-surface-2);
+  border: 1px solid var(--kaya-border);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-size: 0.86em;
+}
+
+.md-typeset pre > code {
+  border: none;
+  padding: 0.9em 1em;
+}
+
+.md-typeset .highlight,
+.md-typeset pre {
+  border-radius: 8px;
+}
+
+/* Border only. Do NOT set `overflow: hidden` here to make the radius clip the
+   inner background: it also kills the horizontal scroll on a long line, so a
+   wide command silently gets cut off instead of scrolling. */
+.md-typeset .highlight {
+  border: 1px solid var(--kaya-border);
+}
+
+.md-typeset .highlight > pre > code {
+  overflow-x: auto;
+}
+
+.md-typeset .highlight code {
+  background-color: var(--kaya-surface-2);
+}
+
+/* A console block is a transcript, so mute the prompt lines' chrome. */
+.md-typeset .language-console .go {
+  color: var(--kaya-muted);
+}
+
+/* --- Tables -------------------------------------------------------------- */
+
+.md-typeset table:not([class]) {
+  border: 1px solid var(--kaya-border);
+  border-radius: 8px;
+  box-shadow: none;
+  font-size: 0.74rem;
+  overflow: hidden;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: var(--kaya-surface-2);
+  color: var(--kaya-text);
+  font-weight: 600;
+}
+
+.md-typeset table:not([class]) td {
+  border-top: 1px solid var(--kaya-border);
+  vertical-align: top;
+}
+
+/* --- Admonitions ---------------------------------------------------------
+   Tinted with the app's soft token for each semantic colour, with a 3px
+   spine instead of Material's full border. */
+
+.md-typeset .admonition,
+.md-typeset details {
+  border: 1px solid var(--kaya-border);
+  border-left: 3px solid var(--kaya-muted);
+  border-radius: 8px;
+  background-color: var(--kaya-surface);
+  box-shadow: none;
+  font-size: 0.75rem;
+}
+
+.md-typeset .admonition-title,
+.md-typeset summary {
+  background-color: transparent;
+  font-weight: 600;
+}
+
+.md-typeset .admonition.tip,
+.md-typeset details.tip {
+  border-left-color: var(--kaya-accent);
+}
+.md-typeset .tip > .admonition-title,
+.md-typeset details.tip > summary {
+  background-color: var(--kaya-accent-soft);
+}
+
+.md-typeset .admonition.note,
+.md-typeset details.note,
+.md-typeset .admonition.info,
+.md-typeset details.info {
+  border-left-color: var(--kaya-muted);
+}
+.md-typeset .note > .admonition-title,
+.md-typeset .info > .admonition-title,
+.md-typeset details.note > summary,
+.md-typeset details.info > summary {
+  background-color: var(--kaya-surface-2);
+}
+
+.md-typeset .admonition.success,
+.md-typeset details.success {
+  border-left-color: var(--kaya-success);
+}
+.md-typeset .success > .admonition-title,
+.md-typeset details.success > summary {
+  background-color: var(--kaya-success-soft);
+}
+
+.md-typeset .admonition.warning,
+.md-typeset details.warning {
+  border-left-color: var(--kaya-warning);
+}
+.md-typeset .warning > .admonition-title,
+.md-typeset details.warning > summary {
+  background-color: var(--kaya-warning-soft);
+}
+
+.md-typeset .admonition.danger,
+.md-typeset .admonition.failure,
+.md-typeset details.danger,
+.md-typeset details.failure {
+  border-left-color: var(--kaya-danger);
+}
+.md-typeset .danger > .admonition-title,
+.md-typeset .failure > .admonition-title,
+.md-typeset details.danger > summary,
+.md-typeset details.failure > summary {
+  background-color: var(--kaya-danger-soft);
+}
+
+/* --- Content tabs -------------------------------------------------------- */
+
+.md-typeset .tabbed-labels > label {
+  font-weight: 500;
+  font-size: 0.72rem;
+  color: var(--kaya-muted);
+}
+
+.md-typeset .tabbed-set > input:checked + label {
+  color: var(--kaya-accent);
+  border-color: var(--kaya-accent);
+}
+
+/* --- Card grid ----------------------------------------------------------
+   Used on the landing page and each section index. Styled here so the
+   layout holds up regardless of what the theme ships. */
+
+.md-typeset .grid.cards > ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.8rem;
+  margin: 1em 0;
+  padding: 0;
+  list-style: none;
+}
+
+.md-typeset .grid.cards > ul > li {
+  margin: 0;
+  padding: 0.9rem 1rem;
+  background-color: var(--kaya-surface);
+  border: 1px solid var(--kaya-border);
+  border-radius: 8px;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--kaya-accent);
+  box-shadow: var(--kaya-shadow);
+}
+
+.md-typeset .grid.cards > ul > li > :first-child {
+  margin-top: 0;
+  font-weight: 600;
+  color: var(--kaya-text);
+}
+
+.md-typeset .grid.cards > ul > li > :last-child {
+  margin-bottom: 0;
+  color: var(--kaya-muted);
+  font-size: 0.72rem;
+}
+
+/* --- Footer ------------------------------------------------------------- */
+
+.md-footer-meta {
+  font-size: 0.7rem;
+}
+
+/* --- Small screens ----------------------------------------------------- */
+
+@media screen and (max-width: 76.1875em) {
+  /* The slide-out drawer uses the same surface as the header. */
+  .md-nav--primary .md-nav__title {
+    background-color: var(--kaya-surface);
+    color: var(--kaya-text);
+    border-bottom: 1px solid var(--kaya-border);
+  }
+}
