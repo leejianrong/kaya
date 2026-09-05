@@ -109,7 +109,7 @@ EPIC-137) is where the day-to-day state lives.
 
 **This table is synced from BREADBOARD.md, not the other way round** — when a status here and there
 disagree, BREADBOARD.md is current and this table is stale; fix this table in the same PR that notices
-the drift (last synced 2026-09-05, KAN-1194–1201, R17/R18 filed).
+the drift (last synced 2026-09-05, KAN-1194–1201, R17/R18 shipped).
 
 | ID | Requirement | Status |
 |----|-------------|--------|
@@ -120,8 +120,8 @@ the drift (last synced 2026-09-05, KAN-1194–1201, R17/R18 filed).
 | R14 | A note can carry a non-text attachment, stored in R2, never leaked to another owner | Shipped (KAN-1067–1069) |
 | R15 | Investigate whether kaya's data model can support a team/org scope, not just single-owner | Done — spike (KAN-1048), superseded by R16 |
 | R16 | A note can be shared with everyone on a pandan team by default (ADR 0011) | Shipped (KAN-1082–1088) |
-| R17 | A published, browsable docs site for install/CLI/agent/self-hosting docs (Q34) | In progress (KAN-1194–1197, EPIC-172) |
-| R18 | Ambient session context: a session already knows recent notes without asking (ADR 0005, pandan V48) | In progress (KAN-1198–1201, EPIC-173) |
+| R17 | A published, browsable docs site for install/CLI/agent/self-hosting docs (Q34) | Shipped (KAN-1194–1197), live at <https://leejianrong.github.io/kaya/> |
+| R18 | Ambient session context: a session already knows recent notes without asking (ADR 0005, pandan V48) | Shipped (KAN-1198–1201) |
 
 ## Requirements
 
