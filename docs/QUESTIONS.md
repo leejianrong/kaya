@@ -31,6 +31,12 @@ soft-vs-self-sufficient linking) is at
 
 ### Identity and authorization
 
+**Q1–Q6 and Q9 are superseded by [ADR 0012](adr/0012-standalone-identity.md) (2026-09-25, EPIC-283),
+not corrected** — each was the right decision under ADR 0002's goal ("one credential across both
+apps") and stays true of the *code* until `KAN-1740` lands, but the goal itself changed to "kaya
+authenticates entirely on its own." Rows left as originally answered, per this file's own
+don't-re-litigate convention; the current answer to each is ADR 0012's, not this row's.
+
 | ID | Question | Status | Answer or default | Landed |
 |----|----------|--------|-------------------|--------|
 | Q1 | How does kaya know who a caller is? | DECIDED (F1) | Forward the bearer to a new `GET /api/v1/me` on pandan; cache the resolved user briefly. Kaya implements no token format. | ADR 0002 |
