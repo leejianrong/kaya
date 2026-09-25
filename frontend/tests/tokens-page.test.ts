@@ -73,7 +73,7 @@ beforeEach(() => {
         expires_at: null,
       }
       tokens = [...tokens, created]
-      return jsonResponse(201, { ...created, token: 'kaya_pat_ab12fake-secret-value' })
+      return jsonResponse(201, { ...created, token: 'kaya_pat_FAKEsecretvalue1234' })
     }
     if (url.startsWith('/api/v1/tokens/') && method === 'DELETE') {
       const id = Number(url.split('/').pop())
@@ -173,7 +173,7 @@ describe('signed in', () => {
     )
 
     expect(host.querySelector('[data-testid="created-secret"]')?.textContent).toContain(
-      'kaya_pat_ab12fake-secret-value',
+      'kaya_pat_FAKEsecretvalue1234',
     )
     await until(
       () => host.querySelectorAll('[data-testid="token-list"] li').length === 1,
@@ -182,7 +182,7 @@ describe('signed in', () => {
     expect(host.querySelector('[data-testid="token-list"]')?.textContent).toContain('laptop')
     // The list read must never carry the secret — only the create response does.
     expect(host.querySelector('[data-testid="token-list"]')?.textContent).not.toContain(
-      'fake-secret-value',
+      'FAKEsecretvalue1234',
     )
   })
 

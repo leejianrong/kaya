@@ -351,19 +351,22 @@ the alternatives considered (and why each was rejected), and the consequences ar
 | Second engine | A quarantined async engine, `app/identity/db.py` only — `app/db.py`'s sync engine (every note/team/attachment route) is untouched, enforced by `tests/unit/test_no_async_engine.py`'s AST guard now scoped to exempt exactly that one package. |
 | Sessions | `DatabaseStrategy` + a `kaya_session` table (mirrors pandan's `access_token`) — logout is a row delete, i.e. instant revocation, never a JWT waiting out its own expiry. |
 | Graceful boot | `KAYA_GITHUB_OAUTH_CLIENT_ID`/`_CLIENT_SECRET` both unset → the app still boots and every other route still works; login is simply unavailable — mirrors pandan ADR 0011's own tested behaviour. |
-| PATs | New `personal_access_token` table, `kaya_pat_…` prefix, HMAC-hashed, account-wide (kaya has no board-equivalent to scope one to) — mirrors pandan ADR 0014. Not yet built (`KAN-1739`). |
+| PATs | `personal_access_token` table, `kaya_pat_…` prefix, HMAC-hashed, account-wide (kaya has no board-equivalent to scope one to), `read`/`write` scope column — mirrors pandan ADR 0014. `/api/v1/tokens` CRUD + a Tokens SPA page, gated on the **cookie session only**, never a PAT bearer (avoids the chicken-and-egg — see `app/api/tokens.py`'s module docstring). **Shipped** (`KAN-1739`). |
 | Retirement | `get_principal`'s pandan-forwarding branch, the `sha256` TTL cache, single-flight coalescing, and the split connect/read deadline are deleted, not left dormant, once the new path can carry every caller (`KAN-1740`). |
 | Board-embed preview | Currently free-rides on the same PAT authenticating both apps; needs an explicit "connect your Pandan account" step once that stops being true (`KAN-1741`). |
-| Note ownership | **Open, deliberately not resolved by this section or by KAN-1738.** Existing notes' `owner_id` still points at `app.models.user` (the pandan-mirror row, ADR 0002); a human's *new* kaya-native login (`KayaAccount`) mints an unrelated id. Reconciling the two — so an existing user's existing notes are reachable under their new kaya identity — is real design work no filed card (`KAN-1738`–`1741`) currently owns; flagged here so it isn't silently assumed away before `KAN-1740` needs an answer. |
+| Note ownership | **Open, deliberately not resolved by this section, KAN-1738, or KAN-1739.** Existing notes' `owner_id` still points at `app.models.user` (the pandan-mirror row, ADR 0002); a human's *new* kaya-native login (`KayaAccount`) mints an unrelated id. Reconciling the two — so an existing user's existing notes are reachable under their new kaya identity — is real design work no filed card (`KAN-1738`–`1741`) currently owns; flagged here so it isn't silently assumed away before `KAN-1740` needs an answer. |
 
-**Fit-check.** Purely additive so far (`KAN-1738`): three new tables, one new async engine, two new
-route namespaces (`/auth/*`, `/users/*`, added to `app/spa.py`'s `RESERVED_PREFIXES`) — nothing about
-existing note/team/attachment behaviour changes until `KAN-1740` actually re-points authorization at
-the new identity, mirroring pandan ADR 0011's own "V6 only adds login" sequencing.
+**Fit-check.** Purely additive so far (`KAN-1738`/`1739`): four new tables, one new async engine,
+three new route namespaces (`/auth/*`, `/users/*`, `/api/v1/tokens`, all covered by `app/spa.py`'s
+`RESERVED_PREFIXES`) — nothing about existing note/team/attachment behaviour changes until
+`KAN-1740` actually re-points authorization at the new identity, mirroring pandan ADR 0011's own
+"V6 only adds login" sequencing. A minted `kaya_pat_…` does not authenticate anything outside
+`/api/v1/tokens` itself until that same card lands.
 
 **Cards:** `KAN-1738` (OAuth App + `fastapi-users` + async engine + cookie sessions — **shipped**),
-`KAN-1739` (PAT table + Tokens UI), `KAN-1740` (retire the introspection path), `KAN-1741` (board-embed
-reconnect step), `KAN-1742` (this ADR + the CLAUDE.md update — **shipped**). All under `EPIC-283`.
+`KAN-1739` (PAT table + `/api/v1/tokens` + Tokens UI — **shipped**), `KAN-1740` (retire the
+introspection path), `KAN-1741` (board-embed reconnect step), `KAN-1742` (this ADR + the CLAUDE.md
+update — **shipped**). All under `EPIC-283`.
 
 ## R20: Device-flow CLI login + a hosted remote MCP server (ADR 0013, EPIC-284)
 
@@ -389,4 +392,4 @@ spec-defined, not pandan-implementation-defined.
 
 **Cards:** `KAN-1743` (`kaya auth login/logout/status`), `KAN-1744` (hosted remote MCP endpoint),
 `KAN-1745` (docs: hosted MCP + CLI as top options, stdio as the fallback). All under `EPIC-284`. Not
-started — blocked on R19 (`KAN-1739`–`1741`) landing first.
+started — blocked on R19 (`KAN-1740`–`1741`) landing first.
