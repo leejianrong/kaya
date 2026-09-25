@@ -1,8 +1,9 @@
 """``team``: the mirror of pandan's team, existing so ``note.team_id`` has a row to point at.
 
 R16 (``docs/roadmap/BREADBOARD.md``), KAN-1082, ADR 0011. Kaya has no team store and never will, for
-exactly the reason ``app/models/user.py`` gives for the user mirror: any column beyond an id goes
-stale, and the first caller to trust a stale copy would be right to be annoyed. So this table holds
+the same reason ADR 0002's now-retired ``user`` mirror (KAN-1740) never grew past an id either: any
+column beyond an id goes stale, and the first caller to trust a stale copy would be right to be
+annoyed. So this table holds
 **one column and nothing else** — not a name, not a role, not a member list. Team membership itself
 is never mirrored either; it is resolved live, on every check, by ``TeamAccessResolver`` calling
 pandan's ``GET /api/v1/teams`` (R16.2), the same "ask the source of truth, don't cache a copy of its

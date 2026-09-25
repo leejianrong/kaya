@@ -15,11 +15,11 @@ from dataclasses import dataclass
 @dataclass(frozen=True, slots=True)
 class Principal:
     """A resolved caller. ``id`` is a ``KayaAccount``'s own id (ADR 0012) — before KAN-1740's
-    cutover this was pandan's UUID instead; existing notes' `owner_id` still points at the old
-    pandan-mirror `user` table (`app/models/user.py`, ADR 0002) and is not reachable under a new
-    `KayaAccount` id. That is a deliberate, accepted cutover cost — see
-    `docs/roadmap/BREADBOARD.md`'s R19 section — not something this dataclass, or anything else in
-    this module, tries to paper over."""
+    cutover this was pandan's UUID instead, mirrored into a `user` table migration `0009` has since
+    dropped entirely. A note created before the cutover still holds that old, now-unbacked UUID in
+    `owner_id` and is not reachable under anyone's new `KayaAccount` id. That is a deliberate,
+    accepted cutover cost — see `docs/roadmap/BREADBOARD.md`'s R19 section — not something this
+    dataclass, or anything else in this module, tries to paper over."""
 
     id: uuid.UUID
     email: str

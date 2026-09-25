@@ -7,10 +7,12 @@ resolves a caller from kaya's own ``kaya_account``/``kaya_session``/``personal_a
 caching against. See ``app/auth/kaya_principal.py`` for the two ways in (cookie session, PAT
 bearer) and ``app/auth/dependencies.py`` for the HTTP wiring around it.
 
-**Existing notes' `owner_id` still points at the old pandan-mirror `user` table**
-(``app/models/user.py``) and is not reachable under a caller's new ``KayaAccount`` id — a
-deliberate, accepted cutover cost (``docs/roadmap/BREADBOARD.md``'s R19 section), not a bug this
-package works around.
+**A note created before this cutover still holds an old pandan UUID in `owner_id`**, with no row
+anywhere to back it — migration `0009` drops the ADR 0002 `user` mirror table entirely and
+re-points the column's foreign key at `kaya_account.id`, `NOT VALID` so the migration itself does
+not choke on the rows it makes historically un-owned. That note is not reachable under anyone's new
+`KayaAccount` id — a deliberate, accepted cutover cost (``docs/roadmap/BREADBOARD.md``'s R19
+section), not a bug this package works around.
 
 Import layering, deliberately one-way: ``principal`` ← ``kaya_principal`` ← ``dependencies`` ←
 ``authorization``. ``kaya_principal`` and ``authorization`` reach for ``fastapi.HTTPException`` and

@@ -1,11 +1,11 @@
 """The three tables ``fastapi-users`` needs, on kaya's own shared ``Base`` (ADR 0012).
 
 **Not named ``user``/``oauth_account``/``accesstoken``** — fastapi-users' own defaults — because
-``user`` is already kaya's pandan-mirror table (``app/models/user.py``, ADR 0002), still
-load-bearing for every existing note's ``owner_id`` until a later card actually re-points note
-ownership at this new identity. Naming these ``kaya_account``/``kaya_oauth_account``/
-``kaya_session`` up front means the two tables never collide and the eventual reconciliation is a
-deliberate migration, not an accidental one forced by a name clash today.
+when these were written, ``user`` was still kaya's pandan-mirror table (``app/models/user.py``,
+ADR 0002), load-bearing for every existing note's ``owner_id``. Naming these
+``kaya_account``/``kaya_oauth_account``/``kaya_session`` up front meant the two tables never
+collided, and by the time KAN-1740 dropped the `user` mirror entirely and re-pointed note ownership
+at `kaya_account` instead, no rename was needed to get there.
 
 Both mixins fastapi-users ships (``SQLAlchemyBaseOAuthAccountTableUUID``,
 ``SQLAlchemyBaseAccessTokenTableUUID``) hard-code their foreign key at ``"user.id"`` — written for
@@ -46,11 +46,11 @@ class KayaOAuthAccount(SQLAlchemyBaseOAuthAccountTableUUID, Base):
 
 
 class KayaAccount(SQLAlchemyBaseUserTableUUID, Base):
-    """A human who has logged into kaya directly (ADR 0012) — distinct from
-    ``app.models.user.User``, the pandan-mirror row an already-existing note's ``owner_id`` still
-    points at until a later card reconciles the two. ``id`` is minted here (fastapi-users' own
-    ``uuid4`` default), not supplied by a caller — the opposite of the mirror table's contract, and
-    correctly so: this table is the identity now, not a copy of one kept elsewhere.
+    """A human who has logged into kaya directly (ADR 0012) — the identity, since KAN-1740's
+    cutover, that ``note.owner_id`` points at (migration ``0009``). ``id`` is minted here
+    (fastapi-users' own ``uuid4`` default), not supplied by a caller — the opposite of the
+    now-retired ``user`` mirror table's contract (ADR 0002), and correctly so: this table is the
+    identity, not a copy of one kept elsewhere.
     """
 
     __tablename__ = "kaya_account"
