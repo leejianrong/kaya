@@ -22,6 +22,7 @@ from app.api import (
     links_router,
     meta_router,
     note_claim_router,
+    tokens_router,
 )
 from app.api import router as api_router
 from app.identity import install_identity_routes
@@ -129,6 +130,13 @@ app.include_router(meta_router)
 # `KAYA_GITHUB_OAUTH_CLIENT_ID`/`_SECRET` and the GitHub routes simply don't register, same as
 # every other optional integration this module composes.
 install_identity_routes(app)
+
+# ADR 0012 (KAN-1739): `/api/v1/tokens`. A seventh router under `/api/v1` for the reason
+# `app/api/tokens.py` argues: it is the one route group here gated on kaya's own cookie-session
+# identity rather than the pandan-forwarded bearer every other route under `api_router` still
+# resolves through. Registration order is immaterial against every other router — no other route
+# matches `/tokens` or `/tokens/{token_id}`.
+app.include_router(tokens_router)
 
 
 class Health(BaseModel):
