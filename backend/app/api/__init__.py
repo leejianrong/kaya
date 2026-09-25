@@ -26,6 +26,9 @@ over ordinary objects, and only the route modules know FastAPI's routing machine
   see its module docstring for why this needed a new route rather than a field on ``NoteCreate``.
 - ``meta.py`` — KAN-555's one **unauthenticated** route, carrying ``KAYA_PANDAN_URL`` to a visitor
   who has no credential yet and therefore cannot be asked for one. One key, on purpose.
+- ``tokens.py`` — ADR 0012's ``/tokens`` CRUD (KAN-1739): the one route group in this package
+  gated on kaya's own **cookie-session** identity (``app/identity/``) rather than the pandan
+  bearer every other route here still resolves through. See its module docstring for why.
 """
 
 from app.api.attachments import router as attachments_router
@@ -37,6 +40,7 @@ from app.api.meta import router as meta_router
 from app.api.note_claim import router as note_claim_router
 from app.api.notes import router
 from app.api.refs import NoteRef, invalid_note_ref, parse_note_ref, resolve_note
+from app.api.tokens import router as tokens_router
 
 __all__ = [
     "NoteRef",
@@ -51,4 +55,5 @@ __all__ = [
     "parse_note_ref",
     "resolve_note",
     "router",
+    "tokens_router",
 ]

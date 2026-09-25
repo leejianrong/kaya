@@ -1,10 +1,11 @@
 /**
- * The router is two routes and a hand-written parser, so it gets assertions rather than trust.
+ * The router is a handful of routes and a hand-written parser, so it gets assertions rather than
+ * trust.
  *
- * A router library would have arrived with its own test suite; the price of not adding one for two
- * routes (`lib/router.ts` explains why) is writing the tests it would have brought. The failure
- * mode this covers is quiet: a deep link that parses to `unknown` shows an empty pane rather than
- * an error, and `spa.py` has already returned a `200` for it.
+ * A router library would have arrived with its own test suite; the price of not adding one
+ * (`lib/router.ts` explains why) is writing the tests it would have brought. The failure mode this
+ * covers is quiet: a deep link that parses to `unknown` shows an empty pane rather than an error,
+ * and `spa.py` has already returned a `200` for it.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -31,6 +32,16 @@ describe('parseRoute', () => {
     // under it — so neither grammar can accidentally swallow the other's path.
     expect(parseRoute('/notes/graph')).toEqual({ name: 'note', ref: 'graph' })
     expect(parseRoute('/graph/extra')).toEqual({ name: 'unknown', path: '/graph/extra' })
+  })
+
+  it('reads /tokens as the tokens route (KAN-1739)', () => {
+    expect(parseRoute('/tokens')).toEqual({ name: 'tokens' })
+    expect(parseRoute('/tokens/')).toEqual({ name: 'tokens' })
+  })
+
+  it('does not let a note ref shadow /tokens, or the reverse', () => {
+    expect(parseRoute('/notes/tokens')).toEqual({ name: 'note', ref: 'tokens' })
+    expect(parseRoute('/tokens/extra')).toEqual({ name: 'unknown', path: '/tokens/extra' })
   })
 
   it('passes every spelling the backend accepts straight through', () => {
@@ -78,7 +89,7 @@ describe('parseRoute', () => {
 
 describe('routeHref', () => {
   it('round-trips every real route', () => {
-    for (const path of ['/', '/notes/NOTE-12', '/notes/12', '/graph']) {
+    for (const path of ['/', '/notes/NOTE-12', '/notes/12', '/graph', '/tokens']) {
       expect(routeHref(parseRoute(path))).toBe(path)
     }
   })

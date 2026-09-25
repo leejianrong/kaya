@@ -2,11 +2,12 @@
 
 Three things here are load-bearing and all are easy to get wrong silently:
 
-1. **`app.models` and `app.identity.models` are both imported**, so `Base.metadata` carries every
-   table — board/note data and, since ADR 0012 (KAN-1738), kaya's own identity tables too, all on
-   the one shared `Base` (`app/models/base.py`). Autogenerate diffs the database against this
-   metadata, so a run where a package's models were never imported sees a database full of tables
-   that "aren't in the model" and cheerfully writes a migration that DROPS them.
+1. **`app.models`, `app.identity.models` and `app.identity.pat` are all imported**, so
+   `Base.metadata` carries every table — board/note data and, since ADR 0012 (KAN-1738/1739),
+   kaya's own identity and PAT tables too, all on the one shared `Base` (`app/models/base.py`).
+   Autogenerate diffs the database against this metadata, so a run where a package's models were
+   never imported sees a database full of tables that "aren't in the model" and cheerfully writes a
+   migration that DROPS them.
 2. **The URL comes from `app.config`**, not from `alembic.ini`. One source of truth means
    `alembic upgrade head` and the app can never disagree about which database they mean.
 3. **Sync only, deliberately, even though `app/identity/db.py` now has an async engine.** ADR 0012
@@ -23,8 +24,9 @@ from sqlalchemy import engine_from_config, pool
 
 from app.config import get_settings
 
-# Imported for its effect on Base.metadata — see (1) above. Do not "clean up" either import.
+# Imported for its effect on Base.metadata — see (1) above. Do not "clean up" any of these.
 from app.identity import models as identity_models  # noqa: F401
+from app.identity import pat as identity_pat  # noqa: F401
 from app.models import Base
 
 config = context.config
