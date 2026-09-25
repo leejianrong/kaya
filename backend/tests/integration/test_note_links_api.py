@@ -30,10 +30,12 @@ from typing import Any
 import pytest
 from sqlalchemy import text
 
+from tests.integration.auth_helpers import override_get_principal, seed_kaya_account
+
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
-# Shapeless on purpose: kaya has no token format (ADR 0002), so a PAT-shaped fixture would quietly
-# assert the opposite of the thing under test. Same reasoning as `test_pandan_down.py`.
+# Shapeless on purpose: kaya does not verify a bearer by its shape (KAN-1740), so a PAT-shaped
+# fixture would quietly assert the opposite of the thing under test.
 ALICE_TOKEN = "a-caller-supplied-string-kaya-does-not-parse"
 BOB_TOKEN = "a-different-caller-supplied-string"
 ALICE_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
@@ -91,23 +93,6 @@ class FakeCardEpicUpstream:
         return len(self.card_calls) + len(self.epic_calls)
 
 
-class FakeIdentityUpstream:
-    """Pandan's `GET /api/v1/me`, faked. `available = False` is a stopped process, so `introspect`
-    raises rather than returning `None` — returning `None` for an outage surfaces as a `401` and
-    reads as "your token is bad" (`test_pandan_down.py` makes the same point at length)."""
-
-    def __init__(self) -> None:
-        self.known: dict[str, Any] = {}
-        self.available = True
-
-    def introspect(self, bearer: str) -> Any:
-        from app.auth.principal import UpstreamUnavailable
-
-        if not self.available:
-            raise UpstreamUnavailable("https://pandan.invalid/api/v1/me is unreachable")
-        return self.known.get(bearer)
-
-
 def _alembic_config() -> Any:
     from alembic.config import Config
 
@@ -129,40 +114,23 @@ def epic(ticket: str, title: str) -> Any:
 
 
 @pytest.fixture
-def identity() -> FakeIdentityUpstream:
-    return FakeIdentityUpstream()
-
-
-@pytest.fixture
 def pandan() -> FakeCardEpicUpstream:
     return FakeCardEpicUpstream()
 
 
 @pytest.fixture
-def client(
-    database_url: str, identity: FakeIdentityUpstream, pandan: FakeCardEpicUpstream
-) -> Iterator[Any]:
-    """The real app with two dependencies overridden: identity, and card/epic resolution.
+def client(database_url: str, pandan: FakeCardEpicUpstream) -> Iterator[Any]:
+    """The real app with identity faked directly (`override_get_principal`, KAN-1740) and card/epic
+    resolution overridden with `pandan`.
 
-    Both caches are fresh per test and both are dropped afterwards, for the reason
-    `test_notes_api.py` gives about the principal cache: they are process-wide by design, and one
-    surviving a `TRUNCATE` serves an answer about rows that no longer exist. The resolution cache
-    also has to be fresh for a *second* reason specific to this file — a warm entry would make the
-    "no upstream call happened" assertions pass for the wrong reason.
+    The resolution cache is fresh per test and dropped afterwards — a warm entry would make the
+    "no upstream call happened" assertions pass for the wrong reason. There is no identity cache
+    left to reset; `get_principal`'s replacement is a plain lookup.
     """
-    from typing import Annotated
-
     from alembic import command
-    from fastapi import Depends
     from fastapi.testclient import TestClient
-    from sqlalchemy.orm import Session
 
-    from app.auth.cache import PrincipalCache
-    from app.auth.dependencies import get_resolver, reset_auth
-    from app.auth.mirror import SqlAlchemyPrincipalMirror
     from app.auth.principal import Principal
-    from app.auth.resolver import PrincipalResolver
-    from app.auth.single_flight import SingleFlight
     from app.db import get_sessionmaker
     from app.integrations.card_resolution import CardEpicCache, CardEpicResolver
     from app.integrations.dependencies import get_card_epic_resolver, reset_card_resolution
@@ -172,29 +140,21 @@ def client(
 
     def empty() -> None:
         with get_sessionmaker()() as session:
-            session.execute(text('TRUNCATE TABLE note_link, note, "user" CASCADE'))
+            session.execute(text("TRUNCATE TABLE note_link, note, kaya_account CASCADE"))
             session.commit()
 
     empty()
-    reset_auth()
     reset_card_resolution()
 
-    identity.known[ALICE_TOKEN] = Principal(id=ALICE_ID, email="alice@example.com")
-    identity.known[BOB_TOKEN] = Principal(id=BOB_ID, email="bob@example.com")
+    with get_sessionmaker()() as session:
+        seed_kaya_account(session, id=ALICE_ID, email="alice@example.com")
+        seed_kaya_account(session, id=BOB_ID, email="bob@example.com")
+    known_principals = {
+        ALICE_TOKEN: Principal(id=ALICE_ID, email="alice@example.com"),
+        BOB_TOKEN: Principal(id=BOB_ID, email="bob@example.com"),
+    }
 
-    cache = PrincipalCache(positive_ttl=60.0, negative_ttl=10.0)
-    single_flight = SingleFlight()
     card_cache = CardEpicCache(ttl=300.0)
-
-    from app.db import get_session
-
-    def identity_resolver(session: Annotated[Session, Depends(get_session)]) -> PrincipalResolver:
-        return PrincipalResolver(
-            upstream=identity,
-            mirror=SqlAlchemyPrincipalMirror(session),
-            cache=cache,
-            single_flight=single_flight,
-        )
 
     def card_resolver() -> CardEpicResolver:
         return CardEpicResolver(
@@ -205,14 +165,13 @@ def client(
             total_deadline_seconds=8.0,
         )
 
-    app.dependency_overrides[get_resolver] = identity_resolver
+    override_get_principal(app, known_principals)
     app.dependency_overrides[get_card_epic_resolver] = card_resolver
     try:
         with TestClient(app) as test_client:
             yield test_client
     finally:
         app.dependency_overrides.clear()
-        reset_auth()
         reset_card_resolution()
         empty()
 
@@ -244,7 +203,7 @@ def backlinks(client: Any, ref: str, token: str = ALICE_TOKEN) -> list[dict[str,
 
 
 def test_backlinks_are_answered_from_kayas_own_database_with_pandan_down(
-    client: Any, identity: FakeIdentityUpstream, pandan: FakeCardEpicUpstream
+    client: Any, pandan: FakeCardEpicUpstream
 ) -> None:
     """SLICES §V5's e2e row, word for word: "lists every note linking to it, answered from kaya's
     own database with pandan down". **[mutate]**
@@ -254,16 +213,14 @@ def test_backlinks_are_answered_from_kayas_own_database_with_pandan_down(
     did not *call* it — a `/backlinks` that resolved something and swallowed the failure would pass
     the first assertion and be exactly the ADR 0003 violation this criterion exists to rule out.
 
-    The principal cache is warmed first, with pandan reachable, because authentication is the one
-    dependency ADR 0002 accepts knowingly — see `test_pandan_down.py`, which argues that boundary at
-    length and draws it in the same place.
+    Identity itself has no "pandan down" state to simulate any more (KAN-1740) — kaya never asks
+    pandan who a caller is, so this test is purely about the card/epic resolution half.
     """
     target = create(client, title="Deploy runbook", body="the steps")
     create(client, title="Monday", body="see [[Deploy runbook]] before standup")
     create(client, title="Tuesday", body="still [[Deploy runbook]], plus [[KAN-501]]")
     create(client, title="Unrelated", body="no links here")
 
-    identity.available = False
     pandan.available = False
 
     found = backlinks(client, target["ref"])
@@ -647,7 +604,7 @@ def test_a_second_read_of_the_same_note_costs_no_upstream_request(
 
 
 def test_links_stay_a_200_with_unresolved_rows_when_pandan_is_stopped(
-    client: Any, identity: FakeIdentityUpstream, pandan: FakeCardEpicUpstream
+    client: Any, pandan: FakeCardEpicUpstream
 ) -> None:
     """ADR 0003 at the endpoint that is allowed to call pandan: with pandan stopped, `/links` is a
     `200` carrying every edge, unresolved. Never a `503`, never an empty list, never a `500`.
@@ -661,7 +618,6 @@ def test_links_stay_a_200_with_unresolved_rows_when_pandan_is_stopped(
         client, title="Monday", body="see [[Deploy runbook]], [[KAN-501]] and [[EPIC-3]]"
     )
 
-    identity.available = False
     pandan.available = False
 
     found = links(client, note["ref"])
