@@ -301,7 +301,7 @@
   .refresh,
   .restore {
     padding: 0.15rem 0.45rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-radius: 0.3rem;
     background: transparent;
     color: var(--muted);
@@ -374,7 +374,7 @@
     gap: 0.4rem;
     margin: 0 0.5rem;
     padding: 0.5rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-radius: 0.35rem;
   }
 
@@ -404,7 +404,7 @@
   .notice {
     margin: 0 0.25rem;
     padding: 0.6rem 0.75rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-left: 3px solid var(--accent);
     border-radius: 0.35rem;
     font-size: 0.8rem;

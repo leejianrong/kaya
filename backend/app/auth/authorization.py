@@ -117,6 +117,14 @@ def authorize_note(
         # has. Kaya's note model has never distinguished read from write access below "owner or
         # not"; a team-default grant does not invent a narrower tier that does not exist anywhere
         # else in this schema.
+        #
+        # KAN-1085 mutation-tested this exact clause: flipping `in team_ids` to `not in team_ids` —
+        # a one-token change — simultaneously turns a non-member's read into a `200` (the leak) and
+        # a genuine team member's read into a `403` (a false negative), so both directions of this
+        # rung fail loudly the moment the membership check is wrong. Caught by both
+        # `tests/integration/test_team_default_access_api.py` (over real HTTP) and the pure-function
+        # suite `tests/unit/test_note_authorization.py`. Full before/after transcript lives in that
+        # card's PR description, per this repo's `[mutate]` convention (CLAUDE.md).
         return note
 
     # `403` rather than `404`, which tells the caller the note exists. That is a decision, not

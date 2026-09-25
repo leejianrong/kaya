@@ -1,29 +1,56 @@
 :root {
-  --ink: #1c1a17;
-  --paper: #fbf9f4;
-  --muted: #6d675e;
-  --edge: #e2ddd2;
-  --accent: #2f6f4f;
+  /* Graphite (Zinc & Teal) — mirrors pandan's frontend/src/app.css token-for-token (KAY-E14), so
+     the two apps read as one product. Trimmed to the roles kaya actually has a use for: no --agent
+     (no agent concept here) and no --label-* (no labels). Pandan's own PAN-E35 is a pending "slight
+     edit, not a rebuild" of this same palette for light/dark balance — re-sync when that lands. */
+  --bg: #f6f7f8;
+  --surface-2: #eceef1;
+  --card-bg: #ffffff;
+  --border: #dcdfe4;
+  --text: #1a1d21;
+  --muted: #616870;
+  --accent: #0d9488;
+  --accent-soft: #d5f1ec;
+  --success: #16a34a;
+  --success-soft: #dcf3e3;
+  --warning: #b45309;
+  --warning-soft: #fbeccd;
+  --danger: #dc2626;
+  --danger-soft: #fde4e4;
+  --hover: rgba(20, 25, 30, 0.06);
+  --shadow-sm: 0 1px 0 rgba(20, 25, 30, 0.06);
+  --shadow-md: 0 1px 1px rgba(20, 25, 30, 0.08), 0 8px 20px -12px rgba(20, 25, 30, 0.28);
+  --radius: 8px;
 
-  /* The two stacks, named so a component can reach for one rather than repeat it. Same values
-     that were already inlined below; this card only gave them tokens. */
   --sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --mono: ui-monospace, 'SF Mono', 'Cascadia Code', monospace;
 
   color-scheme: light dark;
   font-family: var(--sans);
   line-height: 1.55;
-  color: var(--ink);
-  background: var(--paper);
+  color: var(--text);
+  background: var(--bg);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --ink: #ece7dd;
-    --paper: #171614;
-    --muted: #9a9287;
-    --edge: #302d28;
-    --accent: #7fbf9b;
+    --bg: #101315;
+    --surface-2: #15191c;
+    --card-bg: #1a1f23;
+    --border: #2b3238;
+    --text: #e8ebed;
+    --muted: #99a2ab;
+    --accent: #2dd4bf;
+    --accent-soft: #0f312d;
+    --success: #4ade80;
+    --success-soft: #14301f;
+    --warning: #fbbf24;
+    --warning-soft: #3a2c10;
+    --danger: #f87171;
+    --danger-soft: #3a1717;
+    --hover: rgba(255, 255, 255, 0.06);
+    --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.5);
+    --shadow-md: 0 10px 28px -14px rgba(0, 0, 0, 0.8);
   }
 }
 
@@ -34,8 +61,8 @@
 body {
   margin: 0;
   min-height: 100dvh;
-  background: var(--paper);
-  color: var(--ink);
+  background: var(--bg);
+  color: var(--text);
 }
 
 code {

@@ -13,7 +13,7 @@
  */
 
 import { type Component, flushSync, mount, unmount } from 'svelte'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from '../src/App.svelte'
 import EditorPane from '../src/components/EditorPane.svelte'
@@ -271,5 +271,171 @@ describe('the shell', () => {
     expect(target.textContent).not.toContain('the kaya console script')
     expect(target.textContent).not.toContain('the shared core')
     expect(target.textContent).not.toContain('Show every package')
+  })
+})
+
+/**
+ * KAN-1157: the authenticated topbar's link to pandan, resolved through the same
+ * `resolvePandanHref` (KAN-1156) `Landing.svelte` already uses. `App.svelte` reaches the network
+ * through the ambient `fetch` with no injected seam, the same reason `tests/landing.test.ts` stubs
+ * `globalThis.fetch` rather than mocking `lib/meta.ts` directly — a mock of the module would not
+ * notice a change to the request URL or shape.
+ */
+describe('the pandan nav link (KAN-1157)', () => {
+  const PANDAN = 'https://pandan.example.test'
+  const realFetch = globalThis.fetch
+
+  function jsonResponse(status: number, body: unknown): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  /** Every request this describe block's App instances make, other than `/api/v1/meta`, answered
+   * with an empty note list — nothing here is about the sidebar, and an unmocked `/api/v1/notes`
+   * would just be a second, unrelated failure logged into `failure`. */
+  function stubFetch(meta: () => Response | Promise<Response>): void {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/v1/meta') {
+        return meta()
+      }
+      if (url === '/api/v1/notes') {
+        return jsonResponse(200, { notes: [] })
+      }
+      return jsonResponse(404, { error: { code: 'not_found', message: `nothing fake at ${url}` } })
+    }) as unknown as typeof fetch
+  }
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+  })
+
+  /** Poll until `predicate` holds, flushing Svelte between attempts — `resolvePandanHref` resolves
+   * over a real (fake) `fetch`, not synchronously, so a bare `flushSync()` after `render` is too
+   * early to see its result. */
+  async function until(predicate: () => boolean, label: string): Promise<void> {
+    for (let turn = 0; turn < 400; turn += 1) {
+      flushSync()
+      if (predicate()) {
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    throw new Error(`timed out waiting for ${label}`)
+  }
+
+  /** Let a settled promise chain's effects land, then flush — for asserting a *negative* once
+   * nothing further is expected to happen (`tests/landing.test.ts`'s `settle()` explains why this
+   * needs several macrotask turns rather than one). */
+  async function settle(): Promise<void> {
+    for (let turn = 0; turn < 12; turn += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      flushSync()
+    }
+  }
+
+  it('renders once GET /api/v1/meta resolves to a configured pandan, opening in a new tab', async () => {
+    stubFetch(() => jsonResponse(200, { pandan_url: PANDAN }))
+    auth.setToken(FAKE_TOKEN)
+    const target = render(App, {})
+
+    // Absent until the fetch resolves — the whole point of fetching rather than assuming.
+    expect(target.querySelector('[data-testid="pandan-link"]')).toBeNull()
+    await until(
+      () => target.querySelector('[data-testid="pandan-link"]') !== null,
+      'the pandan nav link',
+    )
+
+    const link = target.querySelector('[data-testid="pandan-link"]')!
+    expect(link.getAttribute('href')).toBe(`${PANDAN}/`)
+    expect(link.getAttribute('target')).toBe('_blank')
+    // Matches `Landing.svelte`'s own pandan link (`tests/landing.test.ts`), rather than the bare
+    // `noopener` the card's one-line description names — one convention for one destination.
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+    expect(link.textContent?.trim()).toBe('pandan')
+  })
+
+  it('is hidden entirely, not shown-and-disabled, when meta resolves to no pandan', async () => {
+    // `resolvePandanHref` folds an unset origin and a fetch failure into the same `null` (see
+    // `lib/meta.ts`), so one case here stands in for both.
+    stubFetch(() => jsonResponse(200, { pandan_url: '' }))
+    auth.setToken(FAKE_TOKEN)
+    const target = render(App, {})
+    await settle()
+
+    expect(target.querySelector('[data-testid="pandan-link"]')).toBeNull()
+    // Not merely missing the test id — there is no dead anchor standing in for it either.
+    expect(Array.from(target.querySelectorAll('a')).some((a) => a.textContent?.trim() === 'pandan'))
+      .toBe(false)
+  })
+
+  it('is hidden when GET /api/v1/meta cannot be reached at all', async () => {
+    stubFetch(() => {
+      throw new TypeError('Failed to fetch')
+    })
+    auth.setToken(FAKE_TOKEN)
+    const target = render(App, {})
+    await settle()
+
+    expect(target.querySelector('[data-testid="pandan-link"]')).toBeNull()
+  })
+
+  it('never renders for an unauthenticated visitor, even when meta resolves to a pandan', async () => {
+    stubFetch(() => jsonResponse(200, { pandan_url: PANDAN }))
+    const target = render(App, {})
+    await settle()
+
+    expect(target.querySelector('[data-testid="pandan-link"]')).toBeNull()
+  })
+
+  it('is hidden, not linked, when meta resolves to an unsafe scheme', async () => {
+    // `tests/meta.test.ts` already proves `pandanHref('javascript:…')` returns `null` at the unit
+    // level. That is a different claim from this one: this asserts `App.svelte` itself only ever
+    // renders the *resolved* `pandanHref` state, never `meta.pandan_url` raw — a template edit that
+    // swapped in the unvalidated value (or read the meta response a second, unguarded way) would
+    // pass every test above it in this file while putting `javascript:` in a real `href` inside
+    // kaya's own origin, which is exactly the mistake `lib/meta.ts`'s `pandanHref` docstring exists
+    // to prevent. CLAUDE.md's rule that a structural/unit guard doesn't cover a behavioural claim at
+    // a different altitude, turned into a test at the shell.
+    stubFetch(() => jsonResponse(200, { pandan_url: 'javascript:alert(1)' }))
+    auth.setToken(FAKE_TOKEN)
+    const target = render(App, {})
+    await settle()
+
+    expect(target.querySelector('[data-testid="pandan-link"]')).toBeNull()
+    expect(target.innerHTML).not.toContain('javascript:')
+  })
+
+  it('unmounting before GET /api/v1/meta resolves neither throws nor renders a stale link', async () => {
+    // The nav-link effect's cleanup (`return () => abort.abort()`, `App.svelte`) fires on unmount
+    // before the fetch below ever settles. `resolvePandanHref` folds the resulting `AbortError` into
+    // `null` the same as any other failure (`lib/meta.ts`), so the risk here isn't an uncaught
+    // rejection — it's the `.then` still running after the component is gone and writing to `$state`
+    // nobody will read, which Svelte tolerates silently today. Worth pinning as a known-safe race now
+    // that what's gated on it is a real nav link, not sign-in copy nobody could navigate away from
+    // mid-fetch.
+    let resolveMeta: ((response: Response) => void) | undefined
+    stubFetch(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveMeta = resolve
+        }),
+    )
+    auth.setToken(FAKE_TOKEN)
+    const instance = mount(App, { target: host, props: {} })
+    flushSync()
+
+    expect(() => {
+      unmount(instance)
+      flushSync()
+    }).not.toThrow()
+
+    // Resolve only after the component is gone — nothing should observe it.
+    resolveMeta?.(jsonResponse(200, { pandan_url: PANDAN }))
+    await settle()
+
+    expect(host.querySelector('[data-testid="pandan-link"]')).toBeNull()
   })
 })

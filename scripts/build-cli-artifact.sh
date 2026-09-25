@@ -20,6 +20,13 @@
 #
 # `[project.scripts]` entries do not exist on a onefile artifact (KAN-442, ADR 0007 §4), which is
 # why the entry point below is the module path and not the console script name.
+#
+# `--add-data` carries the packaged `kaya` skill (R18/KAN-1200) into the onefile, where it unpacks
+# under `sys._MEIPASS` — mirrors pandan's own KAN-431 `--add-data "pandan_cli/skills:pandan_cli/
+# skills"` line. The destination path is `kaya_cli/skills` (not `src/kaya_cli/skills`) so it matches
+# what `kaya_cli.context.packaged_skill_path()` looks for under `_MEIPASS` either way this is built.
+# A build without this line still installs the hook and just reports the skill as unbundled
+# (`packaged_skill_path()` returns `None` rather than raising).
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -36,6 +43,7 @@ uv run --with pyinstaller pyinstaller \
   --specpath "$work" \
   --copy-metadata kaya-notes \
   --copy-metadata kaya-client \
+  --add-data "src/kaya_cli/skills:kaya_cli/skills" \
   --noconfirm \
   --clean \
   --log-level WARN \

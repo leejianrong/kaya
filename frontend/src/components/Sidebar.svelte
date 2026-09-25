@@ -356,7 +356,8 @@
     min-width: 0;
     overflow-y: auto;
     padding: 1rem 0.5rem 1.5rem;
-    border-right: 1px solid var(--edge);
+    background: var(--surface-2);
+    border-right: 1px solid var(--border);
   }
 
   .create {
@@ -366,7 +367,7 @@
   .new-note {
     width: 100%;
     padding: 0.35rem 0.5rem;
-    border: 1px dashed var(--edge);
+    border: 1px dashed var(--border);
     border-radius: 0.3rem;
     background: transparent;
     color: var(--accent);
@@ -410,7 +411,7 @@
     flex: 1;
     min-width: 0;
     padding: 0.3rem 0.5rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-radius: 0.3rem;
     background: transparent;
     color: inherit;
@@ -421,7 +422,7 @@
   .create-form button {
     flex: none;
     padding: 0.2rem 0.5rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-radius: 0.3rem;
     background: transparent;
     color: var(--muted);
@@ -440,7 +441,7 @@
     flex: 1;
     min-width: 0;
     padding: 0.3rem 0.5rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-radius: 0.3rem;
     background: transparent;
     color: inherit;
@@ -451,7 +452,7 @@
   .clear-search {
     flex: none;
     padding: 0.2rem 0.5rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-radius: 0.3rem;
     background: transparent;
     color: var(--muted);
@@ -478,7 +479,7 @@
 
   .views button {
     padding: 0.2rem 0.55rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-radius: 0.3rem;
     background: transparent;
     color: var(--muted);
@@ -490,7 +491,7 @@
   }
 
   .views button.active {
-    border-color: color-mix(in srgb, var(--accent) 45%, var(--edge));
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     color: var(--accent);
   }
@@ -559,7 +560,7 @@
   .unpathed {
     margin-top: 0.5rem;
     padding-top: 0.5rem;
-    border-top: 1px dashed var(--edge);
+    border-top: 1px dashed var(--border);
   }
 
   .unpathed h3 {

@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { publicRequest } from '../src/lib/api'
 import * as auth from '../src/lib/auth'
-import { fetchMeta, pandanHref } from '../src/lib/meta'
+import { fetchMeta, pandanHref, resolvePandanHref } from '../src/lib/meta'
 import { FAKE_TOKEN, fragments } from './token'
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -98,5 +98,45 @@ describe('pandanHref', () => {
     expect(pandanHref('not a url')).toBeNull()
     expect(pandanHref(null)).toBeNull()
     expect(pandanHref(undefined)).toBeNull()
+  })
+})
+
+describe('resolvePandanHref', () => {
+  it('composes fetchMeta and pandanHref into the resolved href', async () => {
+    const fetchImpl = fakeFetch(jsonResponse(200, { pandan_url: 'https://pandan.example.test' }))
+
+    await expect(resolvePandanHref({ fetchImpl })).resolves.toBe('https://pandan.example.test/')
+  })
+
+  it('resolves null, rather than rejecting, when the origin is unset or unsafe', async () => {
+    const unset = fakeFetch(jsonResponse(200, { pandan_url: '' }))
+    await expect(resolvePandanHref({ fetchImpl: unset })).resolves.toBeNull()
+
+    const unsafe = fakeFetch(jsonResponse(200, { pandan_url: 'javascript:alert(1)' }))
+    await expect(resolvePandanHref({ fetchImpl: unsafe })).resolves.toBeNull()
+  })
+
+  it('resolves null, rather than rejecting, when the fetch itself fails', async () => {
+    const failing = vi.fn(async () => {
+      throw new Error('network is down')
+    }) as unknown as typeof fetch
+
+    // The whole point of this helper over the raw fetchMeta/pandanHref pair: a caller that only
+    // wants "the href, or null" never needs its own try/catch or .catch() to get there.
+    await expect(resolvePandanHref({ fetchImpl: failing })).resolves.toBeNull()
+  })
+
+  it('sends no Authorization header and no fragment of the token, same as fetchMeta', async () => {
+    const fetchImpl = fakeFetch(jsonResponse(200, { pandan_url: 'https://pandan.example.test' }))
+    await resolvePandanHref({ fetchImpl })
+
+    const [url, init] = vi.mocked(fetchImpl).mock.calls[0] as [string, RequestInit]
+    const headers = init.headers as Record<string, string>
+    expect('Authorization' in headers).toBe(false)
+
+    const whole = `${url}|${JSON.stringify(init)}`
+    for (const fragment of fragments(FAKE_TOKEN)) {
+      expect(whole).not.toContain(fragment)
+    }
   })
 })

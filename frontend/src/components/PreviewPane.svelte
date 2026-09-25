@@ -370,7 +370,7 @@
   .notice {
     margin: 0;
     padding: 0.75rem 1rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-left: 3px solid var(--accent);
     border-radius: 0.35rem;
     font-size: 0.85rem;
@@ -381,7 +381,7 @@
     min-width: 0;
     overflow: auto;
     padding: 0.75rem 1rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-radius: 0.4rem;
     line-height: 1.6;
   }
@@ -445,14 +445,14 @@
 
   .rendered :global(blockquote) {
     padding-left: 0.9rem;
-    border-left: 3px solid var(--edge);
+    border-left: 3px solid var(--border);
     color: var(--muted);
   }
 
   .rendered :global(code) {
     padding: 0.1em 0.3em;
     border-radius: 0.2rem;
-    background: color-mix(in srgb, var(--ink) 8%, transparent);
+    background: color-mix(in srgb, var(--text) 8%, transparent);
     font-family: var(--mono);
     font-size: 0.85em;
   }
@@ -461,7 +461,7 @@
     overflow-x: auto;
     padding: 0.6rem 0.8rem;
     border-radius: 0.3rem;
-    background: color-mix(in srgb, var(--ink) 6%, transparent);
+    background: color-mix(in srgb, var(--text) 6%, transparent);
   }
 
   .rendered :global(pre code) {
@@ -504,7 +504,7 @@
      whole of its rendering; nothing hydrates it. */
   .rendered :global(p.embed-board-error) {
     padding: 0.5rem 0.8rem;
-    border: 1px dashed var(--edge);
+    border: 1px dashed var(--border);
     border-radius: 0.3rem;
     color: var(--muted);
     font-size: 0.85em;
@@ -522,10 +522,10 @@
   */
   .rendered :global(.embed-board) {
     padding: 0.6rem 0.8rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-left: 3px solid var(--accent);
     border-radius: 0.3rem;
-    background: color-mix(in srgb, var(--ink) 4%, transparent);
+    background: color-mix(in srgb, var(--text) 4%, transparent);
     font-size: 0.85em;
   }
 
@@ -577,7 +577,7 @@
   .rendered :global(.embed-attachment-unavailable) {
     display: inline-block;
     padding: 0.1em 0.4em;
-    border: 1px dashed var(--edge);
+    border: 1px dashed var(--border);
     border-radius: 0.25rem;
     color: var(--muted);
     font-size: 0.85em;
@@ -586,14 +586,14 @@
   .rendered :global(th),
   .rendered :global(td) {
     padding: 0.3rem 0.6rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     text-align: left;
   }
 
   .rendered :global(hr) {
     margin: 1.2em 0;
     border: 0;
-    border-top: 1px solid var(--edge);
+    border-top: 1px solid var(--border);
   }
 
   .rendered :global(img) {

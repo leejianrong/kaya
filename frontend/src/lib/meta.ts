@@ -45,3 +45,29 @@ export function pandanHref(origin: string | null | undefined): string | null {
   }
   return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : null
 }
+
+/**
+ * `fetchMeta` and `pandanHref`, composed into the one call every mount site actually wants: the
+ * resolved href, or `null` if the fetch failed, the origin is unset, or it is unsafe to link to.
+ *
+ * KAN-555's `Landing.svelte` was the only caller of `fetchMeta`/`pandanHref`, so the
+ * `.then(...).catch(() => null)` shape lived inline there. KAN-1156 lifts it out because the
+ * authenticated shell (`App.svelte`) is about to need the same resolved value (KAN-1157, a pandan
+ * nav link) — a second component writing the same fetch-then-parse-then-swallow-the-error chain is
+ * exactly the kind of duplication that drifts the day one call site's error handling changes and
+ * the other's doesn't. `App.svelte` does not call this yet: KAN-1157 is the card that renders the
+ * link and reads the value, and there is nothing else in the authenticated shell today that would
+ * use a `$state` written but never read (`noUnusedLocals` in `tsconfig.json` rejects that).
+ *
+ * **Deliberately not cached.** Each caller already needs its own mount-scoped `$state` and
+ * `AbortController` (a loading flag, an unmount before the response arrives), so this stays a plain
+ * function rather than a module-level store — the reactive lifecycle is the caller's, same as
+ * `lib/auth.ts`'s `getToken()` leaving `sessionStorage` itself un-cached and un-reactive. A second
+ * request per page load for a small, unauthenticated, unversioned GET is cheaper than a cache with
+ * abort-vs-failure semantics to get wrong.
+ */
+export function resolvePandanHref(options: PublicOptions = {}): Promise<string | null> {
+  return fetchMeta(options)
+    .then((meta) => pandanHref(meta.pandan_url))
+    .catch(() => null)
+}

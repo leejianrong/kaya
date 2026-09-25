@@ -205,7 +205,7 @@
     max-width: 34rem;
     margin: 0;
     padding: 0.75rem 1rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-left: 3px solid var(--accent);
     border-radius: 0.35rem;
     font-size: 0.85rem;
@@ -214,12 +214,12 @@
   .canvas {
     flex: 1;
     min-height: 0;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-radius: 0.4rem;
   }
 
   .edge {
-    stroke: var(--edge);
+    stroke: var(--border);
     stroke-width: 1.5;
   }
 
@@ -228,11 +228,11 @@
   }
 
   a:hover .node-circle {
-    fill: color-mix(in srgb, var(--accent) 70%, var(--ink));
+    fill: color-mix(in srgb, var(--accent) 70%, var(--text));
   }
 
   .node-label {
-    fill: var(--ink);
+    fill: var(--text);
     font-family: var(--mono);
     font-size: 11px;
   }

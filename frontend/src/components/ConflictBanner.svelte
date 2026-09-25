@@ -182,7 +182,7 @@
 <style>
   .conflict {
     padding: 0.75rem 1rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-left: 3px solid var(--accent);
     border-radius: 0.35rem;
     font-size: 0.85rem;
@@ -214,7 +214,7 @@
 
   button {
     padding: 0.3rem 0.7rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-radius: 0.3rem;
     background: transparent;
     color: inherit;
@@ -230,7 +230,7 @@
 
   button:disabled {
     color: var(--muted);
-    border-color: var(--edge);
+    border-color: var(--border);
     cursor: default;
   }
 
@@ -266,9 +266,9 @@
     margin: 0;
     overflow: auto;
     padding: 0.5rem;
-    border: 1px solid var(--edge);
+    border: 1px solid var(--border);
     border-radius: 0.3rem;
-    color: var(--ink);
+    color: var(--text);
     font-family: var(--mono);
     font-size: 0.75rem;
     /* The bodies are prose and the columns are narrow, so wrapping beats a horizontal scrollbar per

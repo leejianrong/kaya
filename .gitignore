@@ -37,6 +37,10 @@ playwright-report/
 blob-report/
 .playwright/
 
+# --- docs site (KAN-1194) ---
+# Zensical build output — rebuilt fresh on every CI run and every local build.
+/site/
+
 # --- editors / OS ---
 .vscode/
 .idea/
