@@ -447,6 +447,7 @@ describe('a pandan-board embed hydrates after render (KAN-1049)', () => {
 
     resolve(EMBED_URL('board=18&column=todo'), {
       unavailable: false,
+      not_connected: false,
       cards: [{ ref: 'KAN-1', title: 'Fix the bug', column: 'todo' }],
     })
     await settle()
@@ -465,11 +466,35 @@ describe('a pandan-board embed hydrates after render (KAN-1049)', () => {
     mounted.push(mount(PreviewPane, { target: host, props: { note: note(), source: body } }))
     await previewRendered(host)
 
-    resolve(EMBED_URL('board=18&view=3'), { unavailable: true, cards: [] })
+    resolve(EMBED_URL('board=18&view=3'), { unavailable: true, not_connected: false, cards: [] })
     await settle()
 
     expect(host.querySelector('[data-testid="embed-board-unavailable"]')).not.toBeNull()
     expect(host.querySelector('[data-testid="embed-board-cards"]')).toBeNull()
+  })
+
+  it('shows a distinct "connect your pandan account" notice, not the generic unavailable one, '
+    + 'when not_connected is true (ADR 0012, KAN-1741)', async () => {
+    const { resolve } = deferredFetch()
+    const body = '```pandan-board\nboard: 18\ncolumn: todo\n```\n'
+    mounted.push(mount(PreviewPane, { target: host, props: { note: note(), source: body } }))
+    await previewRendered(host)
+
+    resolve(EMBED_URL('board=18&column=todo'), {
+      unavailable: false,
+      not_connected: true,
+      cards: [],
+    })
+    await settle()
+
+    const notice = host.querySelector('[data-testid="embed-board-not-connected"]')
+    expect(notice).not.toBeNull()
+    expect(notice!.textContent).toContain('Connect your pandan account')
+    expect(host.querySelector('[data-testid="embed-board-unavailable"]')).toBeNull()
+
+    const link = notice!.querySelector('a')
+    expect(link).not.toBeNull()
+    expect(link!.getAttribute('href')).toBe('/pandan')
   })
 
   it('shows the same unavailable notice when the fetch fails outright, not an error', async () => {
@@ -531,6 +556,7 @@ describe('a pandan-board embed hydrates after render (KAN-1049)', () => {
 
     resolve(EMBED_URL('board=2&column=b'), {
       unavailable: false,
+      not_connected: false,
       cards: [{ ref: 'KAN-2', title: 'Second board', column: 'b' }],
     })
     await settle()
@@ -538,6 +564,7 @@ describe('a pandan-board embed hydrates after render (KAN-1049)', () => {
     // The stale answer, for a board no longer on screen, arrives last.
     resolve(EMBED_URL('board=1&column=a'), {
       unavailable: false,
+      not_connected: false,
       cards: [{ ref: 'KAN-1', title: 'STALE FIRST BOARD', column: 'a' }],
     })
     await settle()

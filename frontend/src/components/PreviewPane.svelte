@@ -1,6 +1,7 @@
 <script lang="ts">
   import { fetchAttachmentBlobUrl } from '../lib/attachments'
   import { fetchBoardEmbed } from '../lib/embeds'
+  import { interceptClick } from '../lib/router'
   import type { BoardEmbedResponse, Note } from '../lib/types'
 
   /**
@@ -191,6 +192,12 @@
    * identically: a caller of this component cannot and should not act differently on either, the
    * same argument `Link.resolved_ref` already makes for wikilink pills (Q26, ADR 0003).
    *
+   * `{ not_connected: true }` (ADR 0012's amendment, KAN-1741) is deliberately a **third**,
+   * distinct rendering: unlike `unavailable`, this is a case the caller can do something about, so
+   * it gets its own message and a link to `/pandan` rather than the generic "could not be reached"
+   * — see `lib/types.ts`'s `BoardEmbedResponse` docstring for why the two flags never mean the same
+   * thing.
+   *
    * Every element is `document.createElement`, every value a `.textContent` assignment — the same
    * two safe primitives `lib/markdown.ts` uses, for the same reason: a card's `title` is another
    * author's prose (pandan's, not this note's, but no less arbitrary), and it must become a `Text`
@@ -198,6 +205,22 @@
    */
   function applyBoardEmbedResult(el: HTMLElement, result: BoardEmbedResponse | null): void {
     el.replaceChildren()
+
+    if (result !== null && result.not_connected) {
+      const notice = document.createElement('p')
+      notice.className = 'embed-board-unavailable'
+      notice.dataset.testid = 'embed-board-not-connected'
+      notice.textContent = 'Connect your pandan account to see this board. '
+
+      const link = document.createElement('a')
+      link.href = '/pandan'
+      link.textContent = 'Connect pandan'
+      link.addEventListener('click', (event) => interceptClick(event, '/pandan'))
+      notice.append(link)
+
+      el.append(notice)
+      return
+    }
 
     if (result === null || result.unavailable) {
       const notice = document.createElement('p')

@@ -1,13 +1,24 @@
-"""Live pandan board/view queries embedded in a note's preview — KAN-1049.
+"""Live pandan board/view queries embedded in a note's preview — KAN-1049, amended by ADR 0012's
+KAN-1741.
 
 A note's body can carry a fenced ```pandan-board`` block naming a board plus either a saved view or
 a column, and the SPA's preview hydrates it into a read-only list of cards
 (``frontend/src/lib/embeds.ts``, ``frontend/src/components/PreviewPane.svelte``). This module is the
-backend half: it turns ``(board, view)`` or ``(board, column)`` into pandan's own real cards, with
-the caller's own bearer, and it never raises for a network reason — the same contract
+backend half: it turns ``(board, view)`` or ``(board, column)`` into pandan's own real cards, with a
+pandan bearer, and it never raises for a network reason — the same contract
 ``app/integrations/card_resolution.py`` (KAN-564) already keeps, and for the same ADR 0003 reason:
 an embed rendering "unavailable" is a decoration going missing, and a note must render whether
 pandan is up or not.
+
+**"A pandan bearer", not "the caller's own bearer"** — the load-bearing rewrite `KAN-1741` made.
+Before `KAN-1740`'s identity cutover, the two were the same value (ADR 0002: kaya minted nothing of
+its own, so whatever bearer a caller sent kaya *was* their pandan PAT). They no longer are: a
+caller's kaya-side bearer is a `kaya_pat_…` kaya minted itself, or no bearer at all for a cookie
+session, and pandan has never seen either. `app/api/embeds.py` now resolves the caller's kaya
+identity first, looks up their linked pandan PAT (`app/identity/pandan_link.py`,
+`app/api/pandan_link.py`'s "connect your pandan account" step), and passes *that* in here —
+`resolve`'s `bearer` parameter is `str | None`, and `None` (no link yet) short-circuits to
+`not_connected=True` before this module ever considers calling pandan at all.
 
 Deliberately **not** a copy-paste of ``card_resolution.py`` beyond that shared shape, because the
 call pattern is genuinely different:
@@ -68,10 +79,24 @@ class BoardEmbedResult:
     cannot see this board/view, the board or view does not exist, an unreadable body) — the API
     route (`app/api/embeds.py`) does not distinguish them either, for the same over-disclosure
     reason `card_resolution.py` gives: a 403-shaped "you can't see this" and a 404-shaped "this
-    doesn't exist" must not be told apart by a caller probing board ids they don't own."""
+    doesn't exist" must not be told apart by a caller probing board ids they don't own.
+
+    `not_connected=True` (KAN-1741) is a **third**, distinct outcome from `unavailable`, on purpose:
+    a caller who has never connected a pandan account should see "connect your pandan account", not
+    the same "this board could not be reached" message a caller with a live, working link gets when
+    pandan is genuinely down or the board is genuinely not theirs. Collapsing the two would make the
+    one actionable case (go connect an account) indistinguishable from the two the caller can do
+    nothing about — the opposite of `unavailable`'s own over-disclosure argument, which is about
+    *not* telling two unreachable-either-way cases apart. Never both `True` at once: `resolve`
+    short-circuits on a missing link before it ever calls pandan, so `not_connected` is never a
+    verdict pandan itself handed back."""
 
     unavailable: bool
     cards: tuple[BoardEmbedCard, ...]
+    not_connected: bool = False
+    """Defaulted, not a required positional, so every existing construction site (this module's own
+    pandan-down/pandan-rejected returns, every test built before `KAN-1741`) stays correct by saying
+    nothing rather than needing an update to say `False` explicitly."""
 
 
 # --- The upstream seam ---------------------------------------------------------------------------
@@ -101,8 +126,11 @@ class BoardEmbedUpstream(Protocol):
 
 
 class PandanBoardEmbedUpstream:
-    """`BoardEmbedUpstream` over real HTTP. The bearer is forwarded byte for byte — kaya has no
-    token format and mints none of its own (ADR 0002), same as every other upstream call here."""
+    """`BoardEmbedUpstream` over real HTTP. The bearer is forwarded byte for byte — it is pandan's
+    own PAT format, decrypted from `app/identity/pandan_link.py`'s stored link one call up in
+    `app/api/embeds.py`, and this class has no more business inspecting its shape than it did when
+    it was still the caller's own forwarded bearer (ADR 0002's original reasoning, kept: kaya reads
+    no token format here, pandan's or its own)."""
 
     def __init__(
         self,
@@ -187,7 +215,7 @@ class BoardEmbedResolver:
 
     def resolve(
         self,
-        bearer: str,
+        bearer: str | None,
         board_id: int,
         *,
         view_id: int | None = None,
@@ -195,7 +223,18 @@ class BoardEmbedResolver:
     ) -> BoardEmbedResult:
         """Exactly one of ``view_id``/``column`` is expected — `app/api/embeds.py` enforces that
         at the request boundary, so this method does not re-validate it; a call with both or
-        neither is a caller bug, not a pandan-shaped outcome, and is not this method's contract."""
+        neither is a caller bug, not a pandan-shaped outcome, and is not this method's contract.
+
+        ``bearer`` is the caller's *linked pandan PAT* (`app/api/embeds.py` looks it up and
+        decrypts it before calling this), never the caller's own kaya-side credential — see the
+        module docstring. ``None`` means no link exists (or none kaya can still read back — see
+        `app/identity/pandan_link.py`'s `decrypt_token`) and short-circuits to `not_connected=True`
+        before this method calls pandan at all: there is no bearer to try, so there is nothing for
+        pandan to answer about.
+        """
+        if bearer is None:
+            return BoardEmbedResult(unavailable=False, cards=(), not_connected=True)
+
         try:
             params = (
                 self._upstream.fetch_view_query(bearer, board_id, view_id)

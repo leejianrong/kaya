@@ -307,17 +307,23 @@ class EmbedCard(BaseModel):
 class BoardEmbedResponse(BaseModel):
     """`GET /api/v1/embeds/board`'s body. Always a `200`, even when pandan could not be asked —
     the same "degrade, never fail the render" contract Q26 already set for `LinkRead`
-    (`resolved_ref`/`title`/`column` all going `null`), spelled here as one boolean instead of three
-    nullable fields because there is no partial answer to preserve: either pandan answered with a
-    card list, or it did not, and a caller cannot act differently on "pandan is down" versus "the
-    caller cannot see this board" (ADR 0003, `app/integrations/board_embed.py`'s
-    `BoardEmbedResult` docstring).
+    (`resolved_ref`/`title`/`column` all going `null`), spelled here as booleans instead of nullable
+    fields because there is no partial answer to preserve: either pandan answered with a card list,
+    or it did not, and a caller cannot act differently on "pandan is down" versus "the caller cannot
+    see this board" (ADR 0003, `app/integrations/board_embed.py`'s `BoardEmbedResult` docstring).
 
-    `cards` is `[]` for both `unavailable=True` and a legitimately empty result — a saved view with
-    no matching cards renders identically to a decoration nobody could reach on the wire, and that
-    is deliberate: a caller cannot and should not act differently on either."""
+    `not_connected` (KAN-1741) is the one thing a caller *can* act on: `true` means kaya has no
+    pandan credential to forward on this caller's behalf at all, and `PreviewPane.svelte` renders a
+    distinct "connect your pandan account" prompt rather than the generic `unavailable` message —
+    the two never both `true` at once (`BoardEmbedResult`'s own docstring).
+
+    `cards` is `[]` for `unavailable=True`, `not_connected=True`, and a legitimately empty result
+    alike — a saved view with no matching cards renders identically to a decoration nobody could
+    reach on the wire, and that is deliberate: a caller cannot and should not act differently on
+    any of the three."""
 
     unavailable: bool
+    not_connected: bool
     cards: list[EmbedCard]
 
 

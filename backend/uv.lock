@@ -699,6 +699,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "boto3" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "fastapi-users", extra = ["sqlalchemy"] },
     { name = "httpx" },
@@ -721,6 +722,7 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.19.0" },
     { name = "boto3", specifier = ">=1.43.85" },
+    { name = "cryptography", specifier = ">=45" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "fastapi-users", extras = ["sqlalchemy"], specifier = ">=15.0" },
     { name = "httpx", specifier = ">=0.28" },

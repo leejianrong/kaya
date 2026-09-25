@@ -168,6 +168,25 @@ class Settings(BaseSettings):
     """Per-request read budget for the same calls. See
     `board_embed_connect_timeout_seconds` for why this is a separate knob from card resolution's."""
 
+    pandan_link_connect_timeout_seconds: float = Field(
+        default=3.0,
+        validation_alias="KAYA_PANDAN_LINK_CONNECT_TIMEOUT_SECONDS",
+    )
+    """Connect budget for verifying a pasted pandan PAT against pandan's own `GET /api/v1/me`
+    before storing it (`app/api/pandan_link.py`, ADR 0012's amendment, KAN-1741) — a one-off,
+    caller-initiated action, not a hot path, but it still gets its own knob rather than reusing
+    `board_embed_connect_timeout_seconds`: the two protect different call shapes for different
+    reasons (this one fails a form submission the caller is watching; that one degrades a render
+    nobody is watching), and mirroring the default rather than guessing a new number is the same
+    call `board_embed_connect_timeout_seconds` itself made against card resolution's."""
+
+    pandan_link_read_timeout_seconds: float = Field(
+        default=3.0,
+        validation_alias="KAYA_PANDAN_LINK_READ_TIMEOUT_SECONDS",
+    )
+    """Read budget for the same call. See `pandan_link_connect_timeout_seconds` for why this is a
+    separate knob from the board-embed preview's."""
+
     log_level: str = Field(
         default="INFO",
         validation_alias="KAYA_LOG_LEVEL",

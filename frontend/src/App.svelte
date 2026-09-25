@@ -2,6 +2,7 @@
   import EditorPane from './components/EditorPane.svelte'
   import GraphView from './components/GraphView.svelte'
   import Landing from './components/Landing.svelte'
+  import PandanConnect from './components/PandanConnect.svelte'
   import PreviewPane from './components/PreviewPane.svelte'
   import RightRail from './components/RightRail.svelte'
   import Sidebar from './components/Sidebar.svelte'
@@ -477,6 +478,11 @@
         <!-- KAN-1050: read-only, so it takes no note-lifecycle callbacks — `onexpired` is the one
              failure it cannot absorb itself, for the same reason `BacklinksPanel`'s cannot. -->
         <GraphView onexpired={discard} />
+      {:else if route.name === 'pandan'}
+        <!-- ADR 0012's amendment (KAN-1741): connecting a pandan account has no note-lifecycle
+             callbacks of its own either, for the same reason `GraphView` above has none — it reads
+             and writes exactly one resource (`/api/v1/pandan-link`) that no other region touches. -->
+        <PandanConnect />
       {:else}
         <!--
           The editor and its preview, side by side. `EditorPane` is **outside** the `{#if}` below on

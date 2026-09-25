@@ -44,6 +44,16 @@ describe('parseRoute', () => {
     expect(parseRoute('/tokens/extra')).toEqual({ name: 'unknown', path: '/tokens/extra' })
   })
 
+  it('reads /pandan as the pandan-link route (ADR 0012, KAN-1741)', () => {
+    expect(parseRoute('/pandan')).toEqual({ name: 'pandan' })
+    expect(parseRoute('/pandan/')).toEqual({ name: 'pandan' })
+  })
+
+  it('does not let a note ref shadow /pandan, or the reverse', () => {
+    expect(parseRoute('/notes/pandan')).toEqual({ name: 'note', ref: 'pandan' })
+    expect(parseRoute('/pandan/extra')).toEqual({ name: 'unknown', path: '/pandan/extra' })
+  })
+
   it('passes every spelling the backend accepts straight through', () => {
     // `app/api/refs.py` is the single place an identifier is parsed, and it takes all three. A
     // second grammar here would either reject something the API accepts or accept something it
@@ -89,7 +99,7 @@ describe('parseRoute', () => {
 
 describe('routeHref', () => {
   it('round-trips every real route', () => {
-    for (const path of ['/', '/notes/NOTE-12', '/notes/12', '/graph', '/tokens']) {
+    for (const path of ['/', '/notes/NOTE-12', '/notes/12', '/graph', '/tokens', '/pandan']) {
       expect(routeHref(parseRoute(path))).toBe(path)
     }
   })
