@@ -1,19 +1,21 @@
 <!--
-  What a visitor with no credential sees, and the one-time PAT paste (KAN-555).
+  What a visitor with no credential sees, and the one-time PAT paste (KAN-555; copy updated for
+  ADR 0012's cutover, KAN-1740 — the token this page asks for is kaya's own `kaya_pat_…` now, not a
+  pandan one, and it comes from kaya's own `/tokens` page, not pandan's).
 
   This component is small and its discipline is not. It is the only place in the product where a
   live credential exists as a value a person typed, so every choice about the input element is a
   deliberate one and is written down beside it. `lib/auth.ts` holds the rule those choices serve:
   **the token never enters a URL, a log line, an error message, or the DOM.**
 
-  Nothing here validates the token against pandan. It is stored, the shell advances, and the note
-  list's own request is what says whether it works — a `401` comes back to this component as
-  `rejected`. Verifying here first would mean two code paths that can produce a `401` and two
+  Nothing here validates the token against kaya's own API. It is stored, the shell advances, and
+  the note list's own request is what says whether it works — a `401` comes back to this component
+  as `rejected`. Verifying here first would mean two code paths that can produce a `401` and two
   places to keep the recovery honest, for one saved round trip on the failure case only.
 -->
 <script lang="ts">
   import { isUsableToken, setToken } from '../lib/auth'
-  import { resolvePandanHref } from '../lib/meta'
+  import { interceptClick } from '../lib/router'
 
   const {
     rejected = null,
@@ -31,10 +33,6 @@
     onaccept: () => void
   } = $props()
 
-  /** The pandan origin, from `GET /api/v1/meta`. `null` until it arrives, or if it never does. */
-  let origin: string | null = $state(null)
-  let asking = $state(true)
-
   /**
    * The field's contents. A credential, while it is being typed.
    *
@@ -48,19 +46,6 @@
 
   /** Why the last paste was not even storable. Never contains the value it is about. */
   let problem: string | null = $state(null)
-
-  $effect(() => {
-    const abort = new AbortController()
-    // `resolvePandanHref` (KAN-1156) already swallows both a failed fetch and an unsafe/unset
-    // origin into `null` — nothing is logged on any path in this component, deliberately: the
-    // failure is already visible as "no link", and the fallback text below says what to do
-    // instead. Q41/Q42's rule is about the token, and "this component logs nothing" is cheaper to
-    // keep than a per-call judgement about whether some particular error object carried one.
-    resolvePandanHref({ signal: abort.signal })
-      .then((resolved) => (origin = resolved))
-      .finally(() => (asking = false))
-    return () => abort.abort()
-  })
 
   function submit(event: SubmitEvent): void {
     // First statement in the handler. A form with no `method` submits as GET, which would put the
@@ -99,44 +84,19 @@
   </p>
 
   <section aria-labelledby="identity">
-    <h2 id="identity">Identity comes from pandan</h2>
+    <h2 id="identity">Get a kaya token</h2>
     <p>
-      kaya mints no credentials of its own. It authenticates you by asking
-      {#if origin}<a href={origin} target="_blank" rel="noopener noreferrer">pandan</a>{:else}pandan{/if},
-      the board this app is paired with, so one account and one token span both.
-      <!--
-        Not "the kanban board", and the reason is the fragment sweep rather than style: the fake
-        credential in `tests/token.ts` is prefixed `kanban_pat_` — a real, still-accepted pandan
-        prefix — so the word `kanban` in this page contains four-character fragments of it
-        (`kanb`, `anba`, `nban`) and every sweep over the rendered DOM would report a leak. The
-        collision is the sweep working exactly as designed: it cannot know which occurrence of
-        `kanb` came from a credential. Keeping the copy clear of it keeps the guard at full width
-        instead of teaching the next person to add an exception to it.
-      -->
-      Sign-in through a shared browser session is deferred: it needs both apps under one apex
-      domain, and
-      <code>fly.dev</code> is on the Public Suffix List, so today's two origins cannot share a
-      cookie at all.
+      kaya mints and verifies its own credentials (ADR 0012) — no pandan account is needed to use
+      kaya itself. Sign in with the GitHub account you want kaya notes filed under, mint a token on
+      kaya's own Tokens page, and paste it below.
     </p>
 
     <ol class="steps">
       <li>
-        {#if origin}
-          <!-- The origin only, with no path. Pandan's SPA holds its Tokens tab in component state
-               and gives it no URL of its own, so there is nothing to deep-link to; a guessed path
-               would be a broken link that looks like kaya's fault. -->
-          Open <a href={origin} target="_blank" rel="noopener noreferrer">{origin}</a> and sign in.
-        {:else if asking}
-          Open pandan and sign in.
-        {:else}
-          <!-- `/api/v1/meta` did not answer, so this SPA does not know which pandan it is paired
-               with. Saying so is better than naming one: a self-hosted deployment is supported
-               (ADR 0002) and a hard-coded origin would send its users to the wrong place. -->
-          Open your pandan deployment and sign in. (kaya could not reach its own API to look up
-          which one that is, so there is no link here.)
-        {/if}
+        Open <a href="/tokens" onclick={(event) => interceptClick(event, '/tokens')}>Tokens</a>
+        and sign in with GitHub.
       </li>
-      <li>Open the <strong>Tokens</strong> tab and create a token.</li>
+      <li>Create a token.</li>
       <li>Paste it below.</li>
     </ol>
   </section>
@@ -146,14 +106,14 @@
          message, and nothing here builds one out of a request. -->
     <p class="refused" role="alert" data-testid="rejected">
       <!-- An em dash between the two clauses rather than a full stop: kaya's refusal messages carry
-           no trailing punctuation (`pandan did not accept this token`), and appending one here would
-           double up the day a message arrives with its own. -->
+           no trailing punctuation (`kaya did not accept this credential`), and appending one here
+           would double up the day a message arrives with its own. -->
       {rejected} — the credential has been cleared from this tab. Paste another below.
     </p>
   {/if}
 
   <form class="paste" method="post" onsubmit={submit} data-testid="paste-form">
-    <label for="pat">pandan personal access token</label>
+    <label for="pat">kaya personal access token</label>
     <!--
       Four attributes, each with a reason, and none of them cosmetic:
 

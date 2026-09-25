@@ -24,17 +24,14 @@
  *
  * ## If you re-run this sweep by hand against a *live* PAT, read this first
  *
- * It will report hits, and they are not leaks. A real credential is prefixed `pandan_pat_` (or
- * `kanban_pat_`, still accepted — pandan ADR 0018), and this page has to say the word **pandan**: it
- * is the name of the product identity comes from. So a whole-token sweep finds `pand`, `anda` and
- * `ndan` in the prose, by construction, on a page that leaks nothing. Measured against the live PAT
- * on 2026-08-11: six hit ranges on the landing page and the same six mid-paste, **all confined to
- * the 11-character published prefix**, and **zero** hits of the 43-character secret portion in
- * either state — the useful sweep is the one over `PAT.slice(PAT.indexOf('_pat_') + 5)`.
- *
- * The fake credential in `tests/token.ts` has the `kanban_` spelling, so the sweep in this file can
- * run over the *whole* token and does. That is also why `Landing.svelte`'s copy says "the board"
- * rather than "the kanban board" — that collision is real too, and the comment there says so.
+ * A real credential since KAN-1740's cutover is prefixed `kaya_pat_` — kaya's own format (ADR
+ * 0012), not the `pandan_pat_`/`kanban_pat_` this page used to ask for. The page's copy no longer
+ * needs to say the word "pandan" as the source of identity (it isn't, any more), so the collision
+ * this section used to document — the product's own name sharing a four-character fragment with
+ * the fake token's `kanban_` prefix — is no longer live: `Landing.svelte`'s one remaining mention
+ * of "pandan" (a reassurance that no pandan account is needed) doesn't share a fragment with either
+ * fake token below. Still worth checking by hand if this file is ever edited to say "pandan" near a
+ * literal `kanb`/`anba`/`nban`/`pand`/`anda`/`ndan` — the sweep would (correctly) flag it.
  */
 
 import { type Component, flushSync, mount, unmount } from 'svelte'
@@ -206,51 +203,35 @@ function sweep(): void {
 }
 
 describe('the landing state', () => {
-  it('says what kaya is, and that identity comes from pandan', async () => {
+  it('says what kaya is, and that it mints its own credentials (ADR 0012, KAN-1740)', async () => {
     render(Landing, { rejected: null, onaccept: () => {} })
     await settle()
 
     const text = host.textContent ?? ''
     expect(text).toContain('markdown notes')
-    expect(text).toContain('kaya mints no credentials of its own')
+    expect(text).toContain('kaya mints and verifies its own credentials')
     expect(text).toContain('Tokens')
   })
 
-  it('builds the link to mint a token from GET /api/v1/meta', async () => {
+  it('links to kaya\'s own /tokens page, with no network call needed to build the link', async () => {
     render(Landing, { rejected: null, onaccept: () => {} })
-    await until(() => host.querySelectorAll('a').length > 0, 'the pandan link')
+    await settle()
 
-    expect(calls.map((call) => call.url)).toContain('/api/v1/meta')
+    // Unlike the pre-KAN-1740 pandan-origin link, this one needs no `GET /api/v1/meta` round trip
+    // — it's a same-origin SPA route, known at compile time — so the link is present immediately.
+    expect(calls.map((call) => call.url)).not.toContain('/api/v1/meta')
     const links = Array.from(host.querySelectorAll('a')).map((a) => a.getAttribute('href'))
-    expect(links).toContain(`${PANDAN}/`)
-    expect(host.querySelector('a')?.getAttribute('rel')).toBe('noopener noreferrer')
+    expect(links).toContain('/tokens')
   })
 
-  it('carries no hard-coded pandan origin, so a self-hosted one is reachable (ADR 0002)', async () => {
+  it('carries no pandan origin anywhere — identity no longer routes through pandan at all', async () => {
     render(Landing, { rejected: null, onaccept: () => {} })
-    await until(() => host.querySelectorAll('a').length > 0, 'the pandan link')
+    await settle()
 
-    // The real deployment's origin must not appear anywhere in the rendered page: it comes from the
-    // backend's `KAYA_PANDAN_URL`, and a literal here would send a self-hoster to somebody else's
-    // board. `simple-kanban-jian` is the string a hard-coded fallback would be spelled with.
+    // `simple-kanban-jian` was the string a hard-coded pandan-origin fallback would be spelled
+    // with, before KAN-1740; `PANDAN` (this file's own fake origin) covers the general case.
     expect(document.body.innerHTML).not.toContain('simple-kanban-jian')
-  })
-
-  it('degrades to instructions with no link when /api/v1/meta cannot be reached', async () => {
-    globalThis.fetch = vi.fn(async () => {
-      throw new TypeError('Failed to fetch')
-    }) as unknown as typeof fetch
-
-    render(Landing, { rejected: null, onaccept: () => {} })
-    await until(
-      () => (host.textContent ?? '').includes('Open your pandan deployment'),
-      'the no-link fallback',
-    )
-
-    expect(host.textContent).toContain('Open your pandan deployment')
-    expect(host.querySelector('a')).toBeNull()
-    // Still usable: a visitor who already has a token does not need the link at all.
-    expect(host.querySelector('[data-testid="paste-form"]')).not.toBeNull()
+    expect(document.body.innerHTML).not.toContain(PANDAN)
   })
 })
 
