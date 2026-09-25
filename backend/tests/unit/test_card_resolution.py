@@ -273,38 +273,45 @@ def test_settings_give_the_resolution_cache_its_own_env_var_and_default() -> Non
 
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
     assert settings.card_resolution_cache_ttl_seconds == 300.0
-    assert settings.principal_cache_ttl_seconds == 60.0
-    assert settings.card_resolution_cache_ttl_seconds != settings.principal_cache_ttl_seconds
+    assert settings.team_access_cache_ttl_seconds == 60.0
+    assert settings.card_resolution_cache_ttl_seconds != settings.team_access_cache_ttl_seconds
 
     changed = Settings(  # type: ignore[call-arg]
         _env_file=None,
         KAYA_CARD_RESOLUTION_CACHE_TTL_SECONDS="900",
     )
     assert changed.card_resolution_cache_ttl_seconds == 900.0
-    assert changed.principal_cache_ttl_seconds == 60.0, "the auth TTL must not have moved"
+    assert changed.team_access_cache_ttl_seconds == 60.0, "the team-access TTL must not have moved"
 
 
-def test_the_resolution_cache_has_its_own_ttl_independent_of_the_auth_cache() -> None:
+def test_the_resolution_cache_has_its_own_ttl_independent_of_other_caches_in_this_app() -> None:
     """SLICES.md V5: "the resolution cache is separate from the auth cache and has its own TTL."
+
+    Written against `TeamMembershipCache` (ADR 0011) rather than `PrincipalCache` (ADR 0002's
+    identity cache, retired by ADR 0012/KAN-1740 — kaya's own identity resolution is now a local
+    database lookup with nothing left to cache): the claim under test was never really about *that
+    specific* cache, it was about this resolution cache not silently sharing a clock or a TTL with
+    any other cache in the process, and `TeamMembershipCache` is the still-live sibling that proves
+    the same point.
 
     Two knobs on ``Settings``, defaulting to different values, and changing one through the
     environment must not move the other (see ``test_settings_defaults`` in this file's neighbour
     for the environment-variable half; this asserts the class-level independence).
     """
-    from app.auth.cache import PrincipalCache
+    from app.auth.team_cache import TeamMembershipCache
 
-    auth_clock = FakeClock()
+    team_clock = FakeClock()
     resolution_clock = FakeClock()
-    auth_cache = PrincipalCache(positive_ttl=60.0, negative_ttl=10.0, clock=auth_clock)
+    team_cache = TeamMembershipCache(positive_ttl=60.0, negative_ttl=10.0, clock=team_clock)
     resolution_cache = CardEpicCache(ttl=300.0, clock=resolution_clock)
 
-    assert auth_cache is not resolution_cache
-    assert not isinstance(resolution_cache, PrincipalCache)
+    assert team_cache is not resolution_cache
+    assert not isinstance(resolution_cache, TeamMembershipCache)
 
     # Advancing one clock/cache must not affect the other's stored expiry.
     resolution_cache.remember(TOKEN_A, "KAN-1", KAN_1)
     resolution_clock.advance(400.0)  # past the resolution TTL
-    auth_clock.advance(0.0)
+    team_clock.advance(0.0)
     hit, _ = resolution_cache.lookup(TOKEN_A, "KAN-1")
     assert hit is False, "the resolution TTL elapsed on its own clock"
 

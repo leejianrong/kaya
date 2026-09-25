@@ -46,19 +46,24 @@ an ADR in the pandan repo; bare "ADR NNNN" means this repo's. Read `PLAN.md` bef
    `kaya_cli.verbs` opens a session, calls one client method, returns a `Payload`; `__main__.main`
    calls `render()` on exactly one line. Pandan put shaping in its CLI instead, so its MCP adapter
    inherited none of it (44,902 tokens vs 2,689 for the same read).
-2. **Kaya has no token format and no prefix logic — for now.** [ADR 0002](docs/adr/0002-identity-pandan-as-provider.md)
-   (auth forwards the bearer to pandan's `GET /api/v1/me`, cached on `sha256(token)`, no `startswith`
-   guard) is **superseded by [ADR 0012](docs/adr/0012-standalone-identity.md)**: kaya is becoming its
-   own authorization server (GitHub OAuth App, `fastapi-users`, its own `kaya_pat_…`-prefixed PATs),
-   tracked as EPIC-283 on board 18. Until EPIC-283 lands, the code still matches ADR 0002 exactly —
-   check which cards are done before assuming either description is current.
+2. **Kaya mints and verifies its own credentials now** ([ADR 0012](docs/adr/0012-standalone-identity.md),
+   **supersedes [ADR 0002](docs/adr/0002-identity-pandan-as-provider.md)**, cut over KAN-1740).
+   `get_principal` resolves a cookie session or a `kaya_pat_…` bearer against kaya's own
+   `kaya_account`/`kaya_session`/`personal_access_token` tables (`app/identity/`,
+   `app/auth/kaya_principal.py`) — a local, indexed lookup, never a call to pandan. **Existing
+   notes' `owner_id` still points at the retired pandan-mirror `user` table** and is not reachable
+   under a new `KayaAccount` id; that is a deliberate, accepted cutover cost
+   (`docs/roadmap/BREADBOARD.md`'s R19 section), not a bug. EPIC-283's remaining cards (KAN-1741)
+   are the embedded-board-preview follow-up; check the board before assuming this paragraph is the
+   final word.
 3. **`render()`'s signature is frozen** ([ADR 0005](docs/adr/0005-born-agent-conformant.md)). If a
    change needs to alter it, stop — that's the sequencing violated, not a reason to push through.
    Six shipped features found another answer (e.g. `Payload.limited_to()` applied at the call site).
 4. **Nothing in kaya may block on pandan** ([ADR 0003](docs/adr/0003-cross-linking-one-way-soft.md)).
    A note saves, renders and appears in search with pandan down. Wikilink resolution degrades to
-   unresolved. Authentication is the one exception ADR 0002 accepts knowingly — ADR 0012 removes even
-   that exception once EPIC-283 lands, since kaya will no longer call pandan to authenticate anyone.
+   unresolved. Team-default access (ADR 0011) still calls pandan and still soft-fails the same way.
+   Authentication used to be the one *hard* exception ADR 0002 accepted knowingly — ADR 0012 removed
+   it (KAN-1740): kaya no longer calls pandan to authenticate anyone, ever.
 5. **A note's identity is its `NOTE-n` ref, never its path or title** ([ADR 0008](docs/adr/0008-note-identity.md)).
    `path` is mutable metadata; moving a note is a `PATCH` to one column, no link rewriting.
 
@@ -104,9 +109,11 @@ for each is in [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md).
   `ts_rank` order, so a search forces the flat list and hides (not disables) the view toggle while
   active.
 - **One module owns "the bearer for a request"** (`lib/auth.ts`) — token lives in `sessionStorage`,
-  never `localStorage` or a cookie (it's a live pandan PAT, and the live preview renders arbitrary
-  markdown to HTML in the same origin). `credentialState()` returns `set`/`not set` only — never a
-  length or a masked fragment.
+  never `localStorage` or a cookie (it's a live `kaya_pat_…` credential since KAN-1740's cutover,
+  and the live preview renders arbitrary markdown to HTML in the same origin).
+  `credentialState()` returns `set`/`not set` only — never a length or a masked fragment. Separate
+  from `lib/identity.ts`'s cookie-session seam (the Tokens page, KAN-1739) on purpose — two
+  different credential types serving two different purposes, never merged into one module.
 - **A `PATCH` is guarded only if `if_updated_at` is sent, and only over `body`** (ADR 0009) — a
   title/path-only write is unguarded even with a stale precondition. The CLI's only guard flag is
   `--if-updated-at`; there is no `--force`, and the client never fetches the precondition itself
@@ -126,9 +133,6 @@ for each is in [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md).
   404/405. The client mirrors it (`error_payload`/`render_error`) and owns the *only* CLI-local
   translation: exit codes in `kaya_cli/failures.py` (`0` ok · `1` runtime · `2` usage/400/422 · `3`
   401 · `4` 403 · `5` 404 · `6` 409), add-only, pinned by literal-value tests.
-- **`kaya-client`'s read timeout must outlast the backend's auth budget** — a cross-package AST test
-  (`test_client_deadline_outlasts_auth.py`) checks this because ADR 0004 forbids either package
-  importing the other to check it directly.
 
 ## Two inherited traps
 
@@ -153,7 +157,6 @@ make test              # the fast, no-infra layer (what pre-push runs)
 make test-integration  # real Postgres via testcontainers (needs Docker)
 make check             # docs-links + secret-scan + image-pins + lint + test
 make audit             # npm audit + pip-audit (network; NOT in `check`)
-make measure-auth      # re-measure introspection latency (Docker + a real PAT)
 ```
 
 **`make up` forwards only two env vars into the app container** — `DATABASE_URL` and
