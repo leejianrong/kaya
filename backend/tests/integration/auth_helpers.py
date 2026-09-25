@@ -18,13 +18,49 @@ tests like `test_notes_api.py::test_every_route_requires_a_bearer` and
 distinction surviving the cutover unchanged.
 """
 
+import uuid
 from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
 
 if TYPE_CHECKING:
     from app.auth.principal import Principal
+    from app.identity.models import KayaAccount
+
+
+def seed_kaya_account(session: Session, *, id: uuid.UUID, email: str) -> "KayaAccount":
+    """A real `kaya_account` row for `id` — required alongside `override_get_principal` below,
+    never a substitute for it.
+
+    Overriding `get_principal` fakes *who resolved*, not *whether a backing row exists* — and one
+    does have to, now: `note.owner_id`'s foreign key points at `kaya_account.id` (migration `0009`),
+    so a `POST /api/v1/notes` for a principal with no matching row is a real, correctly-enforced
+    `IntegrityError`, not a test artefact to work around. Every `alice`/`bob`-style fixture in this
+    package calls this, then registers the identical id in `override_get_principal`'s `known` dict
+    — the two together are what "alice" means in this suite.
+
+    Written through the plain sync session, not `app.identity`'s async one: `KayaAccount` lives on
+    kaya's one shared `Base`, and nothing about *reading or inserting* it needs the async engine —
+    only `app.identity`'s own login/session code does, for reasons that don't apply to seeding a
+    fixture row. `hashed_password` is a throwaway string; nothing in this suite ever authenticates
+    as this account by password or by any path this repo has (GitHub OAuth is the only login).
+    """
+    from app.identity.models import KayaAccount
+
+    account = KayaAccount(
+        id=id,
+        email=email,
+        hashed_password="not-a-real-hash",
+        is_active=True,
+        is_superuser=False,
+        is_verified=False,
+    )
+    session.add(account)
+    session.commit()
+    session.refresh(account)
+    return account
 
 
 def override_get_principal(app: FastAPI, known: dict[str, "Principal"]) -> None:
