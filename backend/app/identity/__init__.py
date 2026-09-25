@@ -9,8 +9,8 @@ separately releasable.
 This package is deliberately the *only* place ``app/db.py``'s async-engine foreclosure (ADR 0001)
 does not apply — ``fastapi-users``' user store is async-only, and quarantining that requirement
 here is what lets every note/team/attachment route stay on the untouched sync engine. See
-``app/identity/db.py``'s module docstring for the mechanism and ``tests/unit/test_no_async_engine.py``
-for the guard that enforces the quarantine.
+``app/identity/db.py``'s module docstring for the mechanism and
+``tests/unit/test_no_async_engine.py`` for the guard that enforces the quarantine.
 
 Module layout, one-way dependency (``models`` ← ``db`` ← ``manager`` ← `backend`` ← ``router``):
 

@@ -1,11 +1,11 @@
 """The three tables ``fastapi-users`` needs, on kaya's own shared ``Base`` (ADR 0012).
 
 **Not named ``user``/``oauth_account``/``accesstoken``** — fastapi-users' own defaults — because
-``user`` is already kaya's pandan-mirror table (``app/models/user.py``, ADR 0002), still load-bearing
-for every existing note's ``owner_id`` until a later card actually re-points note ownership at this
-new identity. Naming these ``kaya_account``/``kaya_oauth_account``/``kaya_session`` up front means
-the two tables never collide and the eventual reconciliation is a deliberate migration, not an
-accidental one forced by a name clash today.
+``user`` is already kaya's pandan-mirror table (``app/models/user.py``, ADR 0002), still
+load-bearing for every existing note's ``owner_id`` until a later card actually re-points note
+ownership at this new identity. Naming these ``kaya_account``/``kaya_oauth_account``/
+``kaya_session`` up front means the two tables never collide and the eventual reconciliation is a
+deliberate migration, not an accidental one forced by a name clash today.
 
 Both mixins fastapi-users ships (``SQLAlchemyBaseOAuthAccountTableUUID``,
 ``SQLAlchemyBaseAccessTokenTableUUID``) hard-code their foreign key at ``"user.id"`` — written for
@@ -18,7 +18,6 @@ Imported from ``alembic/env.py`` for the same reason ``app/models/__init__.py``'
 gives: metadata that never saw these classes produces an autogenerate run that drops them.
 """
 
-import uuid
 
 from fastapi_users.db import SQLAlchemyBaseOAuthAccountTableUUID, SQLAlchemyBaseUserTableUUID
 from fastapi_users_db_sqlalchemy.access_token import SQLAlchemyBaseAccessTokenTableUUID
@@ -41,15 +40,17 @@ class KayaOAuthAccount(SQLAlchemyBaseOAuthAccountTableUUID, Base):
     @declared_attr
     def user_id(cls) -> Mapped[GUID]:
         # Overrides the mixin's hard-coded `ForeignKey("user.id", ...)` — see module docstring.
-        return mapped_column(GUID, ForeignKey("kaya_account.id", ondelete="cascade"), nullable=False)
+        return mapped_column(
+            GUID, ForeignKey("kaya_account.id", ondelete="cascade"), nullable=False
+        )
 
 
 class KayaAccount(SQLAlchemyBaseUserTableUUID, Base):
-    """A human who has logged into kaya directly (ADR 0012) — distinct from ``app.models.user.User``,
-    the pandan-mirror row an already-existing note's ``owner_id`` still points at until a later
-    card reconciles the two. ``id`` is minted here (fastapi-users' own ``uuid4`` default), not
-    supplied by a caller — the opposite of the mirror table's contract, and correctly so: this
-    table is the identity now, not a copy of one kept elsewhere.
+    """A human who has logged into kaya directly (ADR 0012) — distinct from
+    ``app.models.user.User``, the pandan-mirror row an already-existing note's ``owner_id`` still
+    points at until a later card reconciles the two. ``id`` is minted here (fastapi-users' own
+    ``uuid4`` default), not supplied by a caller — the opposite of the mirror table's contract, and
+    correctly so: this table is the identity now, not a copy of one kept elsewhere.
     """
 
     __tablename__ = "kaya_account"

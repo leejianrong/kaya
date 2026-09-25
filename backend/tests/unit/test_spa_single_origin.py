@@ -82,22 +82,34 @@ def _api_app() -> FastAPI:
     return app
 
 
-def served_paths(router: Any) -> list[str]:
+def served_paths(router: Any, prefix: str = "") -> list[str]:
     """Every path the app can answer, including the ones behind an included router.
 
     FastAPI 0.141 puts a single opaque ``_IncludedRouter`` into ``app.routes`` rather than
     splicing the included routes in, so a flat read of ``app.routes`` sees ``/health`` and misses
     the whole of ``/api/v1``. It would have reported "all routes covered" while covering nothing —
     the failure mode this guard exists to prevent, in the guard itself.
+
+    **`prefix` matters for exactly one case (KAN-1738).** Every router this app built for itself
+    bakes its prefix in at `APIRouter(prefix=...)` construction time, so `route.path` was always
+    already the full path — `served_paths`'s original form never needed to track one. `fastapi-users`
+    hands back *pre-built* routers instead, which this app can only mount via
+    `app.include_router(router, prefix="/auth")`; `_IncludedRouter.original_router`'s own routes
+    then carry the **un**prefixed path (`"/login"`, not `"/auth/login"`), with the prefix recorded
+    only on the wrapper's `include_context.prefix`. Recursing with that prefix accumulated is what
+    keeps this walker honest about a router mounted that way instead of silently under-reporting it
+    (the exact failure mode the docstring above already warns this guard exists to prevent).
     """
     paths: list[str] = []
     for route in getattr(router, "routes", []):
         nested = getattr(route, "original_router", None)
         if nested is not None:
-            paths.extend(served_paths(nested))
+            include_context = getattr(route, "include_context", None)
+            nested_prefix = prefix + getattr(include_context, "prefix", "")
+            paths.extend(served_paths(nested, nested_prefix))
         path = getattr(route, "path", None)
         if path is not None and getattr(route, "name", None) != "spa":
-            paths.append(path)
+            paths.append(prefix + path)
     return paths
 
 

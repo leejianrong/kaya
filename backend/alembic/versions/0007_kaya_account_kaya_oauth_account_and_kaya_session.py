@@ -94,7 +94,9 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("token", name=op.f("pk_kaya_session")),
     )
-    op.create_index(op.f("ix_kaya_session_created_at"), "kaya_session", ["created_at"], unique=False)
+    op.create_index(
+        op.f("ix_kaya_session_created_at"), "kaya_session", ["created_at"], unique=False
+    )
 
 
 def downgrade() -> None:

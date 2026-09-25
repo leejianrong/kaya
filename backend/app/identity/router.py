@@ -17,12 +17,12 @@ with OAuth configured and one without, in the same process.
 """
 
 from fastapi import FastAPI
+from fastapi_users import FastAPIUsers
 
 from app.config import Settings, get_settings
 from app.identity.backend import build_auth_backend, build_github_oauth_client, oauth_configured
 from app.identity.manager import get_user_manager
 from app.identity.schemas import UserRead, UserUpdate
-from fastapi_users import FastAPIUsers
 
 
 def install_identity_routes(app: FastAPI, settings: Settings | None = None) -> None:
