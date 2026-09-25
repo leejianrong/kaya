@@ -92,8 +92,8 @@ def served_paths(router: Any, prefix: str = "") -> list[str]:
 
     **`prefix` matters for exactly one case (KAN-1738).** Every router this app built for itself
     bakes its prefix in at `APIRouter(prefix=...)` construction time, so `route.path` was always
-    already the full path — `served_paths`'s original form never needed to track one. `fastapi-users`
-    hands back *pre-built* routers instead, which this app can only mount via
+    already the full path — `served_paths`'s original form never needed to track one.
+    `fastapi-users` hands back *pre-built* routers instead, which this app can only mount via
     `app.include_router(router, prefix="/auth")`; `_IncludedRouter.original_router`'s own routes
     then carry the **un**prefixed path (`"/login"`, not `"/auth/login"`), with the prefix recorded
     only on the wrapper's `include_context.prefix`. Recursing with that prefix accumulated is what

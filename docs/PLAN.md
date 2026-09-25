@@ -109,7 +109,7 @@ EPIC-137) is where the day-to-day state lives.
 
 **This table is synced from BREADBOARD.md, not the other way round** — when a status here and there
 disagree, BREADBOARD.md is current and this table is stale; fix this table in the same PR that notices
-the drift (last synced 2026-09-05, KAN-1194–1201, R17/R18 shipped).
+the drift (last synced 2026-09-25, KAN-1738, R19 in progress).
 
 | ID | Requirement | Status |
 |----|-------------|--------|
@@ -122,6 +122,8 @@ the drift (last synced 2026-09-05, KAN-1194–1201, R17/R18 shipped).
 | R16 | A note can be shared with everyone on a pandan team by default (ADR 0011) | Shipped (KAN-1082–1088) |
 | R17 | A published, browsable docs site for install/CLI/agent/self-hosting docs (Q34) | Shipped (KAN-1194–1197), live at <https://leejianrong.github.io/kaya/> |
 | R18 | Ambient session context: a session already knows recent notes without asking (ADR 0005, pandan V48) | Shipped (KAN-1198–1201) |
+| R19 | Kaya becomes its own authorization server — no runtime dependency on pandan for identity (ADR 0012, supersedes ADR 0002) | In progress — KAN-1738 shipped (GitHub OAuth App + fastapi-users + async engine + cookie sessions); KAN-1739–1741 (PATs, retiring introspection, the board-embed reconnect step) not started |
+| R20 | `kaya auth login/logout/status` (RFC 8628 device flow) + a hosted remote MCP endpoint (ADR 0013) | Not started — sequenced after R19 |
 
 ## Requirements
 
