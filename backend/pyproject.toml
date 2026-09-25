@@ -13,9 +13,11 @@ dependencies = [
     "psycopg[binary]>=3.3.4",
     "alembic>=1.19.0",
     "pydantic-settings>=2.7",
-    # Runtime, not just test tooling, since KAN-534: the principal resolver calls pandan's
-    # `GET /api/v1/me` over httpx (ADR 0002 — retired by ADR 0012/KAN-1740, but still live until
-    # that card lands). It doubles as fastapi.testclient's transport.
+    # Runtime, not just test tooling, since KAN-534: `app/auth/team_upstream.py` (team-default
+    # access, ADR 0011), `app/integrations/card_resolution.py` (wikilink resolution) and
+    # `app/integrations/board_embed.py` (the board-embed preview) all still call pandan over HTTP —
+    # ADR 0012/KAN-1740 retired only the *identity* call this package used to also make. It doubles
+    # as fastapi.testclient's transport.
     "httpx>=0.28",
     # R14 (KAN-1067): attachments live in Cloudflare R2, which speaks the S3 API — boto3 is the
     # standard S3-compatible client (see app/integrations/storage.py's module docstring for why
@@ -30,6 +32,11 @@ dependencies = [
     "fastapi-users[sqlalchemy]>=15.0",
     # GitHub OAuth2 client fastapi-users' router wraps.
     "httpx-oauth>=0.16",
+    # ADR 0012's amendment (KAN-1741): a linked pandan PAT is encrypted at rest, never hashed —
+    # `app/identity/pandan_link.py`'s module docstring explains why a one-way hash cannot work here.
+    # Already a transitive dependency of `httpx-oauth`/`fastapi-users`; explicit because this is the
+    # first place in `app/` that imports it directly.
+    "cryptography>=45",
 ]
 
 [project.optional-dependencies]

@@ -28,7 +28,7 @@ afterEach(() => auth.clearToken())
 
 describe('the request it builds', () => {
   it('sends board and column, in that order, for a column query', async () => {
-    const fetchImpl = recorder({ unavailable: false, cards: [] })
+    const fetchImpl = recorder({ unavailable: false, not_connected: false, cards: [] })
     await fetchBoardEmbed({ board: 18, column: 'todo', fetchImpl })
 
     const [url] = vi.mocked(fetchImpl).mock.calls[0] as [string]
@@ -36,7 +36,7 @@ describe('the request it builds', () => {
   })
 
   it('sends board and view, in that order, for a view query', async () => {
-    const fetchImpl = recorder({ unavailable: false, cards: [] })
+    const fetchImpl = recorder({ unavailable: false, not_connected: false, cards: [] })
     await fetchBoardEmbed({ board: 18, view: 3, fetchImpl })
 
     const [url] = vi.mocked(fetchImpl).mock.calls[0] as [string]
@@ -44,7 +44,7 @@ describe('the request it builds', () => {
   })
 
   it('percent-encodes a column name with special characters', async () => {
-    const fetchImpl = recorder({ unavailable: false, cards: [] })
+    const fetchImpl = recorder({ unavailable: false, not_connected: false, cards: [] })
     await fetchBoardEmbed({ board: 18, column: 'in progress', fetchImpl })
 
     const [url] = vi.mocked(fetchImpl).mock.calls[0] as [string]
@@ -56,18 +56,30 @@ describe('the response', () => {
   it('returns the body verbatim on a 200', async () => {
     const fetchImpl = recorder({
       unavailable: false,
+      not_connected: false,
       cards: [{ ref: 'KAN-1', title: 'x', column: 'todo' }],
     })
     const result = await fetchBoardEmbed({ board: 18, column: 'todo', fetchImpl })
 
-    expect(result).toEqual({ unavailable: false, cards: [{ ref: 'KAN-1', title: 'x', column: 'todo' }] })
+    expect(result).toEqual({
+      unavailable: false,
+      not_connected: false,
+      cards: [{ ref: 'KAN-1', title: 'x', column: 'todo' }],
+    })
+  })
+
+  it('returns a not_connected body as-is (ADR 0012, KAN-1741)', async () => {
+    const fetchImpl = recorder({ unavailable: false, not_connected: true, cards: [] })
+    const result = await fetchBoardEmbed({ board: 18, column: 'todo', fetchImpl })
+
+    expect(result).toEqual({ unavailable: false, not_connected: true, cards: [] })
   })
 
   it('returns an unavailable body as-is — no special-casing needed by the caller', async () => {
-    const fetchImpl = recorder({ unavailable: true, cards: [] })
+    const fetchImpl = recorder({ unavailable: true, not_connected: false, cards: [] })
     const result = await fetchBoardEmbed({ board: 18, column: 'todo', fetchImpl })
 
-    expect(result).toEqual({ unavailable: true, cards: [] })
+    expect(result).toEqual({ unavailable: true, not_connected: false, cards: [] })
   })
 })
 

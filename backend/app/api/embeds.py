@@ -1,35 +1,29 @@
 """``GET /api/v1/embeds/board`` — a live pandan board/view query for a note's `pandan-board`
-fenced-code embed (KAN-1049).
+fenced-code embed (KAN-1049, amended by ADR 0012's KAN-1741).
 
 A note's preview (``frontend/src/lib/markdown.ts``, ``PreviewPane.svelte``) renders a placeholder
-for a ```pandan-board`` block and then asks this route for the live cards. This module is a pure
-passthrough onto ``app.integrations.board_embed``: parse the two query params into exactly one
-request shape, forward the caller's own bearer, and return whatever
-``BoardEmbedResolver.resolve()`` decided — which, per that module's contract, is never an
+for a ```pandan-board`` block and then asks this route for the live cards. This module is a thin
+passthrough onto ``app.integrations.board_embed``: resolve the caller's kaya identity, look up
+their linked pandan PAT, parse the two query params into exactly one request shape, and return
+whatever ``BoardEmbedResolver.resolve()`` decided — which, per that module's contract, is never an
 exception.
 
-**Deliberately no ``session: DbSession`` parameter, and deliberately not ``get_principal``.** Every
-other authenticated route in ``app/api/`` depends on ``get_principal``, which resolves a full
-``Principal`` against pandan's ``GET /api/v1/me`` and mirrors it into kaya's own ``user`` table —
-the right call when a request is about to *own* a row (a note, a link edge). This route touches no
-kaya-owned row at all: it is a bearer going out and pandan's own answer coming back, unmodified.
-Routing it through ``get_principal`` would buy nothing (this route's authorization *is* pandan's
-own board/view ownership check, made when ``BoardEmbedResolver`` calls it) and would cost two
-things this route does not need: a second blocking pandan round trip on every cold cache (identity
-introspection, ADR 0002's one deliberate exception to "nothing blocks on pandan" —
-``card_resolution.py``'s ``/links`` route pays this cost too, but for edges it is *about to
-authorize against a local row*), and a ``Depends(get_session)`` this route has no other use for.
+**Now depends on ``get_principal``, where it deliberately did not before ``KAN-1740``.** The
+original design here forwarded the caller's own bearer straight to pandan and skipped
+``get_principal`` on purpose, because before that cutover ``get_principal`` meant a second, blocking
+pandan round trip (ADR 0002's identity introspection) on every cold cache — a cost this route's own
+upstream call already had to pay once, and paying it twice for a route whose real authorization
+check *is* pandan's own board/view ownership check would have bought nothing. ``KAN-1740`` removed
+that cost entirely: ``get_principal`` is now a local, indexed database lookup with no pandan call in
+it at all (`app/auth/kaya_principal.py`). What used to be a real trade-off is now free, and it is
+also the only way this route can know *which* linked pandan PAT to forward — the caller's own
+kaya-side bearer stopped being a pandan credential the same cutover made, so there is no longer a
+bearer to skip resolving in the first place. See `app/integrations/board_embed.py`'s module
+docstring for the rest of that story.
 
-So authentication here is structural rather than full identity resolution: a request with no
-``Authorization`` header at all gets kaya's own `401` (below), in the same error shape and with the
-same ``WWW-Authenticate`` header ``principal_from_bearer`` would give it. A request carrying a
-bearer pandan does not recognise is **not** a `401` from kaya — it reaches
-``BoardEmbedResolver.resolve()``, which forwards it, gets pandan's own `401`/`403`, and renders
-``unavailable: true`` exactly as it would for a board the caller cannot see. That is not a gap: a
-kaya-side identity check would answer the same question (is this bearer any good?) that the
-embed's own upstream call is about to answer anyway, so doing it twice would only add pandan
-latency to every render for a distinction (invalid token vs. valid-token-wrong-board) this route's
-response shape does not surface either way (see ``BoardEmbedResult``'s docstring for why not).
+**Still no session-owning row of its own** — a lookup, not a write, and the one place this route
+touches the database is a single indexed `SELECT` on `pandan_link.user_id`
+(`app/identity/pandan_link.py`), not a session `get_principal` didn't already need to open.
 
 Query validation is a `422` in the usual shape, built by hand rather than left to FastAPI's
 default: "exactly one of ``view``/``column``" is a cross-field rule Pydantic's per-field validation
@@ -41,11 +35,16 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.api.schemas import BoardEmbedResponse, EmbedCard
-from app.auth import error_body
-from app.integrations.dependencies import BoardResolver, CallerBearer
+from app.auth import Principal, error_body, get_principal
+from app.config import get_settings
+from app.db import get_session
+from app.identity.pandan_link import PandanLink, decrypt_token
+from app.integrations.dependencies import BoardResolver
 
 router = APIRouter(prefix="/api/v1", tags=["embeds"])
 
@@ -83,23 +82,22 @@ def board_embed_query(
     return BoardEmbedQuery(board=board, view=view, column=column)
 
 
-def require_bearer(bearer: CallerBearer) -> str:
-    """The one authentication check this route makes — see the module docstring for why it is
-    structural rather than ``get_principal``'s full introspection. Same code, message and header
-    ``principal_from_bearer`` uses for the identical case, so a caller sees one `401` shape
-    whichever authenticated route answered it.
-    """
-    if bearer is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=error_body("authentication_required", "a bearer token is required"),
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return bearer
+def linked_pandan_bearer(db: Session, principal: Principal) -> str | None:
+    """The caller's own linked pandan PAT, decrypted, or `None` if they have never connected one
+    (`app/api/pandan_link.py`) or the stored ciphertext can no longer be read back (a
+    `KAYA_AUTH_SECRET` rotation since — `decrypt_token`'s own docstring). Both collapse to the
+    same `None`, on purpose: `BoardEmbedResolver.resolve` cannot and should not act differently on
+    either, the same "a caller cannot act differently" argument `BoardEmbedResult` already makes
+    for `unavailable`."""
+    link = db.scalar(select(PandanLink).where(PandanLink.user_id == principal.id))
+    if link is None:
+        return None
+    return decrypt_token(link.encrypted_token, get_settings().kaya_auth_secret)
 
 
 EmbedQuery = Annotated[BoardEmbedQuery, Depends(board_embed_query)]
-RequiredBearer = Annotated[str, Depends(require_bearer)]
+CurrentPrincipal = Annotated[Principal, Depends(get_principal)]
+DbSession = Annotated[Session, Depends(get_session)]
 
 
 @router.get(
@@ -108,16 +106,20 @@ RequiredBearer = Annotated[str, Depends(require_bearer)]
 )
 def get_board_embed(
     query: EmbedQuery,
-    bearer: RequiredBearer,
+    db: DbSession,
+    principal: CurrentPrincipal,
     resolver: BoardResolver,
 ) -> BoardEmbedResponse:
-    """Always `200`. `unavailable: true` covers every reason pandan could not answer — down, the
-    board/view does not exist, or the caller cannot see it — and ``cards`` is `[]` either way or
-    for a legitimately empty result (see ``BoardEmbedResponse``'s docstring, ADR 0003).
-    """
+    """Always `200`. `not_connected: true` means this caller has no linked pandan PAT to forward
+    at all; otherwise `unavailable: true` covers every reason pandan itself could not answer —
+    down, the board/view does not exist, or the caller cannot see it — and `cards` is `[]` in
+    every one of those cases, or for a legitimately empty result (`BoardEmbedResponse`'s
+    docstring, ADR 0003)."""
+    bearer = linked_pandan_bearer(db, principal)
     result = resolver.resolve(bearer, query.board, view_id=query.view, column=query.column)
     return BoardEmbedResponse(
         unavailable=result.unavailable,
+        not_connected=result.not_connected,
         cards=[
             EmbedCard(ref=card.ref, title=card.title, column=card.column) for card in result.cards
         ],

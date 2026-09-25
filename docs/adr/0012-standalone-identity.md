@@ -71,3 +71,37 @@ Restated from ADR 0002, re-evaluated against the changed goal:
   (an extra connect step) until EPIC-283's card for it lands. `KAYA_PANDAN_*` env vars and the
   introspection code they configure should be removed in the same PR that lands the new auth, not left
   as dead configuration.
+
+## Amendment (2026-09-25): the board-embed reconnect step, shipped (KAN-1741)
+
+The Decision above named the fix without building it. `KAN-1741` builds it: a `pandan_link` table
+(one row per `kaya_account`, unique on `user_id`), an `/api/v1/pandan-link` router (`GET`/`POST`/
+`DELETE`, gated on `get_principal` — no chicken-and-egg here the way minting kaya's *first* PAT has,
+since reaching this route at all already means holding a working kaya credential), and a `/pandan`
+SPA page to drive it.
+
+**Encrypted, not hashed — the one place this ADR's own PAT design (hash, never store the secret)
+does not apply.** A linked pandan PAT must be handed back to pandan raw on every board-embed render,
+so a one-way hash is the wrong primitive; `Fernet`, keyed from `KAYA_AUTH_SECRET` (already doing
+double duty for OAuth CSRF signing and kaya's own PAT hashing — this is its third use), is the
+smallest honest answer. Rotating that secret invalidates every stored link exactly the way it
+already invalidates every cookie session and PAT hash — expected, not a bug.
+
+**Verified before storage.** `POST /api/v1/pandan-link` checks the pasted token against pandan's own
+`GET /api/v1/me` (the endpoint this ADR's predecessor, ADR 0002, added to pandan for kaya's own
+now-retired resolver — still live and useful standalone) before persisting anything: a rejected
+token is a `422`, pandan being unreachable is a `503`, and the two are not conflated (Q9's rule,
+mirrored here — a wrong guess about a credential is worse than an honest "couldn't check").
+
+**A caller with no link is a third, distinct outcome from "pandan is unreachable."**
+`BoardEmbedResult`/`BoardEmbedResponse` grew a `not_connected` flag, never `true` at the same time as
+`unavailable`: the two are actionable differently (go connect an account, versus nothing the caller
+can do), and `PreviewPane.svelte` renders a "connect your pandan account" prompt for the first and
+the generic "could not be reached" notice for the second.
+
+**Deliberately narrow scope, and the narrowing is recorded rather than hidden.**
+`app/integrations/card_resolution.py` (wikilink resolution) forwards the caller's own kaya-side
+bearer the exact same way the board-embed preview used to, and has the identical defect — it is
+**not** fixed by this amendment. It degrades to "unresolved" rather than failing loudly (ADR 0003),
+which made it the lower-priority of the two broken call sites, not an oversight; a future card should
+give it the same `pandan_link` lookup this one gave the board-embed preview.

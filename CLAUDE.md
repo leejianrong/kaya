@@ -53,9 +53,12 @@ an ADR in the pandan repo; bare "ADR NNNN" means this repo's. Read `PLAN.md` bef
    `app/auth/kaya_principal.py`) — a local, indexed lookup, never a call to pandan. **Existing
    notes' `owner_id` still points at the retired pandan-mirror `user` table** and is not reachable
    under a new `KayaAccount` id; that is a deliberate, accepted cutover cost
-   (`docs/roadmap/BREADBOARD.md`'s R19 section), not a bug. EPIC-283's remaining cards (KAN-1741)
-   are the embedded-board-preview follow-up; check the board before assuming this paragraph is the
-   final word.
+   (`docs/roadmap/BREADBOARD.md`'s R19 section), not a bug. **The board-embed preview needs its own,
+   explicitly-connected pandan credential now** (KAN-1741) — `/api/v1/pandan-link` stores one PAT
+   per kaya account, encrypted (`app/identity/pandan_link.py`), and `app/api/embeds.py` forwards
+   *that*, never the caller's own kaya-side bearer, which stopped being a pandan credential the same
+   cutover made. EPIC-283 is closed as of KAN-1741; EPIC-284 (device-flow CLI login, hosted MCP) is
+   next — check the board before assuming this paragraph is the final word.
 3. **`render()`'s signature is frozen** ([ADR 0005](docs/adr/0005-born-agent-conformant.md)). If a
    change needs to alter it, stop — that's the sequencing violated, not a reason to push through.
    Six shipped features found another answer (e.g. `Payload.limited_to()` applied at the call site).
@@ -114,6 +117,17 @@ for each is in [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md).
   `credentialState()` returns `set`/`not set` only — never a length or a masked fragment. Separate
   from `lib/identity.ts`'s cookie-session seam (the Tokens page, KAN-1739) on purpose — two
   different credential types serving two different purposes, never merged into one module.
+- **A linked pandan PAT is encrypted at rest, never hashed** (`app/identity/pandan_link.py`, ADR
+  0012's amendment, KAN-1741) — kaya's own PATs are hashed because kaya only ever verifies one was
+  presented; a linked pandan PAT must be handed back to pandan raw on every board-embed render, so a
+  one-way hash cannot work here. `Fernet`, keyed from `KAYA_AUTH_SECRET` — rotating that secret
+  invalidates every stored link the same way it already invalidates every cookie session and kaya
+  PAT hash. **`app/integrations/card_resolution.py` (wikilink resolution) has the identical
+  now-broken-bearer problem KAN-1741 fixed for board embeds** (both used to forward the caller's own
+  kaya-side bearer, which stopped being a pandan credential at `KAN-1740`) **and is not yet fixed** —
+  a known, explicitly-tracked gap, not something papered over; it degrades to "unresolved" rather
+  than failing loudly (ADR 0003), which is why it was sequenced after the board-embed preview rather
+  than blocking it.
 - **A `PATCH` is guarded only if `if_updated_at` is sent, and only over `body`** (ADR 0009) — a
   title/path-only write is unguarded even with a stale precondition. The CLI's only guard flag is
   `--if-updated-at`; there is no `--force`, and the client never fetches the precondition itself

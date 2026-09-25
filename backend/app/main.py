@@ -22,6 +22,7 @@ from app.api import (
     links_router,
     meta_router,
     note_claim_router,
+    pandan_link_router,
     tokens_router,
 )
 from app.api import router as api_router
@@ -96,8 +97,9 @@ app.include_router(api_router)
 app.include_router(links_router)
 
 # KAN-1049's `/embeds/board`. A third router under `/api/v1` for the reason `app/api/embeds.py`
-# argues: it is authenticated but, unlike every route on `api_router` and unlike `links_router`,
-# it holds no database session at all.
+# argues: since `KAN-1741` it resolves the caller's kaya identity to look up their linked pandan
+# PAT, so it reads as itself in its own module rather than growing a conditional inside
+# `notes.py`/`links.py`.
 app.include_router(embeds_router)
 
 # KAN-1050's `/graph`. A fourth router under `/api/v1` for the reason `app/api/graph.py` argues: it
@@ -133,10 +135,16 @@ install_identity_routes(app)
 
 # ADR 0012 (KAN-1739): `/api/v1/tokens`. A seventh router under `/api/v1` for the reason
 # `app/api/tokens.py` argues: it is the one route group here gated on kaya's own cookie-session
-# identity rather than the pandan-forwarded bearer every other route under `api_router` still
-# resolves through. Registration order is immaterial against every other router — no other route
-# matches `/tokens` or `/tokens/{token_id}`.
+# identity specifically, rather than `get_principal`'s cookie-or-`kaya_pat_…` pair every other route
+# under `api_router` resolves through since `KAN-1740`. Registration order is immaterial against
+# every other router — no other route matches `/tokens` or `/tokens/{token_id}`.
 app.include_router(tokens_router)
+
+# ADR 0012's amendment (KAN-1741): `/api/v1/pandan-link`. An eighth router under `/api/v1` for the
+# same reason `tokens_router` is its own — `app/api/pandan_link.py`'s module docstring has the
+# argument. Registration order is immaterial against every other router — no other route matches
+# `/pandan-link`.
+app.include_router(pandan_link_router)
 
 
 class Health(BaseModel):

@@ -48,6 +48,8 @@ from app.integrations.card_resolution import (
     default_resolver,
     default_upstream,
 )
+from app.integrations.pandan_link import PandanLinkVerifier
+from app.integrations.pandan_link import default_verifier as default_pandan_link_verifier
 from app.integrations.storage import ObjectStorage
 from app.integrations.storage import default_storage as default_object_storage
 
@@ -92,6 +94,20 @@ def get_board_embed_resolver() -> BoardEmbedResolver:
 def reset_board_embed() -> None:
     """Drop the cached upstream singleton. The twin of ``reset_card_resolution``."""
     get_board_embed_upstream.cache_clear()
+
+
+@lru_cache(maxsize=1)
+def get_pandan_link_verifier() -> PandanLinkVerifier:
+    """Process-wide, for the reason `get_card_epic_upstream` gives: `PandanHttpVerifier` pools an
+    `httpx.Client` to pandan, and rebuilding one per request would pay a TLS handshake on every
+    connect-a-pandan-account submission."""
+    return default_pandan_link_verifier(get_settings())
+
+
+def reset_pandan_link() -> None:
+    """Drop the cached verifier. The twin of `reset_board_embed`, needed for the identical
+    reason."""
+    get_pandan_link_verifier.cache_clear()
 
 
 @lru_cache(maxsize=1)
@@ -142,4 +158,5 @@ def caller_bearer(
 CallerBearer = Annotated[str | None, Depends(caller_bearer)]
 CardResolver = Annotated[CardEpicResolver, Depends(get_card_epic_resolver)]
 BoardResolver = Annotated[BoardEmbedResolver, Depends(get_board_embed_resolver)]
+PandanLinkVerify = Annotated[PandanLinkVerifier, Depends(get_pandan_link_verifier)]
 ObjectStorageDep = Annotated[ObjectStorage, Depends(get_object_storage)]

@@ -1,6 +1,6 @@
 """The ``/api/v1`` surface (KAN-536).
 
-Nine modules, and the split is the same one ``app/auth/`` makes: the decisions sit in functions
+A dozen modules, and the split is the same one ``app/auth/`` makes: the decisions sit in functions
 over ordinary objects, and only the route modules know FastAPI's routing machinery exists.
 
 - ``errors.py`` — the wire shape of an error, for *every* failure the app can produce.
@@ -14,8 +14,10 @@ over ordinary objects, and only the route modules know FastAPI's routing machine
   route module rather than two more functions in ``notes.py``, because these are the only routes in
   the package that take a bearer and an upstream client as well as a session — see its docstring,
   which argues the split and the three-phase body that follows from it.
-- ``embeds.py`` — KAN-1049's one: ``/embeds/board``, a note's live `pandan-board` embed. A bearer
-  and an upstream client but, unlike ``links.py``, deliberately **no** session — see its docstring.
+- ``embeds.py`` — KAN-1049's one: ``/embeds/board``, a note's live `pandan-board` embed. Resolves
+  the caller's kaya identity, looks up their linked pandan PAT (`pandan_link.py`), and forwards that
+  to an upstream client — see its docstring for why this now needs `get_principal` and a session,
+  where an earlier draft deliberately avoided both.
 - ``graph.py`` — KAN-1050's ``/graph``: every note the caller owns and every resolved note-to-note
   wikilink among them, node-and-edge shaped for the SPA's graph view.
 - ``attachments.py`` — R14's two (KAN-1067/1068): ``POST``/``GET /notes/{ref}/attachments``,
@@ -29,6 +31,11 @@ over ordinary objects, and only the route modules know FastAPI's routing machine
 - ``tokens.py`` — ADR 0012's ``/tokens`` CRUD (KAN-1739): the one route group in this package
   gated on kaya's own **cookie-session** identity (``app/identity/``) rather than the pandan
   bearer every other route here still resolves through. See its module docstring for why.
+- ``pandan_link.py`` — ADR 0012's amendment (KAN-1741): ``/pandan-link``, connecting a kaya account
+  to a pandan PAT so ``embeds.py``'s board preview has something of pandan's own to forward, now
+  that the caller's own kaya-side bearer no longer is one. Gated on ``get_principal``, same as
+  every route on ``router`` below — see its module docstring for why that is no longer the
+  double-pandan-round-trip concern it would have been before ``KAN-1740``.
 """
 
 from app.api.attachments import router as attachments_router
@@ -39,6 +46,7 @@ from app.api.links import router as links_router
 from app.api.meta import router as meta_router
 from app.api.note_claim import router as note_claim_router
 from app.api.notes import router
+from app.api.pandan_link import router as pandan_link_router
 from app.api.refs import NoteRef, invalid_note_ref, parse_note_ref, resolve_note
 from app.api.tokens import router as tokens_router
 
@@ -52,6 +60,7 @@ __all__ = [
     "links_router",
     "meta_router",
     "note_claim_router",
+    "pandan_link_router",
     "parse_note_ref",
     "resolve_note",
     "router",

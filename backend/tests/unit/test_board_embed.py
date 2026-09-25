@@ -136,3 +136,35 @@ def test_an_empty_result_set_is_not_unavailable(
 
     assert result.unavailable is False
     assert result.cards == ()
+
+
+# --- no linked pandan account (KAN-1741) ----------------------------------------------------------
+
+
+def test_a_missing_bearer_is_not_connected_and_calls_pandan_never(
+    resolver: BoardEmbedResolver, upstream: FakeBoardEmbedUpstream
+) -> None:
+    """`app/api/embeds.py` passes `None` when the caller has no linked pandan PAT (or a link kaya
+    can no longer read back) — this must short-circuit before any upstream call, not merely
+    degrade the same way an unreachable pandan would."""
+    result = resolver.resolve(None, 18, column="todo")
+
+    assert result.unavailable is False
+    assert result.not_connected is True
+    assert result.cards == ()
+    assert upstream.view_calls == []
+    assert upstream.card_calls == []
+
+
+def test_not_connected_and_unavailable_are_not_the_same_flag(
+    resolver: BoardEmbedResolver, upstream: FakeBoardEmbedUpstream
+) -> None:
+    """A resolved bearer that pandan itself rejects is `unavailable`, never `not_connected` — the
+    two describe different situations (`BoardEmbedResult`'s own docstring) and a caller must be able
+    to tell "you have no link" from "your link isn't working right now" apart."""
+    upstream.cards_available = False
+
+    result = resolver.resolve(TOKEN, 18, column="todo")
+
+    assert result.unavailable is True
+    assert result.not_connected is False
