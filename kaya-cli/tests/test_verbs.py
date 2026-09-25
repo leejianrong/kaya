@@ -247,8 +247,17 @@ def test_every_parser_word_has_a_verb_and_every_verb_has_a_parser_word() -> None
     KAN-549 — so it is added to the left-hand side by name. Named rather than filtered out of the
     right, because "there is exactly one wordless verb" is the claim being made, and a filter would
     let a second one arrive unremarked.
+
+    ``verbs.AUTH_LOGIN`` (ADR 0013, KAN-1743) is the mirror image: the one parser word with **no**
+    row in either table, because `kaya auth login` is dispatched directly by `__main__.main` before
+    `verbs.run` ever sees it (`kaya_cli.auth.run_login`'s own module docstring explains why). Added
+    to the right-hand side by name for the identical reason `BARE` is added to the left — "there is
+    exactly one wordless verb, and exactly one rowless word" is the claim, and a filter would let a
+    second one of either arrive unremarked.
     """
-    assert _parser_words(build_parser()) | {verbs.BARE} == set(verbs.VERBS) | set(verbs.LOCAL_VERBS)
+    assert _parser_words(build_parser()) | {verbs.BARE} == set(verbs.VERBS) | set(
+        verbs.LOCAL_VERBS
+    ) | {verbs.AUTH_LOGIN}
 
 
 def test_the_two_dispatch_tables_are_disjoint() -> None:
@@ -261,7 +270,8 @@ def test_the_two_dispatch_tables_are_disjoint() -> None:
 
 def test_the_published_verb_set_is_pinned() -> None:
     """SLICES §V2b step 6's list plus §V5 step 6's two plus R12's four (KAN-1060..1063) plus
-    R18's four (KAN-1198), written out so that adding a verb is a visible edit here.
+    R18's four (KAN-1198) plus ADR 0013's three (KAN-1743), written out so that adding a verb is a
+    visible edit here.
 
     The same discipline as `kaya-client`'s pin on ``CLI_FORMATS``: a verb reaching a shell is a
     published contract, and the way one arrives unnoticed is as a side effect of a refactor that
@@ -283,6 +293,9 @@ def test_the_published_verb_set_is_pinned() -> None:
         ("context", "uninstall"),
         ("context", "status"),
         ("context", "print"),
+        ("auth", "login"),
+        ("auth", "logout"),
+        ("auth", "me"),
         ("links", None),
         ("backlinks", None),
         ("export-all", None),

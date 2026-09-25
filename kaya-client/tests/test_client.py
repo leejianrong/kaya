@@ -374,3 +374,44 @@ def test_the_client_feeds_render_directly() -> None:
             "\n2 notes\n"
             "\nhelp: kaya note get <ref>\nhelp: kaya note create <title>"
         )
+
+
+# --- me (ADR 0012's amendment, KAN-1743) --------------------------------------------------------
+
+
+def test_me_returns_an_entity_payload() -> None:
+    body = {"id": "abc-123", "email": "alice@example.com"}
+    with client_over(responder(200, body)) as client:
+        payload = client.me()
+
+    assert payload.kind is Kind.ENTITY
+    assert payload.record == body
+
+
+def test_me_hits_the_me_route() -> None:
+    handler = responder(200, {"id": "abc-123", "email": "alice@example.com"})
+    with client_over(handler) as client:
+        client.me()
+    assert handler.seen.url.path == "/api/v1/me"  # type: ignore[attr-defined]
+
+
+def test_me_forwards_the_bearer() -> None:
+    handler = responder(200, {"id": "abc-123", "email": "alice@example.com"})
+    with client_over(handler) as client:
+        client.me()
+    assert handler.seen.headers["authorization"] == f"Bearer {TOKEN}"  # type: ignore[attr-defined]
+
+
+def test_me_raises_api_error_on_401() -> None:
+    body = {"error": {"code": "invalid_token", "message": "no"}}
+    with client_over(responder(401, body)) as client, pytest.raises(ApiError) as excinfo:
+        client.me()
+    assert excinfo.value.status == 401
+
+
+def test_me_renders_a_two_column_row() -> None:
+    body = {"id": "abc-123", "email": "alice@example.com"}
+    with client_over(responder(200, body)) as client:
+        rendered = render(client.me())
+    assert "abc-123" in rendered
+    assert "alice@example.com" in rendered

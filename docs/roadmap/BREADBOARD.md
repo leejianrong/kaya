@@ -396,14 +396,18 @@ independently implemented. Full reasoning is in
 
 | Part | Mechanism |
 |------|-----------|
-| `kaya auth login/logout/status` | RFC 8628 Device Authorization Grant against kaya's own authorization server (R19) — device code + user code + polling, same UX pattern as pandan's. **No board/workspace scoping step** — every kaya PAT is account-wide (R19's own PAT shape has no scoping dimension to consent to). |
-| Hosted MCP | Streamable HTTP, RFC 9728 (protected resource metadata) + RFC 7591 Dynamic Client Registration (or its CIMD successor, whichever pandan's EPIC-282 settles on) + RFC 8707 resource-indicator token binding — the same resource-server shape as pandan ADR 0025, backed by kaya's own authorization server. |
-| Stdio MCP | Stays, repositioned as a documented self-hosting/offline fallback — the hosted endpoint and the CLI become the top-billed options. |
+| `kaya auth login/logout/status` | **Shipped (`KAN-1743`).** RFC 8628 Device Authorization Grant against kaya's own authorization server (`/auth/device/{code,token,{user_code},{user_code}/approve,{user_code}/deny}`, `app/identity/device_auth_router.py`) — device code + user code + polling, same UX pattern as pandan's. **No board/workspace scoping step** — every kaya PAT is account-wide, so `device_authorization` carries no scoping column at all (pandan's `requested_board_ids` has no analogue). The consent screen (`/device`, `DeviceConsent.svelte`) gates on kaya's own cookie session (`get_current_active_user`), not `get_principal` — deliberately: `get_principal` would produce a real circular import (`app.auth` → `app.identity.pat` → `app.identity`'s package init → this router → back to `app.auth`), and independently, the same chicken-and-egg argument `/api/v1/tokens` already makes for PAT minting applies here too (approving mints a PAT on the CLI's next poll, so an existing leaked PAT must not be able to approve a new login). The CLI verb is `kaya auth me`, not the more obvious `status` — `status` is already an `add_parser` word under `kaya context`, and `mcp/tests/test_cli_parity.py`'s reader refuses two verbs sharing a bare word; `me` mirrors the `GET /api/v1/me` → `KayaClient.me()` chain it actually calls. `kaya auth login` is dispatched directly by `kaya_cli.__main__.main`, with **no row in either of `verbs.py`'s dispatch tables** — the mirror image of `verbs.BARE` — because its multi-step, human-in-the-loop flow has no single `Payload` for `render()` to format. |
+| Hosted MCP | Streamable HTTP, RFC 9728 (protected resource metadata) + RFC 7591 Dynamic Client Registration (or its CIMD successor, whichever pandan's EPIC-282 settles on) + RFC 8707 resource-indicator token binding — the same resource-server shape as pandan ADR 0025, backed by kaya's own authorization server. **Not started (`KAN-1744`) — genuinely blocked, not merely next in the queue.** Neither ADR 0013 nor pandan's own ADR 0025 (its stated mirror) actually specifies the browser-redirect OAuth 2.1 Authorization Code + PKCE mechanics a hosted MCP client (Claude.ai, ChatGPT, Cursor) needs to obtain a token in the first place — RFC 9728/7591/8707 are all resource-*server*-side concerns (metadata, registration, audience binding), and pandan's own ADR 0024 explicitly deferred that flow's mechanics to ADR 0025, which then never supplied them either. Flagged to the maintainer rather than improvised past; a follow-up ADR (mirroring pandan's own, if it writes one for the identical gap) is the expected next step before `KAN-1744` can start. |
+| Stdio MCP | Stays, repositioned as a documented self-hosting/offline fallback — the hosted endpoint and the CLI become the top-billed options. Not yet done (`KAN-1745`, docs). |
 
 **Fit-check.** Sequenced strictly after R19 (a device flow needs an authorization server to grant
 against) but not otherwise blocked on pandan's own EPIC-281/282 build — the RFC mechanics are
-spec-defined, not pandan-implementation-defined.
+spec-defined, not pandan-implementation-defined. That held for `KAN-1743`'s device flow, which is
+fully spec-defined with no redirect target to design; it does **not** hold for `KAN-1744`'s
+authorization-code flow, which is the one piece of the RFC set that is not self-contained — see the
+table row above.
 
-**Cards:** `KAN-1743` (`kaya auth login/logout/status`), `KAN-1744` (hosted remote MCP endpoint),
-`KAN-1745` (docs: hosted MCP + CLI as top options, stdio as the fallback). All under `EPIC-284`. Not
-started — blocked on R19 (`KAN-1740`–`1741`) landing first.
+**Cards:** `KAN-1743` (`kaya auth login/logout/status` — **shipped**, as `kaya auth login/logout/me`),
+`KAN-1744` (hosted remote MCP endpoint — **blocked on a design gap**, see above),
+`KAN-1745` (docs: hosted MCP + CLI as top options, stdio as the fallback — not started, sequenced
+after `KAN-1744`). All under `EPIC-284`.

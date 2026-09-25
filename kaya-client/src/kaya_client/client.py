@@ -31,14 +31,24 @@ or when the file names none at all. See ``_import_document`` for the whole decis
 
 ### The transport seam
 
-``client`` is injectable, the same shape as ``PandanIdentityUpstream`` in
-`backend/app/auth/upstream.py`, and it carries the same asymmetry warning for the same reason.
-Tests drive it with an ``httpx.MockTransport``: no network, no live backend, no PAT anywhere near
-this repository.
+``client`` is injectable, the same shape ``app/integrations/pandan_link.py``'s `PandanHttpVerifier`
+and `app/integrations/board_embed.py`'s `PandanBoardEmbedUpstream` use on the backend side, and it
+carries the same asymmetry warning for the same reason. Tests drive it with an
+``httpx.MockTransport``: no network, no live backend, no PAT anywhere near this repository.
 
 It is also the named place retry-with-backoff would land if KAN-666's measurement asks for it — see
-``_request``. Nothing retries today, and nothing should start to without that measurement, because
-a retry over a 21.8 s cold introspection makes an outage take a multiple of the timeout to report.
+``_request``. Nothing retries today.
+
+**`DEFAULT_READ_TIMEOUT`'s own derivation below is stale as of ADR 0012/KAN-1740, and is flagged
+rather than silently re-derived here.** It was built entirely around ADR 0002's cold-pandan-
+introspection cost (KAN-539/KAN-666) — a request-path call to pandan that no longer exists at all
+(`app/auth/kaya_principal.py`'s resolution is a local, indexed database read). `test_client_
+deadline_outlasts_auth.py`, the guard the comment below names, was deleted in the same cutover
+(nothing on the backend side still exposes the two numbers it compared this constant against). The
+value (`40.0`) is left unchanged rather than guessed at — lowering it without a fresh measurement of
+what a *warm* kaya request actually costs would be trading one unmeasured number for another, the
+exact thing KAN-539/KAN-666 existed to avoid doing the first time. This is a genuine open question
+for a follow-up card, not something this one improvises past.
 """
 
 from pathlib import Path, PurePosixPath
@@ -53,46 +63,33 @@ from kaya_client.payloads import Payload
 
 # --------------------------------------------------------------------------- the deadline
 #
-# THE INVARIANT (KAN-716):
+# THE INVARIANT (KAN-716) — HISTORICAL, VOID SINCE ADR 0012/KAN-1740, KEPT FOR CONTEXT ONLY:
 #
 #     DEFAULT_READ_TIMEOUT  >  backend connect budget + backend read budget  +  handling margin
 #              40.0 s       >            5.0 s        +        30.0 s        +      5.0 s
 #
-# The right-hand side is `KAYA_PANDAN_CONNECT_TIMEOUT_SECONDS` and
-# `KAYA_PANDAN_READ_TIMEOUT_SECONDS` in `backend/app/config.py`, the two budgets KAN-666 split the
-# introspection deadline into. A request that misses the principal cache pays both before kaya has
-# looked at a note, so they are a floor under how long the *server* may legitimately take, and a
-# client deadline under that floor abandons a request the backend was about to answer — the exact
-# failure KAN-666 exists to prevent, one layer out, and reported as a `TransportError` on a working
-# credential.
-#
-# Neither number can see the other: ADR 0004 points the dependency arrow at this package, so the
-# backend may not import it, and this package may not import the backend. The alarm therefore lives
-# where the change that breaks the invariant would actually be made —
-# `backend/tests/unit/test_client_deadline_outlasts_auth.py`, which reads `DEFAULT_READ_TIMEOUT`
-# below out of this file's AST and compares it against the live `Settings` defaults. Raising the
-# backend's read budget past what this constant tolerates is a red test there, with this file named
-# in the message. That guard owns the arithmetic; the numbers written above are today's values and
-# are prose.
+# The right-hand side was `KAYA_PANDAN_CONNECT_TIMEOUT_SECONDS`/`KAYA_PANDAN_READ_TIMEOUT_SECONDS`
+# in `backend/app/config.py` — both deleted in KAN-1740, along with the cold-pandan-introspection
+# call on the request path they used to budget for (`app/auth/kaya_principal.py`'s resolution is a
+# local, indexed database read now). `backend/tests/unit/test_client_deadline_outlasts_auth.py`,
+# the AST-reading guard this section used to name, is deleted with them. **`DEFAULT_READ_TIMEOUT`
+# below is unchanged (`40.0`) but its justification is gone** — see this module's own docstring,
+# "The transport seam" section, for why that is flagged rather than silently fixed by guessing a
+# new number.
 #
 # ---------------------------------------------------------------------------------------------
 # AND THE DECISION NOT TO MAKE THIS PER-CALL (KAN-551, recorded here because this is where someone
-# would go to do it):
+# would go to do it) — the *shape* of this argument still holds even though its numbers are stale:
 #
 # The obvious next request is a per-verb or per-call deadline — "a `delete` should not wait forty
-# seconds", "an upload needs longer". Its premise is false for kaya. The dominant term in the
-# number above is *authentication*, which every request pays on a cache miss whatever the verb is:
-# a `POST /notes` behind a cold introspection waits exactly as long as a `GET`, because both are
-# blocked on the same call to pandan before kaya has looked at a note. What genuinely would differ
-# is a large upload, and that is httpx's `write` phase — already on the connect budget, for the
-# reason DEFAULT_CONNECT_TIMEOUT documents: httpx charges `write` per write operation rather than
-# per upload, so a big body does not accumulate against it.
+# seconds", "an upload needs longer". What genuinely would differ is a large upload, and that is
+# httpx's `write` phase — already on the connect budget, for the reason DEFAULT_CONNECT_TIMEOUT
+# documents: httpx charges `write` per write operation rather than per upload, so a big body does
+# not accumulate against it.
 #
-# What a knob would cost is the guard. `test_client_deadline_outlasts_auth.py` reads **one**
-# constant out of this file's AST and checks it against the backend's two. Per-call overrides mean
-# either N constants for it to find or a caller free to pass a number below the floor, and either
-# way the coupling KAN-716 existed to make *checkable* is re-broken one layer out — with the added
-# insult that the layer doing the breaking is the one the guard was written to protect.
+# What a knob would cost is a guard like the one this section used to have: one constant, one place
+# to compare it against a floor. Per-call overrides mean either N constants for such a guard to
+# find or a caller free to pass a number below whatever floor a future measurement re-establishes.
 #
 # V6 is not prejudged by this. If MCP reads turn out to want a different tolerance, that is a V6
 # measurement, and `KayaClient(timeout=…)` is already the seam it would land on: one session, one
@@ -110,25 +107,29 @@ reach the server is the fail-fast behaviour ADR 0003 asks for, thrown away in th
 was easy to keep.
 
 ``write`` and ``pool`` take this budget too, for the reason ``split_timeout`` in
-`app/auth/upstream.py` gives: `write` blocking past it is a broken socket rather than a busy server
-(httpx charges it per write operation, not per upload, so V2b's note bodies do not need the read
-budget), and `pool` is contention for a local connection slot, which has nothing to do with how
-awake anything is."""
+`app/pandan_timeout.py` gives (the module the same split moved to once `app/auth/upstream.py` was
+deleted, KAN-1740): `write` blocking past it is a broken socket rather than a busy server (httpx
+charges it per write operation, not per upload, so V2b's note bodies do not need the read budget),
+and `pool` is contention for a local connection slot, which has nothing to do with how awake
+anything is."""
 
 DEFAULT_READ_TIMEOUT = 40.0
 """How long the client waits for kaya's *answer* once the request is on the wire.
 
-Generous on purpose, and the invariant above is what makes it a derived number rather than a
-preference. A kaya request can sit behind a cold pandan introspection — measured at 21.8 s, PLAN
-§Open risks, KAN-539 — which the backend now budgets 5 s to reach and 30 s to wait out. 35 s of
-authentication plus 5 s for the request kaya was actually asked to serve is 40, and the margin is
-generous against measurement: the whole warm path, round trip and mirror write included, is 387 ms.
+**Kept at its historical value (40.0), but its original derivation no longer applies — see this
+module's own docstring, "The transport seam" section, and the `THE INVARIANT` comment block above
+it.** It used to be `35 s of ADR 0002's cold-pandan-introspection budget + 5 s for the request kaya
+was actually asked to serve`; that authentication cost is gone entirely since ADR 0012/KAN-1740
+(`app/auth/kaya_principal.py`'s resolution is a local database read, not a call to pandan). What is
+left of the number is generosity with no measured floor under it any more — the whole warm path,
+round trip included, was measured at 387 ms before the cutover and has only gotten cheaper since.
+Lowering this is a fresh measurement's job (mirroring how KAN-539 measured before KAN-666 derived a
+number from it the first time), not a guess made in passing here.
 
-**The cost of the number is smaller than it looks**, which is why fail-fast does not argue it down.
-A pandan outage does not reach it: the backend gives up on the connect budget and Q9's `503` comes
-back in about 5 s. An unreachable kaya does not reach it either — that is the connect budget
-above. What is left is a kaya that accepted the connection and has not answered yet, and waiting is
-the correct thing to do with one of those."""
+**The cost of the number is smaller than it looks regardless**, which is still true after the
+cutover: an unreachable kaya never reaches it (that is the connect budget above), and what is left
+is a kaya that accepted the connection and has not answered yet, where waiting is the correct thing
+to do."""
 
 DEFAULT_TIMEOUT = httpx.Timeout(
     connect=DEFAULT_CONNECT_TIMEOUT,
@@ -195,6 +196,17 @@ Written as suffixes rather than as two more path templates so that every ref-tak
 goes through ``_note_path`` — the reason that helper exists is that a ref interpolated raw reaches a
 *different endpoint* than the caller named, and a second URL builder here would be the first place
 to forget it."""
+
+ME_PATH = "/api/v1/me"
+ME_NOUN = "account"
+ME_ENVELOPE = "account"
+ME_COLUMNS = ("id", "email")
+"""ADR 0012's amendment (KAN-1743): `GET /api/v1/me`'s whole body, and therefore `kaya auth
+status`'s whole default row. `id`/`email` are the only two facts the route publishes — see
+`app/api/me.py`'s own "must keep returning one key" discipline — so there is nothing here for
+`--fields` to narrow down to beyond the pair the API already gives. `account`, not `session`: the
+route answers "whose credential is this", not "how long until it expires" — a fact about a
+`KayaAccount`, not about the bearer's own lifetime."""
 
 LINK_NOUN = "link"
 LINK_ENVELOPE = "links"
@@ -547,6 +559,27 @@ class KayaClient:
             records=body.get(NOTE_ENVELOPE, []),
             columns=NOTE_LIST_COLUMNS,
             prose_fields=NOTE_PROSE_FIELDS,
+        )
+
+    # ------------------------------------------------------------- identity (ADR 0012's amendment)
+
+    def me(self) -> Payload:
+        """``GET /api/v1/me`` — who this credential authenticates as (ADR 0012's amendment,
+        KAN-1743). `kaya auth status`'s one call.
+
+        There is nothing to authorize against — a caller either has a working credential or does
+        not — so the only outcomes are a `200` here and `ApiError(401)` from `_request` (never a
+        `403`). `open_client()` has already resolved a bearer by the time this runs, the same as
+        every other method on this class; a bearer that has just been saved by `kaya auth login`
+        and a bearer pasted by hand behave identically here, which is the point of asking the API
+        rather than reading the config file back.
+        """
+        body = self._request("GET", ME_PATH)
+        return Payload.entity(
+            noun=ME_NOUN,
+            envelope_key=ME_ENVELOPE,
+            record=body,
+            columns=ME_COLUMNS,
         )
 
     # --------------------------------------------------------- export / import (R12)

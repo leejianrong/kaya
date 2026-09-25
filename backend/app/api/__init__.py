@@ -1,6 +1,6 @@
 """The ``/api/v1`` surface (KAN-536).
 
-A dozen modules, and the split is the same one ``app/auth/`` makes: the decisions sit in functions
+Thirteen modules, and the split is the same one ``app/auth/`` makes: the decisions sit in functions
 over ordinary objects, and only the route modules know FastAPI's routing machinery exists.
 
 - ``errors.py`` — the wire shape of an error, for *every* failure the app can produce.
@@ -36,6 +36,8 @@ over ordinary objects, and only the route modules know FastAPI's routing machine
   that the caller's own kaya-side bearer no longer is one. Gated on ``get_principal``, same as
   every route on ``router`` below — see its module docstring for why that is no longer the
   double-pandan-round-trip concern it would have been before ``KAN-1740``.
+- ``me.py`` — ADR 0012's amendment (KAN-1743): ``GET /api/v1/me``, mirroring pandan's own —
+  ``{id, email}`` for the calling credential, nothing else. What ``kaya auth status`` calls.
 """
 
 from app.api.attachments import router as attachments_router
@@ -43,6 +45,7 @@ from app.api.embeds import router as embeds_router
 from app.api.errors import install_error_handlers
 from app.api.graph import router as graph_router
 from app.api.links import router as links_router
+from app.api.me import router as me_router
 from app.api.meta import router as meta_router
 from app.api.note_claim import router as note_claim_router
 from app.api.notes import router
@@ -58,6 +61,7 @@ __all__ = [
     "install_error_handlers",
     "invalid_note_ref",
     "links_router",
+    "me_router",
     "meta_router",
     "note_claim_router",
     "pandan_link_router",

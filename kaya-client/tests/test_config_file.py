@@ -36,6 +36,7 @@ from kaya_client import (
     read_settings_file,
     render,
     settings_payload,
+    unset_token,
     write_settings,
 )
 from kaya_client.config import (
@@ -488,6 +489,69 @@ def test_the_write_verb_returns_the_effective_settings_and_not_the_file(
 
     assert written(env)["api_url"] == "https://filed.example"
     assert reported["api_url"] == ("https://exported.example", ENVIRONMENT_SOURCE)
+
+
+# --------------------------------------------------------------- unset_token (ADR 0013, KAN-1743)
+
+
+def test_unset_token_removes_the_key(home: dict[str, str]) -> None:
+    write_settings({TOKEN_ENV: TOKEN}, home)
+
+    unset_token(home)
+
+    assert "token" not in written(home)
+
+
+def test_unset_token_preserves_every_other_key(home: dict[str, str]) -> None:
+    """The same read-modify-write discipline `write_settings` argues for — clearing one key must
+    not silently drop `api_url`, `max_text_chars`, or a hand-set key this package has never heard
+    of."""
+    write_settings({TOKEN_ENV: TOKEN, API_URL_ENV: "https://kaya.example"}, home)
+    path = config_path(home)
+    data = json.loads(path.read_text())
+    data["a_hand_set_key"] = "kept"
+    path.write_text(json.dumps(data))
+
+    unset_token(home)
+
+    remaining = written(home)
+    assert remaining["api_url"] == "https://kaya.example"
+    assert remaining["a_hand_set_key"] == "kept"
+    assert "token" not in remaining
+
+
+def test_unset_token_reports_logged_out(home: dict[str, str]) -> None:
+    write_settings({TOKEN_ENV: TOKEN}, home)
+
+    payload = unset_token(home)
+
+    assert payload.record == {"logged_out": True}
+
+
+def test_unset_token_with_nothing_stored_is_not_an_error(home: dict[str, str]) -> None:
+    payload = unset_token(home)
+
+    assert payload.record == {"logged_out": False}
+
+
+def test_unset_token_does_not_touch_an_exported_variable(home: dict[str, str]) -> None:
+    """This function can only remove a *file* key — an exported `KAYA_TOKEN` keeps shadowing the
+    file's absence regardless, per `_resolved`'s own tier order."""
+    write_settings({TOKEN_ENV: TOKEN}, home)
+    env = {**home, TOKEN_ENV: "an-exported-token"}
+
+    unset_token(env)
+
+    assert token(env) == "an-exported-token"
+
+
+def test_unset_token_leaves_no_temporary_file_behind(home: dict[str, str]) -> None:
+    write_settings({TOKEN_ENV: TOKEN}, home)
+
+    unset_token(home)
+    path = config_path(home)
+
+    assert [entry.name for entry in path.parent.iterdir()] == [path.name]
 
 
 # ---------------------------------------------------------------------- config path

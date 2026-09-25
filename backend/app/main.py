@@ -20,6 +20,7 @@ from app.api import (
     graph_router,
     install_error_handlers,
     links_router,
+    me_router,
     meta_router,
     note_claim_router,
     pandan_link_router,
@@ -145,6 +146,11 @@ app.include_router(tokens_router)
 # argument. Registration order is immaterial against every other router — no other route matches
 # `/pandan-link`.
 app.include_router(pandan_link_router)
+
+# ADR 0012's amendment (KAN-1743): `/api/v1/me`. A ninth router under `/api/v1` for the same reason
+# every small, standalone addition here is its own — `app/api/me.py`'s module docstring has the
+# argument. Registration order is immaterial — no other route matches `/me`.
+app.include_router(me_router)
 
 
 class Health(BaseModel):
