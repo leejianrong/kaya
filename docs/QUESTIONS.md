@@ -33,9 +33,12 @@ soft-vs-self-sufficient linking) is at
 
 **Q1–Q6 and Q9 are superseded by [ADR 0012](adr/0012-standalone-identity.md) (2026-09-25, EPIC-283),
 not corrected** — each was the right decision under ADR 0002's goal ("one credential across both
-apps") and stays true of the *code* until `KAN-1740` lands, but the goal itself changed to "kaya
-authenticates entirely on its own." Rows left as originally answered, per this file's own
-don't-re-litigate convention; the current answer to each is ADR 0012's, not this row's.
+apps"), which the code matched exactly through `KAN-1738`/`1739`. **`KAN-1740` (2026-09-25) then cut
+the code over**: `get_principal` no longer forwards a bearer to pandan at all, the `sha256`
+introspection cache and the JIT `user` mirror are deleted, and `note.owner_id` now points at
+`kaya_account.id`. Rows left as originally answered, per this file's own don't-re-litigate
+convention; the current answer to each is ADR 0012's, not this row's, and the code now matches ADR
+0012 rather than ADR 0002.
 
 | ID | Question | Status | Answer or default | Landed |
 |----|----------|--------|-------------------|--------|

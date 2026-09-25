@@ -352,21 +352,28 @@ the alternatives considered (and why each was rejected), and the consequences ar
 | Sessions | `DatabaseStrategy` + a `kaya_session` table (mirrors pandan's `access_token`) — logout is a row delete, i.e. instant revocation, never a JWT waiting out its own expiry. |
 | Graceful boot | `KAYA_GITHUB_OAUTH_CLIENT_ID`/`_CLIENT_SECRET` both unset → the app still boots and every other route still works; login is simply unavailable — mirrors pandan ADR 0011's own tested behaviour. |
 | PATs | `personal_access_token` table, `kaya_pat_…` prefix, HMAC-hashed, account-wide (kaya has no board-equivalent to scope one to), `read`/`write` scope column — mirrors pandan ADR 0014. `/api/v1/tokens` CRUD + a Tokens SPA page, gated on the **cookie session only**, never a PAT bearer (avoids the chicken-and-egg — see `app/api/tokens.py`'s module docstring). **Shipped** (`KAN-1739`). |
-| Retirement | `get_principal`'s pandan-forwarding branch, the `sha256` TTL cache, single-flight coalescing, and the split connect/read deadline are deleted, not left dormant, once the new path can carry every caller (`KAN-1740`). |
+| Retirement | `get_principal`'s pandan-forwarding branch, the `sha256` TTL cache, single-flight coalescing, and the split connect/read deadline are deleted, not left dormant — `app/auth/resolver.py`, `cache.py`, `upstream.py` are gone; `app/auth/kaya_principal.py` (cookie session or `kaya_pat_…` bearer, one indexed sync lookup, no cache/upstream/single-flight — nothing left to shield a stampede from) replaces them. **Shipped** (`KAN-1740`). |
 | Board-embed preview | Currently free-rides on the same PAT authenticating both apps; needs an explicit "connect your Pandan account" step once that stops being true (`KAN-1741`). |
-| Note ownership | **Open, deliberately not resolved by this section, KAN-1738, or KAN-1739.** Existing notes' `owner_id` still points at `app.models.user` (the pandan-mirror row, ADR 0002); a human's *new* kaya-native login (`KayaAccount`) mints an unrelated id. Reconciling the two — so an existing user's existing notes are reachable under their new kaya identity — is real design work no filed card (`KAN-1738`–`1741`) currently owns; flagged here so it isn't silently assumed away before `KAN-1740` needs an answer. |
+| Note ownership | **Resolved, by deliberate reset — the maintainer's explicit call, not a reconciliation.** Migration `0009` drops the `user` mirror table entirely and re-points `note.owner_id`'s foreign key at `kaya_account.id`, `NOT VALID` (existing rows are not re-validated against it, so the migration itself does not choke on them). A note created before this migration keeps its old, now-unbacked pandan UUID in `owner_id` and is **not reachable under anyone's new `KayaAccount` id** — no email-matching, no dual-auth transition window, no admin relink tool were built. This is dev/dogfood data with no real external users at stake; a future manual re-association is the maintainer's own problem if they ever want pre-cutover notes back. |
 
-**Fit-check.** Purely additive so far (`KAN-1738`/`1739`): four new tables, one new async engine,
-three new route namespaces (`/auth/*`, `/users/*`, `/api/v1/tokens`, all covered by `app/spa.py`'s
-`RESERVED_PREFIXES`) — nothing about existing note/team/attachment behaviour changes until
-`KAN-1740` actually re-points authorization at the new identity, mirroring pandan ADR 0011's own
-"V6 only adds login" sequencing. A minted `kaya_pat_…` does not authenticate anything outside
-`/api/v1/tokens` itself until that same card lands.
+**Fit-check.** `KAN-1738`/`1739` were purely additive; `KAN-1740` is the cutover itself and is
+**not** additive on purpose — `get_principal`/`authorize_note` now resolve every caller through
+`kaya_account`/`kaya_session`/`personal_access_token` exclusively, and a pandan bearer authenticates
+nothing on kaya any more. The unrelated pandan-calling stacks (`TeamAccessResolver` for ADR 0011
+team-default access, `CardEpicResolver` for wikilink resolution, the board-embed preview) are
+**entirely unaffected** — they still call pandan, still cache, still soft-fail the same way, because
+none of that was ever about identity. `tests/integration/test_kaya_principal_resolver.py` is the
+one file in the whole suite that exercises the real resolution path with nothing faked — PAT mint
+→ auth, cookie auth, cookie-over-bearer precedence, expiry, a deactivated account's PAT rejected,
+`last_used_at` stamped — every other integration test fakes `get_principal` directly
+(`tests/integration/auth_helpers.py`) because it is really testing note *authorization*, not
+identity *resolution*.
 
 **Cards:** `KAN-1738` (OAuth App + `fastapi-users` + async engine + cookie sessions — **shipped**),
 `KAN-1739` (PAT table + `/api/v1/tokens` + Tokens UI — **shipped**), `KAN-1740` (retire the
-introspection path), `KAN-1741` (board-embed reconnect step), `KAN-1742` (this ADR + the CLAUDE.md
-update — **shipped**). All under `EPIC-283`.
+introspection path, cut `get_principal`/`authorize_note` over, re-point `note.owner_id` —
+**shipped**), `KAN-1741` (board-embed reconnect step), `KAN-1742` (this ADR + the CLAUDE.md update —
+**shipped**). All under `EPIC-283`.
 
 ## R20: Device-flow CLI login + a hosted remote MCP server (ADR 0013, EPIC-284)
 

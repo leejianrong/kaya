@@ -112,7 +112,7 @@ def test_a_minted_pat_authenticates_a_real_note_request(client: Any) -> None:
 
 
 def test_an_unknown_pat_is_401_invalid_token(client: Any) -> None:
-    response = client.get(NOTES, headers=bearer("kaya_pat_this-was-never-minted-by-anyone"))
+    response = client.get(NOTES, headers=bearer("kaya_pat_FAKEneverminted12345"))
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "invalid_token"
@@ -251,7 +251,7 @@ def test_a_live_cookie_takes_precedence_over_a_stale_bearer(client: Any) -> None
 
     response = client.get(
         NOTES,
-        headers=bearer("kaya_pat_a-bearer-naming-no-real-token"),
+        headers=bearer("kaya_pat_FAKEnorealtoken12345"),
         cookies={COOKIE_NAME: "alices-live-session"},
     )
 
