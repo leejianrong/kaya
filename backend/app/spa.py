@@ -49,6 +49,10 @@ RESERVED_PREFIXES: tuple[str, ...] = (
     "/docs",
     "/redoc",
     "/openapi.json",
+    # ADR 0012 (KAN-1738): kaya's own `/auth/*` (GitHub OAuth + logout) and `/users/*`
+    # (`fastapi-users`' `/users/me`), unversioned like `/health` — see `app/identity/router.py`.
+    "/auth",
+    "/users",
 )
 """Path namespaces the server owns. The SPA is never served for one, matched route or not.
 

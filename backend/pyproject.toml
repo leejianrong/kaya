@@ -7,7 +7,6 @@ license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     # ADR 0001: FastAPI, SYNC SQLAlchemy over psycopg v3, Alembic from day one.
-    # There is deliberately no fastapi-users, no OAuth client and no async driver.
     "fastapi>=0.115",
     "uvicorn[standard]>=0.52.1",
     "sqlalchemy>=2.0.36",
@@ -15,7 +14,8 @@ dependencies = [
     "alembic>=1.19.0",
     "pydantic-settings>=2.7",
     # Runtime, not just test tooling, since KAN-534: the principal resolver calls pandan's
-    # `GET /api/v1/me` over httpx (ADR 0002). It doubles as fastapi.testclient's transport.
+    # `GET /api/v1/me` over httpx (ADR 0002 — retired by ADR 0012/KAN-1740, but still live until
+    # that card lands). It doubles as fastapi.testclient's transport.
     "httpx>=0.28",
     # R14 (KAN-1067): attachments live in Cloudflare R2, which speaks the S3 API — boto3 is the
     # standard S3-compatible client (see app/integrations/storage.py's module docstring for why
@@ -24,6 +24,12 @@ dependencies = [
     # FastAPI's File()/UploadFile parse multipart bodies through this package; it does nothing on
     # its own and no code here imports it directly.
     "python-multipart>=0.0.32",
+    # ADR 0012 (KAN-1738): kaya becomes its own authorization server, mirroring pandan ADR 0011.
+    # fastapi-users' user store is async-only, which is why `app/db.py` now carries a second,
+    # async engine quarantined to `app/identity/` — see that package's docstring.
+    "fastapi-users[sqlalchemy]>=15.0",
+    # GitHub OAuth2 client fastapi-users' router wraps.
+    "httpx-oauth>=0.16",
 ]
 
 [project.optional-dependencies]
