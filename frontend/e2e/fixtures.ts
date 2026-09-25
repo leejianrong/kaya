@@ -14,7 +14,7 @@ import { fakeToken, prefixedTitle } from './env'
 
 export { prefixedTitle }
 
-/** Drive the real paste form with the fake pandan bearer, and wait for the shell to leave landing. */
+/** Drive the real paste form with the seeded `kaya_pat_…`, and wait for the shell to leave landing. */
 export async function pasteToken(page: Page): Promise<void> {
   await page.goto('/')
   await page.getByTestId('paste-form').locator('input[type="password"]').fill(fakeToken())

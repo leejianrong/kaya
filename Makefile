@@ -132,5 +132,5 @@ check: docs-links secret-scan image-pins version-bump lint test ## Everything th
 	@echo "✓ all checks that apply to the current tree passed"
 
 .PHONY: test-e2e
-test-e2e: ## Playwright against a real, ephemeral stack + a fake pandan (needs Docker; KAN-1070)
+test-e2e: ## Playwright against a real, ephemeral stack with a seeded kaya PAT (needs Docker; KAN-1070)
 	@scripts/test-e2e.sh
