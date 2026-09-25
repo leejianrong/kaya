@@ -1,12 +1,13 @@
 /**
- * Three routes, still zero dependencies.
+ * Four routes, still zero dependencies.
  *
  * `frontend/package.json` has only devDependencies today — Svelte compiles away, so the shipped
- * bundle carries no runtime code that isn't ours. A router library for `/`, `/notes/:ref` and
- * `/graph` would be the first crossing of that line, and it would buy nested layouts, route guards
- * and loaders that nothing in V3–V6 asks for. CodeMirror 6 is the first runtime dependency worth
- * having and that is KAN-553's deliberate crossing, measured in its own PR. KAN-1050's `/graph` is
- * the same call made again: one more arm on the closed union below, not a reason to reach for one.
+ * bundle carries no runtime code that isn't ours. A router library for `/`, `/notes/:ref`,
+ * `/graph` and `/tokens` would be the first crossing of that line, and it would buy nested
+ * layouts, route guards and loaders that nothing in V3–V6 (or KAN-1739) asks for. CodeMirror 6 is
+ * the first runtime dependency worth having and that is KAN-553's deliberate crossing, measured in
+ * its own PR. KAN-1050's `/graph` and KAN-1739's `/tokens` are the same call made again: one more
+ * arm on the closed union below, not a reason to reach for one.
  *
  * **Parsing is a pure function and reactivity is not this module's business.** `parseRoute` takes a
  * string and returns a value, so it is testable in a node environment with no DOM, and `App.svelte`
@@ -22,6 +23,7 @@ export type Route =
   | { name: 'home' }
   | { name: 'note'; ref: string }
   | { name: 'graph' }
+  | { name: 'tokens' }
   | { name: 'unknown'; path: string }
 
 /**
@@ -53,10 +55,14 @@ export function parseRoute(pathname: string): Route {
     return { name: 'graph' }
   }
 
+  if (path === '/tokens') {
+    return { name: 'tokens' }
+  }
+
   return { name: 'unknown', path }
 }
 
-/** The URL for a route. The inverse of {@link parseRoute} for the two real routes. */
+/** The URL for a route. The inverse of {@link parseRoute} for the real routes. */
 export function routeHref(route: Route): string {
   switch (route.name) {
     case 'home':
@@ -65,6 +71,8 @@ export function routeHref(route: Route): string {
       return `/notes/${encodeURIComponent(route.ref)}`
     case 'graph':
       return '/graph'
+    case 'tokens':
+      return '/tokens'
     case 'unknown':
       return route.path
   }

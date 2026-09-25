@@ -5,6 +5,7 @@
   import PreviewPane from './components/PreviewPane.svelte'
   import RightRail from './components/RightRail.svelte'
   import Sidebar from './components/Sidebar.svelte'
+  import Tokens from './components/Tokens.svelte'
   import { ApiError } from './lib/api'
   import { clearToken, credentialState } from './lib/auth'
   import { resolvePandanHref } from './lib/meta'
@@ -47,6 +48,13 @@
    * `done: false` against `kaya-client` and `kaya-cli`, both of which shipped in V2a/V2b, and the
    * false claim reached the built bundle. It was a second copy of CLAUDE.md's package table and it
    * drifted twice inside one epic, so the fix was to delete the list rather than correct the flags.
+   *
+   * KAN-1739 added `route.name === 'tokens'` as a **peer of the whole `authed`/`Landing` branch**,
+   * not a case nested inside it — the one deliberate exception to "everything but the shell needs a
+   * credential" that `authed` otherwise enforces. `Tokens.svelte` reaches kaya's own cookie-session
+   * identity (`lib/identity.ts`, ADR 0012), which is a wholly different credential from the one
+   * `authed` tracks, and minting your first `kaya_pat_…` cannot itself require a credential already
+   * being pasted into the tab. It owns its own session check entirely; this file only routes to it.
    */
 
   let route: Route = $state(currentRoute())
@@ -403,10 +411,15 @@
   }
 </script>
 
-<div class="shell" class:unauthenticated={!authed} class:railed>
+<div class="shell" class:unauthenticated={!authed || route.name === 'tokens'} class:railed>
   <header class="topbar">
     <a class="brand" href="/" onclick={(event) => interceptClick(event, '/')}>kaya</a>
     <span class="tagline">markdown notes, API-first</span>
+    <!-- Always reachable, unlike everything else in this header — see the top-of-file note on
+         why `route.name === 'tokens'` is a peer of `authed`, not gated on it. -->
+    <a class="tokens-link" href="/tokens" onclick={(event) => interceptClick(event, '/tokens')}>
+      Tokens
+    </a>
     {#if authed && pandanHref}
       <!--
         KAN-1157. Hidden entirely rather than shown-and-disabled when `pandanHref` is `null` — the
@@ -449,7 +462,11 @@
     {/if}
   </header>
 
-  {#if authed}
+  {#if route.name === 'tokens'}
+    <main>
+      <Tokens />
+    </main>
+  {:else if authed}
     <Sidebar {notes} {route} loading={listing} {query} onsearch={search} oncreate={createAndOpen} />
     <main>
       {#if route.name === 'unknown'}
@@ -549,13 +566,15 @@
     font-size: 0.85rem;
   }
 
-  .pandan-link {
+  .pandan-link,
+  .tokens-link {
     color: var(--muted);
     font-size: 0.85rem;
     text-decoration: none;
   }
 
-  .pandan-link:hover {
+  .pandan-link:hover,
+  .tokens-link:hover {
     color: var(--accent);
     text-decoration: underline;
   }

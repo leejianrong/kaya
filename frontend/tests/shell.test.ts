@@ -275,6 +275,55 @@ describe('the shell', () => {
 })
 
 /**
+ * KAN-1739: `/tokens` is reachable with **no** pasted credential — the one deliberate exception to
+ * "everything but the shell needs one" the rest of this file's `authed` assertions establish.
+ * `Tokens.svelte`'s own network calls are exercised fully in `tests/tokens-page.test.ts`; what's
+ * asserted here is only the routing claim `App.svelte` itself is responsible for.
+ */
+describe('the /tokens route (KAN-1739)', () => {
+  const realFetch = globalThis.fetch
+  const realPathname = window.location.pathname
+
+  beforeEach(() => {
+    // Answered generically so this describe block is about routing, not about `Tokens.svelte`'s
+    // own fetch shapes (already covered in `tests/tokens-page.test.ts`).
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ error: { code: 'unauthorized', message: 'no' } }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    ) as unknown as typeof fetch
+    window.history.pushState({}, '', '/tokens')
+  })
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    window.history.pushState({}, '', realPathname)
+  })
+
+  it('renders the tokens page instead of the landing state, with no credential set', () => {
+    const target = render(App, {})
+
+    expect(target.querySelector('.landing')).toBeNull()
+    expect(target.querySelector('[data-testid="paste-form"]')).toBeNull()
+    expect(target.textContent).toContain('Tokens')
+  })
+
+  it('still renders the tokens page for a visitor who does have a pasted credential', () => {
+    auth.setToken(FAKE_TOKEN)
+    const target = render(App, {})
+
+    expect(target.querySelector('.landing')).toBeNull()
+    expect(target.textContent).toContain('Tokens')
+  })
+
+  it('the topbar link to /tokens is present regardless of credential state', () => {
+    const withoutCredential = render(App, {})
+    expect(withoutCredential.querySelector('.tokens-link')).not.toBeNull()
+  })
+})
+
+/**
  * KAN-1157: the authenticated topbar's link to pandan, resolved through the same
  * `resolvePandanHref` (KAN-1156) `Landing.svelte` already uses. `App.svelte` reaches the network
  * through the ambient `fetch` with no injected seam, the same reason `tests/landing.test.ts` stubs
