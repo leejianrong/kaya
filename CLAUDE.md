@@ -33,7 +33,7 @@ right and this file is stale. Fix it in the same PR.
 ## How the docs relate
 
 [`docs/kaya-vision.md`](docs/kaya-vision.md) (settled intent) → [`docs/PLAN.md`](docs/PLAN.md) +
-[`docs/adr/`](docs/adr/) (the *why*, ten ADRs — amend, don't re-litigate) →
+[`docs/adr/`](docs/adr/) (the *why*, thirteen ADRs — amend, don't re-litigate) →
 [`docs/SLICES.md`](docs/SLICES.md) (the seven **MVP** build slices, matching board 18's original seven
 epics) → [`docs/roadmap/BREADBOARD.md`](docs/roadmap/BREADBOARD.md) (everything after — board 18 has
 grown four more epics since), with [`docs/QUESTIONS.md`](docs/QUESTIONS.md) as the decision register (a
@@ -46,15 +46,19 @@ an ADR in the pandan repo; bare "ADR NNNN" means this repo's. Read `PLAN.md` bef
    `kaya_cli.verbs` opens a session, calls one client method, returns a `Payload`; `__main__.main`
    calls `render()` on exactly one line. Pandan put shaping in its CLI instead, so its MCP adapter
    inherited none of it (44,902 tokens vs 2,689 for the same read).
-2. **Kaya has no token format and no prefix logic** ([ADR 0002](docs/adr/0002-identity-pandan-as-provider.md)).
-   Auth forwards the bearer to pandan's `GET /api/v1/me`, cached on `sha256(token)`. No `startswith`
-   guard — pandan still accepts pre-rebrand `kanban_pat_…` tokens.
+2. **Kaya has no token format and no prefix logic — for now.** [ADR 0002](docs/adr/0002-identity-pandan-as-provider.md)
+   (auth forwards the bearer to pandan's `GET /api/v1/me`, cached on `sha256(token)`, no `startswith`
+   guard) is **superseded by [ADR 0012](docs/adr/0012-standalone-identity.md)**: kaya is becoming its
+   own authorization server (GitHub OAuth App, `fastapi-users`, its own `kaya_pat_…`-prefixed PATs),
+   tracked as EPIC-283 on board 18. Until EPIC-283 lands, the code still matches ADR 0002 exactly —
+   check which cards are done before assuming either description is current.
 3. **`render()`'s signature is frozen** ([ADR 0005](docs/adr/0005-born-agent-conformant.md)). If a
    change needs to alter it, stop — that's the sequencing violated, not a reason to push through.
    Six shipped features found another answer (e.g. `Payload.limited_to()` applied at the call site).
 4. **Nothing in kaya may block on pandan** ([ADR 0003](docs/adr/0003-cross-linking-one-way-soft.md)).
    A note saves, renders and appears in search with pandan down. Wikilink resolution degrades to
-   unresolved. Authentication is the one exception ADR 0002 accepts knowingly.
+   unresolved. Authentication is the one exception ADR 0002 accepts knowingly — ADR 0012 removes even
+   that exception once EPIC-283 lands, since kaya will no longer call pandan to authenticate anyone.
 5. **A note's identity is its `NOTE-n` ref, never its path or title** ([ADR 0008](docs/adr/0008-note-identity.md)).
    `path` is mutable metadata; moving a note is a `PATCH` to one column, no link rewriting.
 
