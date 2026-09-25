@@ -1,9 +1,12 @@
-"""Database plumbing: exactly one engine and one session factory.
+"""Database plumbing for kaya's own data: exactly one (sync) engine and one session factory.
 
-ADR 0001 forecloses an async engine. Pandan carries a second, async engine only because
-``fastapi-users`` has an async-only user store; kaya delegates identity to pandan and has no user
-store, so there is nothing to be async for. If you find yourself adding ``create_async_engine``
-here, that is the signal something upstream has drifted — not a reason to add it.
+ADR 0001 forecloses an async engine **here**. That used to be the whole story — kaya delegated
+identity to pandan and had no user store, so there was nothing to be async for. ADR 0012 changes
+the second half of that sentence: kaya now runs its own ``fastapi-users`` (which needs an
+async-only user store, the same constraint pandan ADR 0011 hit), so a second, async engine now
+exists — quarantined to ``app/identity/db.py`` and used by nothing else. If you find yourself
+adding ``create_async_engine`` to *this* module, that is still the signal something has drifted:
+every note/team/attachment route stays on the plain sync engine below, unconditionally.
 
 The engine is built lazily rather than at import. A module-level ``create_engine`` binds to
 whatever ``DATABASE_URL`` said at import time, which for the integration suite is *before* the

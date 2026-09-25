@@ -24,6 +24,7 @@ from app.api import (
     note_claim_router,
 )
 from app.api import router as api_router
+from app.identity import install_identity_routes
 from app.observability import install_observability
 from app.spa import mount_spa
 
@@ -121,6 +122,13 @@ app.include_router(note_claim_router)
 # in front of it, and that difference should be visible where the surface is composed rather than
 # only inside the module — `app/api/meta.py` has the argument for why it is safe.
 app.include_router(meta_router)
+
+# ADR 0012 (KAN-1738): kaya's own `/auth/*` + `/users/*`, unversioned like `/health` — see
+# `app/identity/router.py` for why (session/identity plumbing, not a versioned API resource,
+# mirroring pandan ADR 0011's placement). Graceful boot without credentials: unset
+# `KAYA_GITHUB_OAUTH_CLIENT_ID`/`_SECRET` and the GitHub routes simply don't register, same as
+# every other optional integration this module composes.
+install_identity_routes(app)
 
 
 class Health(BaseModel):

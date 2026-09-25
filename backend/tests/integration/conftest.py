@@ -29,12 +29,15 @@ def database_url() -> Iterator[str]:
 
         # Inside a fixture body, after the environment is set — see the module docstring.
         from app.db import reset_engine
+        from app.identity.db import reset_async_engine
 
         reset_engine()
+        reset_async_engine()
         try:
             yield url
         finally:
             reset_engine()
+            reset_async_engine()
             if previous is None:
                 os.environ.pop("DATABASE_URL", None)
             else:

@@ -38,6 +38,11 @@ def test_autogenerate_would_not_drop_anything() -> None:
     from alembic.autogenerate import compare_metadata
     from alembic.migration import MigrationContext
 
+    # `app.identity.models` too, not just `app.models` — same reason `alembic/env.py` imports
+    # both: `Base.metadata` only carries a package's tables once that package has actually been
+    # imported somewhere in the process, and this test runs first alphabetically in the suite
+    # (KAN-1738), before anything else would have pulled `app.identity` in.
+    import app.identity.models  # noqa: F401
     from app.db import get_engine
     from app.models import Base
 

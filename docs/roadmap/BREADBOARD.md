@@ -327,3 +327,66 @@ route, no new `kaya-client` payload shape. `kaya-cli` version bumps (ADR 0007) f
 (bounded-timeout soft-fail wiring, client-side), `KAN-1200` (packaged skill,
 `kaya-cli/skills/kaya/SKILL.md`), `KAN-1201` (`[mutate]` guardrail proof). All under `EPIC-173`
 (`KAY-E17`).
+
+## R19: Standalone identity — kaya becomes its own authorization server (ADR 0012, EPIC-283)
+
+**Requirement.** Kaya must run and authenticate entirely on its own, with zero runtime dependency on
+pandan — not even for cold authentication, the one dependency ADR 0002 kept knowingly. A 2026-09-25
+cross-repo planning session (jointly with pandan, whose own ADR 0011/0014/0024 this mirrors) decided
+the product goal had shifted from "one shared credential across both apps" to "two fully independent
+apps," and R19 is that decision's implementation.
+
+**Decision, in one line.** Mirror pandan ADR 0011's shape — GitHub OAuth App, `fastapi-users`, a
+second async engine, revocable DB-backed cookie sessions — **reimplemented independently** in kaya's
+own codebase, not shared as a package, so the two apps stay separately releasable. Full reasoning,
+the alternatives considered (and why each was rejected), and the consequences are in
+[ADR 0012](../adr/0012-standalone-identity.md) — not repeated here.
+
+**Shape**
+
+| Part | Mechanism |
+|------|-----------|
+| OAuth App | Kaya's own GitHub OAuth App registration (never pandan's) — a manual, outside-any-PR step, same disposition as R14's Cloudflare R2 credentials. |
+| Human login | `fastapi-users` 15.x, its own `KayaAccount`/`KayaOAuthAccount` tables (`kaya_account`/`kaya_oauth_account`, not named `user`/`oauth_account` — that name is already ADR 0002's pandan-mirror table) on kaya's existing shared `Base`, so one Alembic pipeline still covers everything. |
+| Second engine | A quarantined async engine, `app/identity/db.py` only — `app/db.py`'s sync engine (every note/team/attachment route) is untouched, enforced by `tests/unit/test_no_async_engine.py`'s AST guard now scoped to exempt exactly that one package. |
+| Sessions | `DatabaseStrategy` + a `kaya_session` table (mirrors pandan's `access_token`) — logout is a row delete, i.e. instant revocation, never a JWT waiting out its own expiry. |
+| Graceful boot | `KAYA_GITHUB_OAUTH_CLIENT_ID`/`_CLIENT_SECRET` both unset → the app still boots and every other route still works; login is simply unavailable — mirrors pandan ADR 0011's own tested behaviour. |
+| PATs | New `personal_access_token` table, `kaya_pat_…` prefix, HMAC-hashed, account-wide (kaya has no board-equivalent to scope one to) — mirrors pandan ADR 0014. Not yet built (`KAN-1739`). |
+| Retirement | `get_principal`'s pandan-forwarding branch, the `sha256` TTL cache, single-flight coalescing, and the split connect/read deadline are deleted, not left dormant, once the new path can carry every caller (`KAN-1740`). |
+| Board-embed preview | Currently free-rides on the same PAT authenticating both apps; needs an explicit "connect your Pandan account" step once that stops being true (`KAN-1741`). |
+| Note ownership | **Open, deliberately not resolved by this section or by KAN-1738.** Existing notes' `owner_id` still points at `app.models.user` (the pandan-mirror row, ADR 0002); a human's *new* kaya-native login (`KayaAccount`) mints an unrelated id. Reconciling the two — so an existing user's existing notes are reachable under their new kaya identity — is real design work no filed card (`KAN-1738`–`1741`) currently owns; flagged here so it isn't silently assumed away before `KAN-1740` needs an answer. |
+
+**Fit-check.** Purely additive so far (`KAN-1738`): three new tables, one new async engine, two new
+route namespaces (`/auth/*`, `/users/*`, added to `app/spa.py`'s `RESERVED_PREFIXES`) — nothing about
+existing note/team/attachment behaviour changes until `KAN-1740` actually re-points authorization at
+the new identity, mirroring pandan ADR 0011's own "V6 only adds login" sequencing.
+
+**Cards:** `KAN-1738` (OAuth App + `fastapi-users` + async engine + cookie sessions — **shipped**),
+`KAN-1739` (PAT table + Tokens UI), `KAN-1740` (retire the introspection path), `KAN-1741` (board-embed
+reconnect step), `KAN-1742` (this ADR + the CLAUDE.md update — **shipped**). All under `EPIC-283`.
+
+## R20: Device-flow CLI login + a hosted remote MCP server (ADR 0013, EPIC-284)
+
+**Requirement.** Once R19 gives kaya its own authorization server, two onboarding gaps remain: minting
+a PAT still means copying a raw secret out of a UI by hand, and kaya's MCP server is stdio-only —
+unreachable from a hosted client (Claude.ai, ChatGPT, Cursor) that can't spawn a local subprocess.
+
+**Decision, in one line.** Mirror pandan ADR 0024 (device flow) and ADR 0025 (hosted remote MCP),
+independently implemented. Full reasoning is in
+[ADR 0013](../adr/0013-device-flow-and-hosted-mcp.md) — not repeated here.
+
+**Shape**
+
+| Part | Mechanism |
+|------|-----------|
+| `kaya auth login/logout/status` | RFC 8628 Device Authorization Grant against kaya's own authorization server (R19) — device code + user code + polling, same UX pattern as pandan's. **No board/workspace scoping step** — every kaya PAT is account-wide (R19's own PAT shape has no scoping dimension to consent to). |
+| Hosted MCP | Streamable HTTP, RFC 9728 (protected resource metadata) + RFC 7591 Dynamic Client Registration (or its CIMD successor, whichever pandan's EPIC-282 settles on) + RFC 8707 resource-indicator token binding — the same resource-server shape as pandan ADR 0025, backed by kaya's own authorization server. |
+| Stdio MCP | Stays, repositioned as a documented self-hosting/offline fallback — the hosted endpoint and the CLI become the top-billed options. |
+
+**Fit-check.** Sequenced strictly after R19 (a device flow needs an authorization server to grant
+against) but not otherwise blocked on pandan's own EPIC-281/282 build — the RFC mechanics are
+spec-defined, not pandan-implementation-defined.
+
+**Cards:** `KAN-1743` (`kaya auth login/logout/status`), `KAN-1744` (hosted remote MCP endpoint),
+`KAN-1745` (docs: hosted MCP + CLI as top options, stdio as the fallback). All under `EPIC-284`. Not
+started — blocked on R19 (`KAN-1739`–`1741`) landing first.

@@ -5,8 +5,11 @@ Per PLAN §Implementation decisions the app-level keys carry a ``KAYA_`` prefix.
 integration fixtures already use, and inventing a second spelling for it is how a test ends up
 pointed at the wrong database.
 
-Kaya holds no long-lived credential of its own, so nothing in here is a secret. It forwards the
-caller's bearer upstream (ADR 0002); ``KAYA_PANDAN_URL`` is configuration.
+Kaya used to hold no long-lived credential of its own — it forwarded the caller's bearer upstream
+(ADR 0002) and ``KAYA_PANDAN_URL`` was mere configuration. ADR 0012 (KAN-1738) ends that: kaya now
+runs its own GitHub OAuth App and signs its own session/CSRF tokens, so a handful of fields below
+(the R2 credentials, and now the OAuth client secret + ``KAYA_AUTH_SECRET``) are real secrets —
+see ``_EXCLUDED_FROM_STARTUP_LOG``.
 """
 
 from functools import lru_cache
@@ -286,6 +289,43 @@ class Settings(BaseSettings):
     MiB is a round, generous number for "an image, most often" (R14's own framing) rather than a
     measurement; revisit if a real usage pattern asks for more."""
 
+    kaya_github_oauth_client_id: str | None = Field(
+        default=None,
+        validation_alias="KAYA_GITHUB_OAUTH_CLIENT_ID",
+    )
+    """Kaya's own GitHub OAuth App id (ADR 0012, KAN-1738) — a **new** registration, never pandan's.
+    ``None`` — the default — means the GitHub login routes don't register at all and the app still
+    boots (`app/identity/router.py`'s "graceful boot without credentials", mirroring pandan ADR
+    0011); both this and `kaya_github_oauth_client_secret` must be set to enable login. The OAuth
+    App's callback URL is `<origin>/auth/github/callback` — GitHub allows exactly one per App, so
+    dev and prod need separate Apps, the same constraint pandan hit."""
+
+    kaya_github_oauth_client_secret: str | None = Field(
+        default=None,
+        validation_alias="KAYA_GITHUB_OAUTH_CLIENT_SECRET",
+    )
+    """Paired with `kaya_github_oauth_client_id` above. A real credential — see
+    `_EXCLUDED_FROM_STARTUP_LOG`."""
+
+    kaya_auth_secret: str = Field(
+        default="insecure-dev-secret-change-in-production",
+        validation_alias="KAYA_AUTH_SECRET",
+    )
+    """Signs the OAuth CSRF/state token and the (unused-for-now) password-reset/verification
+    tokens `app/identity/manager.py`'s `UserManager` is required to carry a secret for. Has an
+    **insecure dev default**, matching pandan ADR 0011's own choice — a deployment that never sets
+    a real value runs with a guessable secret; prod must set it (a Fly secret, once kaya deploys
+    this). Also doubles as the pepper for `kaya_pat_…` hashing once KAN-1739 lands (mirroring
+    pandan's own `AUTH_SECRET` doing double duty), so rotating it will invalidate both cookie
+    sessions and PATs — expected, not a bug to fix later."""
+
+    kaya_cookie_secure: bool = Field(
+        default=False,
+        validation_alias="KAYA_COOKIE_SECURE",
+    )
+    """`1`/`true` marks the session cookie `Secure` (HTTPS-only). Off by default — dev and the test
+    suite run over http — set it in prod."""
+
     spa_dist: Path | None = Field(
         default=None,
         validation_alias="KAYA_SPA_DIST",
@@ -302,19 +342,27 @@ class Settings(BaseSettings):
 
 
 _EXCLUDED_FROM_STARTUP_LOG = frozenset(
-    {"database_url", "r2_access_key_id", "r2_secret_access_key"}
+    {
+        "database_url",
+        "r2_access_key_id",
+        "r2_secret_access_key",
+        "kaya_github_oauth_client_secret",
+        "kaya_auth_secret",
+    }
 )
 """Fields ``effective_overrides`` never names, structurally rather than by review.
 
 ``database_url``'s default and every real value embed a username and password as URL userinfo —
 ``postgresql+psycopg://kaya:kaya@host:5432/kaya`` — so printing it whenever it differs from the
-default would print a real database credential. Kaya otherwise keeps no long-lived credential of
-its own (see this module's docstring and ADR 0002) — there is no ``token``/``bearer``/``KAYA_TOKEN``
-field here, that name lives in ``kaya-client``'s own ``config.py`` on the CLI side of the process
-boundary — until R14's R2 fields (KAN-1067), which are the first ``Settings`` fields that hold
-kaya's *own* credential rather than a caller's forwarded bearer. This is therefore a three-entry
-allow-list rather than a name pattern that could rot as fields are added; a future field whose value
-could carry a credential earns its own entry here rather than being caught implicitly."""
+default would print a real database credential. Kaya went a long time keeping no long-lived
+credential of its own (see this module's docstring and ADR 0002) — there is no
+``token``/``bearer``/``KAYA_TOKEN`` field here, that name lives in ``kaya-client``'s own
+``config.py`` on the CLI side of the process boundary. R14's R2 fields (KAN-1067) were the first
+``Settings`` fields to hold kaya's *own* credential rather than a caller's forwarded bearer; ADR
+0012's OAuth client secret and ``KAYA_AUTH_SECRET`` (KAN-1738) are the second and third. This is
+therefore a five-entry allow-list rather than a name pattern that could rot as fields are added; a
+future field whose value could carry a credential earns its own entry here rather than being caught
+implicitly."""
 
 
 def effective_overrides(settings: Settings) -> dict[str, Any]:
