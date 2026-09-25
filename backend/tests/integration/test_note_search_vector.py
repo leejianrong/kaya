@@ -37,6 +37,8 @@ from typing import Any
 import pytest
 from sqlalchemy import select, text
 
+from tests.integration.auth_helpers import override_get_principal, seed_kaya_account
+
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 ALICE_TOKEN = "a-caller-supplied-string-kaya-does-not-parse"
@@ -44,24 +46,12 @@ ALICE_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
 
 NOTES = "/api/v1/notes"
 
-# `user` is reserved in Postgres, so every hand-written statement against it quotes the name.
-INSERT_USER = text('INSERT INTO "user" (id, email) VALUES (:id, :email)')
 INSERT_NOTE = text(
     "INSERT INTO note (owner_id, title, body) VALUES (:owner_id, :title, :body) RETURNING ref"
 )
 # `::text` because psycopg has no Python type for `tsvector` and Postgres' own rendering
 # (`'runbook':1A 'step':2B`) is exactly what needs asserting — the lexemes *and* their weights.
 READ_VECTOR = text("SELECT search_vector::text FROM note WHERE ref = :ref")
-
-
-class FakeUpstream:
-    """Pandan, faked at the HTTP boundary (ADR 0002's Protocol seam). Kaya holds no credential."""
-
-    def __init__(self) -> None:
-        self.known: dict[str, Any] = {}
-
-    def introspect(self, bearer: str) -> Any:
-        return self.known.get(bearer)
 
 
 def _alembic_config() -> Any:
@@ -73,77 +63,50 @@ def _alembic_config() -> Any:
 
 
 @pytest.fixture
-def upstream() -> FakeUpstream:
-    return FakeUpstream()
-
-
-@pytest.fixture
 def engine(database_url: str) -> Any:
-    """The schema at head and an empty ``note`` table, for the tests that need no HTTP."""
+    """The schema at head, an empty ``note`` table, and one real `kaya_account` row (`note.owner_id`
+    is a live foreign key into it, migration `0009`) — for the tests that need no HTTP."""
     from alembic import command
 
-    from app.db import get_engine
+    from app.db import get_engine, get_sessionmaker
 
     command.upgrade(_alembic_config(), "head")
     engine = get_engine()
     with engine.begin() as connection:
-        connection.execute(text('TRUNCATE TABLE note, "user" CASCADE'))
-        connection.execute(INSERT_USER, {"id": ALICE_ID, "email": "alice@example.com"})
+        connection.execute(text("TRUNCATE TABLE note, kaya_account CASCADE"))
+    with get_sessionmaker()() as session:
+        seed_kaya_account(session, id=ALICE_ID, email="alice@example.com")
     return engine
 
 
 @pytest.fixture
-def client(database_url: str, upstream: FakeUpstream) -> Iterator[Any]:
-    """The real app with pandan swapped out, exactly as ``test_notes_api.py`` builds it.
-
-    A fresh ``PrincipalCache`` per test, because the cache is process-wide by design and one
-    surviving a ``TRUNCATE`` serves a principal whose mirror row no longer exists — the next INSERT
-    then fails on the foreign key, which reads as a flake and is not one.
-    """
-    from typing import Annotated
-
+def client(database_url: str) -> Iterator[Any]:
+    """The real app with identity faked (`override_get_principal`, KAN-1740), exactly as
+    ``test_notes_api.py`` builds it."""
     from alembic import command
-    from fastapi import Depends
     from fastapi.testclient import TestClient
-    from sqlalchemy.orm import Session
 
-    from app.auth.cache import PrincipalCache
-    from app.auth.dependencies import get_resolver, reset_auth
-    from app.auth.mirror import SqlAlchemyPrincipalMirror
     from app.auth.principal import Principal
-    from app.auth.resolver import PrincipalResolver
-    from app.auth.single_flight import SingleFlight
-    from app.db import get_session, get_sessionmaker
+    from app.db import get_sessionmaker
     from app.main import app
 
     command.upgrade(_alembic_config(), "head")
 
     def empty() -> None:
         with get_sessionmaker()() as session:
-            session.execute(text('TRUNCATE TABLE note, "user" CASCADE'))
+            session.execute(text("TRUNCATE TABLE note, kaya_account CASCADE"))
             session.commit()
 
     empty()
-    reset_auth()
-    upstream.known[ALICE_TOKEN] = Principal(id=ALICE_ID, email="alice@example.com")
-    cache = PrincipalCache(positive_ttl=60.0, negative_ttl=10.0)
-    single_flight = SingleFlight()
-
-    def resolver(session: Annotated[Session, Depends(get_session)]) -> PrincipalResolver:
-        return PrincipalResolver(
-            upstream=upstream,
-            mirror=SqlAlchemyPrincipalMirror(session),
-            cache=cache,
-            single_flight=single_flight,
-        )
-
-    app.dependency_overrides[get_resolver] = resolver
+    with get_sessionmaker()() as session:
+        seed_kaya_account(session, id=ALICE_ID, email="alice@example.com")
+    known_principals = {ALICE_TOKEN: Principal(id=ALICE_ID, email="alice@example.com")}
+    override_get_principal(app, known_principals)
     try:
         with TestClient(app) as test_client:
             yield test_client
     finally:
         app.dependency_overrides.clear()
-        reset_auth()
         empty()
 
 
@@ -440,6 +403,15 @@ def test_downgrade_removes_the_column_and_the_index(engine: Any) -> None:
     try:
         command.downgrade(_alembic_config(), "0001")
         assert column_and_index() == (0, 0), "downgrade left the column or the index behind"
+
+        # Migration 0009's own downgrade recreates the ADR 0002 `user` table (schema only, per its
+        # docstring — no data comes back), and `note.owner_id`'s foreign key points at it again at
+        # this revision. A row for ALICE_ID has to exist there before `insert()` below can write.
+        with engine.begin() as connection:
+            connection.execute(
+                text('INSERT INTO "user" (id, email) VALUES (:id, :email)'),
+                {"id": ALICE_ID, "email": "alice@example.com"},
+            )
 
         # And the table still works without it, which is what makes the downgrade a real escape
         # rather than a way to break the app quietly.

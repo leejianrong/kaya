@@ -1,31 +1,21 @@
 /**
- * SLICES.md §V3 end-to-end bullet 5: "An unauthenticated visitor sees the landing state and a
- * working link to pandan."
+ * SLICES.md §V3 end-to-end bullet 5, updated for ADR 0012's cutover (KAN-1740): "An unauthenticated
+ * visitor sees the landing state and a working link to mint a kaya token."
+ *
+ * Before the cutover this asserted a link to pandan, built from `GET /api/v1/meta`'s `pandan_url`
+ * (`fake-pandan`, an internal-only test double this suite no longer needs — see
+ * `docker-compose.e2e.yml`'s header). `Landing.svelte` stopped linking to pandan the same PR that
+ * retired that resolver: identity comes from kaya's own `/tokens` page now, not from an operator's
+ * pandan deployment, so there is no `pandan_url` for an unauthenticated visitor to need at all.
  *
  * No `authedPage` fixture and no `pasteToken` here — this is the one test in the suite that must
  * *not* authenticate, and it never touches `sessionStorage`.
- *
- * "A working link" is checked as `Landing.svelte`'s own contract: an `<a>` whose `href` is exactly
- * what `GET /api/v1/meta` reported for `KAYA_PANDAN_URL` (this stack's `docker-compose.e2e.yml`
- * overlay points it at `fake-pandan`, an internal-only test double with no browsable page of its
- * own — see that overlay's header — so this asserts the link kaya's own mechanism produces from
- * `/api/v1/meta`, not that the destination happens to render a page in this environment), opened in
- * a new tab (`target="_blank"`) with `rel="noopener noreferrer"`.
  */
 import { expect, test } from './fixtures'
 
-test('an unauthenticated visitor sees the landing state with a working pandan link', async ({
+test('an unauthenticated visitor sees the landing state with a working kaya-token link', async ({
   page,
-  request,
 }) => {
-  const meta = await request.get('/api/v1/meta')
-  expect(meta.ok()).toBeTruthy()
-  const { pandan_url: pandanUrl } = (await meta.json()) as { pandan_url: string }
-  // `lib/meta.ts`'s `pandanHref` renders `new URL(origin).href`, not the operator's string
-  // verbatim — the URL constructor normalises `http://fake-pandan:8000` to
-  // `http://fake-pandan:8000/`, so the expected href has to go through the same normalisation.
-  const expectedHref = new URL(pandanUrl).href
-
   await page.goto('/')
 
   await expect(page.locator('.shell')).toHaveClass(/unauthenticated/)
@@ -35,9 +25,13 @@ test('an unauthenticated visitor sees the landing state with a working pandan li
   await expect(page.locator('.sidebar')).toHaveCount(0)
   await expect(page.getByTestId('credential-state')).toHaveText('token not set')
 
-  const pandanLink = page.locator(`a[href="${expectedHref}"]`).first()
-  await expect(pandanLink).toBeVisible()
-  await expect(pandanLink).toHaveAttribute('target', '_blank')
-  await expect(pandanLink).toHaveAttribute('rel', /noopener/)
-  await expect(pandanLink).toHaveAttribute('rel', /noreferrer/)
+  // `Landing.svelte`'s "Get a kaya token" section: a same-origin link to kaya's own Tokens page,
+  // not an external `target="_blank"` link the way the old pandan link was — minting a token is
+  // now a kaya-native flow, not a hop to a sibling app. Scoped to that section specifically: the
+  // shell's own header also links to `/tokens` (visible even signed out), and this test is about
+  // `Landing.svelte`'s own copy, not the header's.
+  const identitySection = page.getByRole('region', { name: 'Get a kaya token' })
+  const tokensLink = identitySection.getByRole('link', { name: 'Tokens' })
+  await expect(tokensLink).toBeVisible()
+  await expect(tokensLink).toHaveAttribute('href', '/tokens')
 })

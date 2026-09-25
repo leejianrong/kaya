@@ -6,6 +6,12 @@ against metadata that never imported a model emits a migration that *drops* the 
 see.
 
 A new model goes in its own module and gets an import below. Both, always.
+
+**``User`` (``app/models/user.py``, the ADR 0002 pandan-mirror table) is gone as of migration
+``0009``, retired alongside ADR 0002 itself (KAN-1740).** ``note.owner_id`` now points at
+``app.identity.models.KayaAccount`` instead — that table lives in ``app/identity/models.py``, not
+here, and is imported into ``Base.metadata`` from ``alembic/env.py`` directly rather than through
+this package, the same way ``app.identity.pat``'s ``PersonalAccessToken`` already was.
 """
 
 from app.models.attachment import Attachment
@@ -19,7 +25,6 @@ from app.models.note import (
 from app.models.note_link import NoteLink
 from app.models.note_version import NoteVersion
 from app.models.team import Team
-from app.models.user import User
 
 __all__ = [
     "NOTE_REF_PREFIX",
@@ -31,5 +36,4 @@ __all__ = [
     "NoteLink",
     "NoteVersion",
     "Team",
-    "User",
 ]

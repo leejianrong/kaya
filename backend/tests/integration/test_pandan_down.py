@@ -7,43 +7,30 @@ purpose — CLAUDE.md's framing is that this is exactly the kind of degradation 
 the wrong reason, so it is written to be mutated and watched failing (see the PR description for
 the mutation actually run).
 
-**The one subtlety that makes or breaks this file: ADR 0002's identity exception.** Authentication
-is the one place kaya is *allowed* to depend on pandan — a bearer this process has never seen has to
-be introspected against pandan's `GET /api/v1/me` before kaya knows who is asking, and that call
-cannot succeed with pandan down. What ADR 0003 forbids is everything *after* identity is settled:
-note save, note read, wikilink reconciliation, full-text search. So every test below **warms the
-principal cache first, with pandan reachable**, then flips pandan off, and only then drives the
-note verbs — all with the *same* bearer, and all within the cache's positive TTL
-(`app/auth/cache.py`'s `PrincipalCache`, default 60s here). A test that instead handed a
-never-authenticated bearer to a stopped pandan and expected `200`s would misrepresent the actual,
-accepted guarantee — that is not what this file asserts, and the boundary test at the bottom checks
-the honest edge of it: a bearer this cache has never warmed still gets a `503` (never a false
-`401`) once pandan is down, and a *warmed* bearer degrades the same way once its cache entry lapses.
-That second half is what stops this file from telling only the flattering side of the story.
-
-The clock is injected (`app/auth/cache.py`'s `clock: Callable[[], float]`) so the TTL boundary is
-asserted deterministically rather than by a real `sleep` — see dev-playbook §3 and this repo's own
-convention against slow, eventually-flaky tests.
+**ADR 0002's identity exception is gone (KAN-1740).** This file used to spend most of its own
+docstring on a boundary: authentication was the one place kaya was *allowed* to depend on pandan, so
+every test here had to warm a principal cache with pandan reachable before stopping it, and a
+separate pair of tests proved the honest edge of that exception (a `503` for a cold bearer, never a
+false `401`). ADR 0012 removed the dependency those tests existed to bound — kaya's own identity
+resolution (`app/auth/kaya_principal.py`) is a local database lookup with no pandan call in it at
+all, ever — so there is no exception left to draw a boundary around, and this file is now simply
+"none of these code paths call pandan," full stop. `stopped` below still fakes a stopped pandan
+(for `CardEpicUpstream`, the one thing note *linking* can call), but nothing about identity needs a
+fake, a clock, or a cache any more.
 
 Wikilink reconciliation (`app/note_links.py`, `app/wikilinks.py`) and full-text search
 (`app/auth/authorization.py`'s `notes_matching`, `app/api/search.py`) make **no network call at
-all**, today or ever, by design (see both modules' docstrings). So the honest claim this file can
-make is narrower than "kaya never depends on pandan for anything": it is "the code paths this file
-drives do not call pandan a second time once the caller is known" — which is exactly SLICES
-§V4/§V5's promise, and exactly what a future card wiring a blocking call into `create_note`,
-`get_note` or `notes_matching` would break first.
+all**, today or ever, by design (see both modules' docstrings). So the honest claim this file makes
+is that the code paths it drives — create, read, edit, move, search, delete, and wikilink
+reconciliation — never call pandan, which is exactly SLICES §V4/§V5's promise and exactly what a
+future card wiring a blocking call into `create_note`, `get_note` or `notes_matching` would break
+first.
 
-**KAN-566 has since landed, and it is the card this paragraph used to say had not.**
-`app/integrations/card_resolution.py` now has a caller: `GET /api/v1/notes/{ref}/links` resolves the
-pandan-shaped wikilinks in a note's body. That is the one route in kaya that may talk to pandan
-outside identity, it is allowed to (ADR 0003 forbids *blocking* on pandan, and a resolution that
-fails renders unresolved rather than failing the read), and it is deliberately **not** driven from
-this file. `tests/integration/test_note_links_api.py` owns it, because the property to assert there
-is different in kind: not "no call happened" but "the call happened, failed, and cost the response
-nothing but three nulls". What is still asserted *here*, and is the thing KAN-566 could have broken,
-is that a note save, a note read, a reconcile and a search make no such call — and
-`test_backlinks_are_answered_from_kayas_own_database_with_pandan_down` extends the same claim to
-`/backlinks`, which is a join over two of kaya's own tables and has no upstream at all.
+`GET /api/v1/notes/{ref}/links` **is** allowed to call pandan (ADR 0003 forbids *blocking* on it,
+not calling it) and is deliberately **not** driven from this file —
+`tests/integration/test_note_links_api.py` owns it, along with `/backlinks`'s own no-upstream-at-all
+claim, because the property to assert there is different in kind: not "no call happened" but "the
+call happened, failed, and cost the response nothing but three nulls".
 
 **No `import app.*` at module top** — see the package docstring, and pandan's PR #17 trap: a
 top-level `app` import runs at collection, before the `database_url` fixture sets `DATABASE_URL`.
@@ -57,55 +44,14 @@ from typing import Any
 import pytest
 from sqlalchemy import text
 
+from tests.integration.auth_helpers import override_get_principal, seed_kaya_account
+
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
-# Shapeless on purpose: kaya has no token format (ADR 0002), so a PAT-shaped fixture would quietly
-# assert the opposite of the thing under test.
 ALICE_TOKEN = "a-caller-supplied-string-kaya-does-not-parse"
 ALICE_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
 
-# A bearer nobody ever warms the cache for. Used only in the boundary test, and never taught to the
-# fake upstream, so it is cold by construction rather than by omission.
-COLD_TOKEN = "a-token-this-process-has-never-seen-before"
-
 NOTES = "/api/v1/notes"
-
-
-class FakeClock:
-    """Same shape as `test_principal_resolver.py`'s — injected so the TTL boundary is exact rather
-    than timed."""
-
-    def __init__(self, now: float = 1_000.0) -> None:
-        self.now = now
-
-    def __call__(self) -> float:
-        return self.now
-
-    def advance(self, seconds: float) -> None:
-        self.now += seconds
-
-
-class FakeUpstream:
-    """Pandan, faked at the HTTP boundary (ADR 0002's Protocol seam).
-
-    `available = False` is a **stopped process**, not a rejected credential: `introspect` raises
-    `UpstreamUnavailable` rather than returning `None`. Returning `None` for an outage is the exact
-    bug `app/auth/principal.py`'s docstring warns about — it would surface as a `401` and read as
-    "your token is bad" when pandan is simply not there to ask. `test_principal_resolver.py` already
-    establishes this is the right fake for an outage; this file reuses the same shape rather than
-    inventing a second one.
-    """
-
-    def __init__(self) -> None:
-        self.known: dict[str, Any] = {}
-        self.available = True
-
-    def introspect(self, bearer: str) -> Any:
-        from app.auth.principal import UpstreamUnavailable  # PR #17 trap; see module docstring
-
-        if not self.available:
-            raise UpstreamUnavailable("https://pandan.invalid/api/v1/me is unreachable")
-        return self.known.get(bearer)
 
 
 def _alembic_config() -> Any:
@@ -117,77 +63,35 @@ def _alembic_config() -> Any:
 
 
 @pytest.fixture
-def clock() -> FakeClock:
-    return FakeClock()
-
-
-@pytest.fixture
-def upstream() -> FakeUpstream:
-    return FakeUpstream()
-
-
-@pytest.fixture
-def client(database_url: str, upstream: FakeUpstream, clock: FakeClock) -> Iterator[Any]:
-    """The real app (`app.main.app`) with only `get_resolver` overridden — same pattern as
-    `test_notes_api.py`'s `client` fixture, with one addition: the `PrincipalCache` here takes the
-    injected `clock`, which is what lets the boundary test move time without a real `sleep`.
-
-    A fresh cache per test, for the reason `test_notes_api.py` gives: the cache is process-wide by
-    design, and one surviving a `TRUNCATE` would serve a principal whose mirror row no longer
-    exists.
-    """
-    from typing import Annotated
-
+def client(database_url: str) -> Iterator[Any]:
+    """The real app (`app.main.app`) with identity faked directly (`override_get_principal`,
+    KAN-1740) — no upstream, no cache, no clock, because there is no pandan call left in the
+    identity path for any of those to shield a test from."""
     from alembic import command
-    from fastapi import Depends
     from fastapi.testclient import TestClient
-    from sqlalchemy.orm import Session
 
-    from app.auth.cache import PrincipalCache
-    from app.auth.dependencies import get_resolver, reset_auth
-    from app.auth.mirror import SqlAlchemyPrincipalMirror
-    from app.auth.resolver import PrincipalResolver
-    from app.auth.single_flight import SingleFlight
-    from app.db import get_session, get_sessionmaker
+    from app.auth.principal import Principal
+    from app.db import get_sessionmaker
     from app.main import app
 
     command.upgrade(_alembic_config(), "head")
 
     def empty() -> None:
         with get_sessionmaker()() as session:
-            session.execute(text('TRUNCATE TABLE note_link, note, "user" CASCADE'))
+            session.execute(text("TRUNCATE TABLE note_link, note, kaya_account CASCADE"))
             session.commit()
 
     empty()
-    reset_auth()
-    cache = PrincipalCache(positive_ttl=60.0, negative_ttl=10.0, clock=clock)
-    single_flight = SingleFlight()
-
-    def resolver(session: Annotated[Session, Depends(get_session)]) -> PrincipalResolver:
-        return PrincipalResolver(
-            upstream=upstream,
-            mirror=SqlAlchemyPrincipalMirror(session),
-            cache=cache,
-            single_flight=single_flight,
-        )
-
-    app.dependency_overrides[get_resolver] = resolver
+    with get_sessionmaker()() as session:
+        seed_kaya_account(session, id=ALICE_ID, email="alice@example.com")
+    known_principals = {ALICE_TOKEN: Principal(id=ALICE_ID, email="alice@example.com")}
+    override_get_principal(app, known_principals)
     try:
         with TestClient(app) as test_client:
             yield test_client
     finally:
         app.dependency_overrides.clear()
-        reset_auth()
         empty()
-
-
-@pytest.fixture
-def alice(upstream: FakeUpstream) -> Any:
-    from app.auth.principal import Principal
-
-    principal = Principal(id=ALICE_ID, email="alice@example.com")
-    upstream.known[ALICE_TOKEN] = principal
-    return principal
 
 
 def auth(token: str = ALICE_TOKEN) -> dict[str, str]:
@@ -201,32 +105,18 @@ def create(client: Any, token: str = ALICE_TOKEN, **fields: str) -> dict[str, An
     return response.json()
 
 
-def warm(client: Any, token: str = ALICE_TOKEN) -> None:
-    """One successful call while pandan is reachable — this is what puts a positive entry in the
-    principal cache, which is the whole precondition the rest of a test relies on."""
-    response = client.get(NOTES, headers=auth(token))
-    assert response.status_code == 200, response.text
-
-
 # --- The demo, end to end: create, read, edit, delete, search, all with pandan stopped ------------
 
 
-@pytest.mark.usefixtures("alice")
-def test_full_note_crud_and_search_survive_pandan_being_completely_down(
-    client: Any, upstream: FakeUpstream
-) -> None:
+def test_full_note_crud_and_search_survive_pandan_being_completely_down(client: Any) -> None:
     """SLICES §V5's end-to-end row, word for word: "the note saves, renders, and appears in
     full-text search ... and nothing returns an error." **[mutate]**
 
-    Structure: warm the cache with pandan up, then stop pandan, then do every note verb an agent
-    would actually do — create, read, edit under ADR 0009's precondition, move, search, delete —
-    with the *same* already-authenticated bearer. If any of these needed a second trip to pandan,
-    every assertion below would 503 instead of succeeding, because `upstream.available` never goes
-    back to `True` in this test.
+    No pandan fake to stop here at all — identity never calls it (KAN-1740) and nothing in this
+    flow touches card/epic resolution (`GET /links` is the one route that does, and it is
+    deliberately not exercised here — see the module docstring). What this test actually proves is
+    narrower and just as real: the note verbs make no call to any upstream, full stop.
     """
-    warm(client, ALICE_TOKEN)
-    upstream.available = False
-
     created = create(
         client,
         ALICE_TOKEN,
@@ -265,21 +155,13 @@ def test_full_note_crud_and_search_survive_pandan_being_completely_down(
     assert client.get(f"{NOTES}/{created['ref']}", headers=auth(ALICE_TOKEN)).status_code == 404
 
 
-@pytest.mark.usefixtures("alice")
-def test_wikilink_reconciliation_writes_local_rows_with_pandan_down(
-    client: Any, upstream: FakeUpstream
-) -> None:
+def test_wikilink_reconciliation_writes_local_rows_with_pandan_down(client: Any) -> None:
     """`app/note_links.py` and `app/wikilinks.py` both promise, in their own docstrings, to make no
-    network call ever — this is the end-to-end proof that the promise survives contact with a
-    stopped pandan, for both halves the module handles: a pandan-shaped ref (`[[KAN-501]]`, left
-    unresolved, `resolved_id IS NULL`) and a note-to-note title link that resolves **locally**
-    against another note already in the database.
+    network call ever — this is the end-to-end proof, for both halves the module handles: a
+    pandan-shaped ref (`[[KAN-501]]`, left unresolved, `resolved_id IS NULL`) and a note-to-note
+    title link that resolves **locally** against another note already in the database.
     """
-    warm(client, ALICE_TOKEN)
-
     target = create(client, ALICE_TOKEN, title="Target Note", body="nothing special")
-
-    upstream.available = False
 
     linking = create(
         client,
@@ -299,9 +181,7 @@ def test_wikilink_reconciliation_writes_local_rows_with_pandan_down(
         source_id = session.execute(
             text("SELECT id FROM note WHERE ref = :ref"), {"ref": linking["ref"]}
         ).scalar_one()
-        rows = session.scalars(
-            select(NoteLink).where(NoteLink.source_note_id == source_id)
-        ).all()
+        rows = session.scalars(select(NoteLink).where(NoteLink.source_note_id == source_id)).all()
 
         by_kind = {row.target_kind: row for row in rows}
         assert set(by_kind) == {"KAN", "NOTE"}
@@ -317,56 +197,3 @@ def test_wikilink_reconciliation_writes_local_rows_with_pandan_down(
         )
         # And Note itself never crossed into an ORM query built outside app/auth/authorization.py.
         assert session.get(Note, source_id) is not None
-
-
-# --- The identity exception, honestly bounded -----------------------------------------------------
-
-
-@pytest.mark.usefixtures("alice")
-def test_a_cold_bearer_gets_503_while_a_cache_warmed_one_still_works(
-    client: Any, upstream: FakeUpstream, clock: FakeClock
-) -> None:
-    """ADR 0002's exception, stated as a test rather than only as prose.
-
-    Authentication is the one place kaya may depend on pandan: a bearer this process has never seen
-    genuinely cannot be resolved with pandan down, and that is `503` (Q9), never a `401` that would
-    send a client into a token-rotation loop over an outage it cannot fix. A bearer that was already
-    resolved while pandan was up keeps working from the cache, within its TTL, with no further
-    pandan involvement at all — which is the property every test above actually relies on, made
-    explicit here on its own.
-    """
-    warm(client, ALICE_TOKEN)
-
-    upstream.available = False
-    clock.advance(30)  # still inside the 60s positive TTL
-
-    still_warm = client.get(NOTES, headers=auth(ALICE_TOKEN))
-    assert still_warm.status_code == 200, "a cache hit must not need pandan"
-
-    cold = client.get(NOTES, headers=auth(COLD_TOKEN))
-    assert cold.status_code == 503
-    assert cold.status_code != 401, "an outage must never be reported as a bad credential"
-    error = cold.json()["error"]
-    assert error["code"] == "upstream_unavailable"
-    assert cold.headers["Retry-After"] == "5"
-
-
-@pytest.mark.usefixtures("alice")
-def test_the_positive_cache_lapsing_with_pandan_still_down_is_a_503_not_a_false_401(
-    client: Any, upstream: FakeUpstream, clock: FakeClock
-) -> None:
-    """The other half of the honest boundary: this file does not claim kaya never needs pandan, only
-    that it does not need pandan *again* while the caller is already known. Once the cache entry
-    itself lapses, the same bearer needs pandan exactly as much as a bearer it has never seen — so
-    the correct answer is `503` (pandan is down, ask again later), and the wrong answer a sloppier
-    implementation could produce is `401` (this looks like a bad credential), which is precisely the
-    failure Q9 exists to rule out.
-    """
-    warm(client, ALICE_TOKEN)
-    upstream.available = False
-
-    clock.advance(61)  # past the 60s positive TTL
-
-    lapsed = client.get(NOTES, headers=auth(ALICE_TOKEN))
-    assert lapsed.status_code == 503, "a lapsed cache entry needs pandan again, honestly"
-    assert lapsed.json()["error"]["code"] == "upstream_unavailable"

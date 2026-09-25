@@ -37,71 +37,22 @@ class Settings(BaseSettings):
         default="https://simple-kanban-jian.fly.dev",
         validation_alias="KAYA_PANDAN_URL",
     )
-    """Origin of the pandan deployment that resolves principals (ADR 0002).
-
-    Read by ``app.auth`` to build the ``GET /api/v1/me`` URL. It is configuration, not a secret —
-    it appears verbatim in the `503` body so a caller can see *which* upstream is down."""
-
-    pandan_connect_timeout_seconds: float = Field(
-        default=5.0,
-        validation_alias="KAYA_PANDAN_CONNECT_TIMEOUT_SECONDS",
-    )
-    """How long kaya will wait to *reach* pandan: DNS, the TCP handshake, the TLS handshake.
-
-    Short, because this phase says whether pandan's front door is answering, and that question does
-    not get slower when the app behind the door is asleep — KAN-666 measured it (see the read budget
-    below). A dead upstream fails inside this budget, so Q9's `503` still arrives promptly instead
-    of a caller waiting out a read budget for a host that was never going to answer."""
-
-    pandan_read_timeout_seconds: float = Field(
-        default=30.0,
-        validation_alias="KAYA_PANDAN_READ_TIMEOUT_SECONDS",
-    )
-    """How long kaya will wait for pandan's *answer* once the request is on the wire.
-
-    Long, because pandan runs `min_machines_running = 0` and a cold start is a real wait rather than
-    a fault. KAN-539 measured cold misses at 11–23 s against the single 10 s deadline these two
-    fields replace, which is why a valid PAT used to get a `503`.
-
-    **The two numbers exist separately because one number could not be right for both.** A single
-    deadline conflates "pandan is down" with "pandan is asleep": short enough to report an outage
-    promptly is too short to let a wake-up finish, and long enough for a wake-up makes an outage
-    take half a minute to report. Split, each phase gets the deadline its own failure deserves.
-
-    It is still *bounded*, and 30 s is not free: a sync route holds its Postgres session for the
-    whole request (ADR 0001), so a long upstream call is a held connection. What makes it affordable
-    is `app.auth.single_flight` — concurrent misses on one token become one call and one held
-    worker, not forty. Raise this without that and ADR 0003's rule is broken by resource
-    exhaustion."""
-
-    principal_cache_ttl_seconds: float = Field(
-        default=60.0,
-        validation_alias="KAYA_PRINCIPAL_CACHE_TTL_SECONDS",
-    )
-    """How long a resolved principal is trusted without re-asking pandan (Q6, ASSUMED).
-
-    This is exactly how far revocation lags, and it is the one constant to turn if that matters."""
-
-    principal_negative_cache_ttl_seconds: float = Field(
-        default=10.0,
-        validation_alias="KAYA_PRINCIPAL_NEGATIVE_CACHE_TTL_SECONDS",
-    )
-    """How long a rejection is remembered (Q6, ASSUMED).
-
-    Short, because it is load-shedding rather than a decision: a stray ``Authorization`` header on
-    a retry loop must not become one pandan round trip per request. Kept well under the positive
-    TTL so a token that was rejected because it hadn't been minted yet becomes usable quickly."""
+    """Origin of the pandan deployment kaya still calls for everything that isn't identity:
+    team-default access (`TeamAccessResolver`), wikilink resolution (`CardEpicResolver`), and the
+    embedded board preview. Before ADR 0012's cutover (KAN-1740) this also built the
+    `GET /api/v1/me` URL `app.auth` resolved every caller through — that use is gone now, kaya
+    mints and verifies its own credentials. It is configuration, not a secret — it appears verbatim
+    in a `503` body naming a specific unreachable upstream, e.g. `TeamAccessResolver`'s soft-fail
+    path never surfacing it, but `card_resolution`'s deadline-exceeded case does."""
 
     team_access_connect_timeout_seconds: float = Field(
         default=3.0,
         validation_alias="KAYA_TEAM_ACCESS_CONNECT_TIMEOUT_SECONDS",
     )
     """Per-request connect budget for `TeamAccessResolver`'s `GET /api/v1/teams` call (R16.2, ADR
-    0011). Deliberately **not** `pandan_connect_timeout_seconds`: identity's long budget exists so a
-    cold pandan gets a fair chance to answer *who you are*, which every request needs. Team-default
-    access is the softer dependency ADR 0011 deliberately makes it — a note's owner is never gated
-    on this call, and a teammate's access degrading to "not found" during a slow pandan is the
-    accepted outcome, not a failure worth waiting out. Same reasoning as
+    0011). Team-default access is a soft dependency ADR 0011 deliberately makes it — a note's owner
+    is never gated on this call, and a teammate's access degrading to "not found" during a slow
+    pandan is the accepted outcome, not a failure worth waiting out. Same reasoning as
     `card_resolution_connect_timeout_seconds`/`board_embed_connect_timeout_seconds`, its own field
     rather than reusing either: this protects a third, distinct call shape."""
 
@@ -109,39 +60,36 @@ class Settings(BaseSettings):
         default=3.0,
         validation_alias="KAYA_TEAM_ACCESS_READ_TIMEOUT_SECONDS",
     )
-    """Per-request read budget for the same call. See `team_access_connect_timeout_seconds` for why
-    this is a separate, short knob rather than identity's 30s allowance."""
+    """Per-request read budget for the same call — a separate, short knob from
+    `card_resolution_read_timeout_seconds`/`board_embed_read_timeout_seconds`, protecting its own
+    distinct call shape."""
 
     team_access_cache_ttl_seconds: float = Field(
         default=60.0,
         validation_alias="KAYA_TEAM_ACCESS_CACHE_TTL_SECONDS",
     )
     """How long a resolved team-membership set is trusted before `TeamAccessResolver` asks pandan
-    again. Matches `principal_cache_ttl_seconds` by default (ADR 0011: "the same positive/negative
-    TTL split as `PrincipalCache`") — it is its own field rather than a reuse of that one, because
-    the two answer different questions and a future change to one must not silently move the
-    other."""
+    again — its own field with its own default, so a future change to some other cache's TTL can't
+    silently move this one."""
 
     team_access_negative_cache_ttl_seconds: float = Field(
         default=10.0,
         validation_alias="KAYA_TEAM_ACCESS_NEGATIVE_CACHE_TTL_SECONDS",
     )
-    """How long "pandan could not be asked" is remembered before `TeamAccessResolver` tries again.
-    Matches `principal_negative_cache_ttl_seconds` by default, for the same load-shedding reason —
-    the difference is what a miss decays to: identity's negative cache remembers a *rejection*, this
-    one remembers "unknown, so treated as no memberships" (ADR 0011's soft-fail decision), which is
-    exactly as safe to keep serving for a few seconds as it is to compute fresh."""
+    """How long "pandan could not be asked" is remembered before `TeamAccessResolver` tries again —
+    a load-shedding TTL, short on purpose: this cache's negative entry remembers "unknown, so
+    treated as no memberships" (ADR 0011's soft-fail decision), which is exactly as safe to keep
+    serving for a few seconds as it is to compute fresh."""
 
     card_resolution_connect_timeout_seconds: float = Field(
         default=3.0,
         validation_alias="KAYA_CARD_RESOLUTION_CONNECT_TIMEOUT_SECONDS",
     )
     """Per-request connect budget for resolving `[[KAN-n]]`/`[[EPIC-n]]` wikilinks against pandan
-    (KAN-564, spike 0001). Deliberately **not** `pandan_connect_timeout_seconds`: this budget
-    protects a note *render*, which must return promptly with an unresolved link rather than wait
-    out identity's much longer cold-start allowance (ADR 0003's "slow is worse than down" — a
-    render blocking for 30s on a decoration is worse than the decoration simply not showing up).
-    Sized off spike 0001's measured 1.3-1.7s page fetch, connect phase only."""
+    (KAN-564, spike 0001). This budget protects a note *render*, which must return promptly with an
+    unresolved link rather than wait out a slow upstream (ADR 0003's "slow is worse than down" — a
+    render blocking on a decoration is worse than the decoration simply not showing up). Sized off
+    spike 0001's measured 1.3-1.7s page fetch, connect phase only."""
 
     card_resolution_read_timeout_seconds: float = Field(
         default=3.0,
@@ -193,12 +141,11 @@ class Settings(BaseSettings):
         validation_alias="KAYA_CARD_RESOLUTION_CACHE_TTL_SECONDS",
     )
     """How long a resolved (or confirmed-absent) card/epic is trusted before `CardEpicResolver`
-    asks pandan again. Separate from `principal_cache_ttl_seconds` by requirement (ADR 0003, spike
-    0001, SLICES.md V5): a stale card title or column is cosmetic, unlike a stale identity, so this
-    is generous — 5 minutes against identity's 60 seconds. One TTL rather than
-    `PrincipalCache`'s positive/negative split: unlike a rejected credential, "this ticket doesn't
-    exist or isn't yours" is not the kind of fact that flips back within minutes, so there is no
-    argument here for two different half-lives."""
+    asks pandan again — generous, 5 minutes, by requirement (ADR 0003, spike 0001, SLICES.md V5): a
+    stale card title or column is cosmetic in a way a stale identity never was. One TTL rather than
+    a positive/negative split: unlike a rejected credential, "this ticket doesn't exist or isn't
+    yours" is not the kind of fact that flips back within minutes, so there is no argument here for
+    two different half-lives."""
 
     board_embed_connect_timeout_seconds: float = Field(
         default=3.0,
@@ -210,9 +157,9 @@ class Settings(BaseSettings):
     field rather than reusing `card_resolution_connect_timeout_seconds`: the two protect different
     call shapes (one or two whole-response fetches here, versus a chunked `refs=` batch there) even
     though the underlying argument is the same one card resolution already made — this decorates a
-    note render and must fail fast rather than borrow identity's cold-start allowance. Mirrors
-    card resolution's default rather than guessing a different number, because the same "a few
-    seconds is plenty for a live host, and a dead one should say so quickly" reasoning applies."""
+    note render and must fail fast rather than wait out a slow upstream. Mirrors card resolution's
+    default rather than guessing a different number, because the same "a few seconds is plenty for
+    a live host, and a dead one should say so quickly" reasoning applies."""
 
     board_embed_read_timeout_seconds: float = Field(
         default=3.0,

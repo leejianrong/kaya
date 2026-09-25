@@ -1,21 +1,23 @@
 /**
- * The three things every file under `e2e/` needs and none of them should compute twice: the fake
- * bearer `scripts/test-e2e.sh` told both this suite and `scripts/e2e/fake_pandan.py` to agree on,
- * the base URL of the stack it started, and this run's id (see `global-setup.ts`).
+ * The three things every file under `e2e/` needs and none of them should compute twice: the real
+ * `kaya_pat_…` `scripts/test-e2e.sh` seeds straight into the stack's own database before Playwright
+ * starts, the base URL of the stack it started, and this run's id (see `global-setup.ts`).
  */
 
 /**
- * Must match `fake_pandan.py`'s `KAYA_E2E_FAKE_PANDAN_TOKEN` exactly — `scripts/test-e2e.sh` sets
- * both from the same shell variable, so there is deliberately no independent default here that
- * could drift from that script's. A missing value fails loudly rather than falling back to a guess
- * a differently-configured fake pandan would reject.
+ * A real, live PAT (ADR 0012) — not a stand-in a stubbed pandan used to accept unconditionally.
+ * `scripts/test-e2e.sh` mints it through the already-running `app` container's own code (so it is
+ * hashed with that same container's `KAYA_AUTH_SECRET`) and hands the raw secret to this process the
+ * only way that works for test-only, never-persisted-to-disk infrastructure: an environment
+ * variable, once, before any Playwright worker exists. A missing value fails loudly rather than
+ * falling back to a guess kaya's own resolver would correctly reject.
  */
 export function fakeToken(): string {
-  const token = process.env.KAYA_E2E_FAKE_PANDAN_TOKEN
+  const token = process.env.KAYA_E2E_TOKEN
   if (!token) {
     throw new Error(
-      'KAYA_E2E_FAKE_PANDAN_TOKEN is not set. Run this suite through `make test-e2e` / ' +
-        'scripts/test-e2e.sh, which sets it for both this process and the fake pandan container.',
+      'KAYA_E2E_TOKEN is not set. Run this suite through `make test-e2e` / scripts/test-e2e.sh, ' +
+        'which seeds a real kaya_pat_… and exports it under this name.',
     )
   }
   return token

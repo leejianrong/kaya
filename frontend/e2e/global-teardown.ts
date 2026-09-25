@@ -5,9 +5,9 @@
  * this suite at, should that ever become a thing to do (the doc's own words for why the prefix
  * exists at all).
  *
- * Deletes every note whose title starts with this run's id, through the real API, with the real
- * fake bearer — exactly the credential the suite's own tests used to create them. Runs even when a
- * test failed: Playwright always runs `globalTeardown` after `globalSetup`, pass or fail.
+ * Deletes every note whose title starts with this run's id, through the real API, with the same
+ * seeded `kaya_pat_…` the suite's own tests used to create them. Runs even when a test failed:
+ * Playwright always runs `globalTeardown` after `globalSetup`, pass or fail.
  */
 import { baseUrl, fakeToken, runId } from './env'
 
