@@ -1,5 +1,6 @@
 """The verbs: `note {list,get,create,edit,move,delete}`, `config {set,show,path}`,
-`context {install,uninstall,status,print}`, `links`, `backlinks`, and bare `kaya`.
+`context {install,uninstall,status,print}`, `auth {login,logout,status}`, `links`, `backlinks`, and
+bare `kaya`.
 
 ### What a verb is allowed to be
 
@@ -102,6 +103,7 @@ from kaya_client import (
     open_client,
     path_payload,
     settings_payload,
+    unset_token,
     write_settings,
 )
 
@@ -164,6 +166,18 @@ PRINT = "print"
 module docstring for why `show` was unavailable (`config show` already owns that word, and
 `mcp/tests/test_cli_parity.py`'s reader refuses two verbs sharing a bare word)."""
 
+AUTH = "auth"
+LOGIN = "login"
+LOGOUT = "logout"
+ME = "me"
+"""ADR 0013's device flow (KAN-1743): `auth {login,logout,me}`. The natural word for the third one
+is `status` — but `STATUS` above is already an `add_parser` word under `context`, and
+`mcp/tests/test_cli_parity.py`'s `declared_flags` reader keys on the **bare word alone**, across
+the whole parser, refusing outright rather than silently merging two verbs that happen to share
+one (see `context.py`'s own docstring, which hit this identical wall choosing `print` over pandan's
+`show`). `me` sidesteps the collision and, as a bonus, mirrors the chain it actually calls exactly:
+`GET /api/v1/me` → `KayaClient.me()` → `kaya auth me`."""
+
 BARE: tuple[None, None] = (None, None)
 """ADR 0005 §contract 7's bare `kaya`, as a row in ``VERBS`` like everything else (KAN-549).
 
@@ -175,6 +189,16 @@ second session-opening path, and the client is closed by the same ``with``.
 It is deliberately **not** reachable from the parser, so `tests/test_verbs.py`'s "every parser word
 has a verb" assertion names it explicitly rather than deriving it. A word that dispatched here would
 be a second spelling of a bare invocation.
+"""
+
+AUTH_LOGIN: tuple[str, str] = (AUTH, LOGIN)
+"""`BARE`'s mirror image (ADR 0013, KAN-1743): a **parser word with no row in either table**, rather
+than a row with no parser word. `kaya auth login` is dispatched directly by `__main__.main`, before
+`verbs.run` — `kaya_cli.auth.run_login`'s own module docstring explains why (a multi-step,
+human-in-the-loop flow with no single `Payload` to hand `render()`) — so there is deliberately
+nothing here for `run` to look up. Named explicitly, the same discipline `BARE` gets, so
+`tests/test_verbs.py`'s exhaustiveness guard states "there are exactly two structural exceptions"
+rather than silently tolerating a third parser word nobody wired up.
 """
 
 Verb = Callable[[KayaClient, Namespace], Payload]
@@ -303,6 +327,23 @@ def _config_set(args: Namespace) -> Payload:
     return write_settings({API_URL_ENV: args.api_url, TOKEN_ENV: args.token})
 
 
+# ------------------------------------------------------------------------------- auth (ADR 0013)
+
+
+def _auth_me(client: KayaClient, _args: Namespace) -> Payload:
+    """`kaya auth me`: `GET /api/v1/me` through the ordinary pipeline — one client call, like
+    every other verb in `VERBS`. `kaya auth login` is deliberately **not** here; see
+    `verbs.AUTH_LOGIN` and `kaya_cli.auth.run_login`'s own module docstring for why it has no row
+    in either table."""
+    return client.me()
+
+
+def _auth_logout(_args: Namespace) -> Payload:
+    """`kaya auth logout`: clear the locally saved token. Purely local, like `config` — see
+    `kaya_client.config.unset_token`'s own docstring for why this reaches no API at all."""
+    return unset_token()
+
+
 VERBS: Mapping[tuple[str | None, str | None], Verb] = {
     BARE: _overview,
     (NOTE, LIST): _note_list,
@@ -318,12 +359,15 @@ VERBS: Mapping[tuple[str | None, str | None], Verb] = {
     (EXPORT_ALL, None): _export_all,
     (IMPORT_ALL, None): _import_all,
     (CONTEXT, PRINT): context.cmd_print,
+    (AUTH, ME): _auth_me,
 }
 """``(command, subcommand)`` → the client method that answers it, for the verbs that need a session.
 
 A table rather than an ``if`` chain, so `build_parser` and this module cannot drift about which
 words exist: `tests/test_verbs.py` asserts that every parser word has a row and every row is a
-parser word — plus ``BARE``, the one row with no word, named there rather than derived.
+parser word — plus ``BARE``, the one row with no word, named there rather than derived, and
+``AUTH_LOGIN``, the one *word* with no row, named there for the identical reason in the other
+direction.
 """
 
 LOCAL_VERBS: Mapping[tuple[str, str], LocalVerb] = {
@@ -333,6 +377,7 @@ LOCAL_VERBS: Mapping[tuple[str, str], LocalVerb] = {
     (CONTEXT, INSTALL): context.cmd_install,
     (CONTEXT, UNINSTALL): context.cmd_uninstall,
     (CONTEXT, STATUS): context.cmd_status,
+    (AUTH, LOGOUT): _auth_logout,
 }
 """The verbs that never open a session. See this module's docstring for why they are a second table.
 

@@ -98,8 +98,10 @@ from kaya_client.config import (
     path_payload,
     read_settings_file,
     settings_payload,
+    unset_token,
     write_settings,
 )
+from kaya_client.device_flow import create_device_code, poll_device_token
 from kaya_client.errors import (
     ARG_KEY,
     CODE_KEY,
@@ -176,6 +178,7 @@ __all__ = [
     "build_sha",
     "compose_document",
     "config_path",
+    "create_device_code",
     "error_payload",
     "help_block",
     "help_lines",
@@ -185,6 +188,7 @@ __all__ = [
     "overview",
     "parse_document",
     "path_payload",
+    "poll_device_token",
     "project",
     "read_settings_file",
     "render",
@@ -194,6 +198,7 @@ __all__ = [
     "settings_payload",
     "summary_line",
     "truncate",
+    "unset_token",
     "version_line",
     "write_settings",
 ]

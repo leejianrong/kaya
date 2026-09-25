@@ -21,6 +21,7 @@ from fastapi_users import FastAPIUsers
 
 from app.config import Settings, get_settings
 from app.identity.backend import build_auth_backend, build_github_oauth_client, oauth_configured
+from app.identity.device_auth_router import router as device_auth_router
 from app.identity.manager import get_user_manager
 from app.identity.schemas import UserRead, UserUpdate
 
@@ -39,6 +40,13 @@ def install_identity_routes(app: FastAPI, settings: Settings | None = None) -> N
     app.include_router(
         users.get_users_router(UserRead, UserUpdate), prefix="/users", tags=["identity"]
     )
+
+    # ADR 0013 (KAN-1743): RFC 8628 device flow, `/auth/device/*`. Mounted unconditionally, not
+    # gated on `oauth_configured` — its three consent routes accept an existing `kaya_pat_…` bearer
+    # via `get_principal` just as readily as a GitHub cookie session, so there is a way to approve a
+    # login even in an environment with no GitHub OAuth App configured at all (unusual, but no
+    # reason to make this router's boot conditional on a credential type it doesn't strictly need).
+    app.include_router(device_auth_router)
 
     if oauth_configured(settings):
         github_client = build_github_oauth_client(settings)

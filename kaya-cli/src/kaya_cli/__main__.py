@@ -78,7 +78,7 @@ from pathlib import Path
 from kaya_client import BLOCK_GAP, Format, KayaError, overview, render, version_line
 from kaya_client import DESCRIPTION as PRODUCT
 
-from kaya_cli import __version__, context, verbs
+from kaya_cli import __version__, auth, context, verbs
 from kaya_cli.failures import EXIT_OK, report
 from kaya_cli.parsing import (
     API_URL_FLAG,
@@ -117,10 +117,13 @@ EPILOGUE = (
     "`note import <file>`, `export-all <dir>`, `import-all <dir>`. Configuration:\n"
     "`config show`, `config set`, `config path`. Ambient session context (R18): `context install`\n"
     "wires a Claude Code SessionStart hook so an agent session starts with your recent notes;\n"
-    "`context uninstall`, `context status`, `context print [--hook]`. `note list --q TERM`\n"
-    "searches title and body; `--fields a,b,c` selects columns on a list, and prose is cut to\n"
-    "KAYA_MAX_TEXT_CHARS (default 500) unless `--full`. A note is addressed as NOTE-12, note-12\n"
-    "or 12, never by its path. See docs/SLICES.md and docs/roadmap/BREADBOARD.md."
+    "`context uninstall`, `context status`, `context print [--hook]`. Signing in (ADR 0013):\n"
+    "`auth login [--scope read|write]` opens a browser for an RFC 8628 device-flow login with no\n"
+    "copy-pasted secret; `auth me` reports who the configured token is; `auth logout` clears\n"
+    "it locally. `note list --q TERM` searches title and body; `--fields a,b,c` selects columns\n"
+    "on a list, and prose is cut to KAYA_MAX_TEXT_CHARS (default 500) unless `--full`. A note is\n"
+    "addressed as NOTE-12, note-12 or 12, never by its path. See docs/SLICES.md and\n"
+    "docs/roadmap/BREADBOARD.md."
 )
 
 NOTE_HELP = "create, read, change and delete the notes you own"
@@ -131,6 +134,8 @@ CONTEXT_HELP = (
     "install/uninstall the Claude Code SessionStart hook that gives an agent session your "
     "recent notes (R18/KAN-1198)"
 )
+
+AUTH_HELP = "sign in via a browser, check who you're signed in as, or sign out (ADR 0013)"
 
 REF_HELP = "the note, as NOTE-12, note-12 or 12"
 
@@ -236,6 +241,9 @@ def build_parser() -> StructuredParser:
         verbs.CONTEXT, help=CONTEXT_HELP, description=CONTEXT_HELP
     )
     _add_context_verbs(context_group.add_subparsers(dest="subcommand", required=True), flags)
+
+    auth_group = commands.add_parser(verbs.AUTH, help=AUTH_HELP, description=AUTH_HELP)
+    _add_auth_verbs(auth_group.add_subparsers(dest="subcommand", required=True), flags)
 
     _add_link_verbs(commands, flags)
     _add_corpus_export_import_verbs(commands, flags)
@@ -509,7 +517,7 @@ def _add_config_verbs(config_commands, flags: argparse.ArgumentParser) -> None:
     setting.add_argument(
         TOKEN_FLAG,
         default=None,
-        help="a pandan personal access token; stored in a 0600 file and never printed back",
+        help="a kaya personal access token; stored in a 0600 file and never printed back",
     )
 
     config_commands.add_parser(
@@ -525,6 +533,60 @@ def _add_config_verbs(config_commands, flags: argparse.ArgumentParser) -> None:
         parents=[flags],
         help="print the config file's path, whether or not it exists yet",
         description="Print the config file's path, and whether it exists.",
+    )
+
+
+def _add_auth_verbs(auth_commands, flags: argparse.ArgumentParser) -> None:
+    """`auth {login,logout,me}` — ADR 0013's RFC 8628 device flow (KAN-1743).
+
+    `login` deliberately does **not** take `parents=[flags]`. Every other verb in this parser
+    ends its life at `render()`, and `--format`/`--fields`/`--full` are how a caller shapes that
+    one call — but `login` never reaches `render()` at all (`kaya_cli.auth.run_login`'s own module
+    docstring explains why: a multi-step, human-in-the-loop flow with no single `Payload` at the
+    end). `context print --hook` keeps the output flags because that parser has a real non-`--hook`
+    behaviour they apply to; `login` has no such second mode, so giving it flags that can never do
+    anything would be the parser making a promise this verb cannot keep. `logout` and `me` are
+    ordinary verbs and carry them like every other.
+
+    `me`, not the more obvious `status`: `verbs.STATUS` is already an `add_parser` word under
+    `context`, and `mcp/tests/test_cli_parity.py`'s `declared_flags` reader refuses two verbs
+    sharing a bare word outright (see `verbs.ME`'s own docstring, and `context.py`'s identical
+    collision with `config show`).
+    """
+    login = auth_commands.add_parser(
+        verbs.LOGIN,
+        help="sign in via a browser, RFC 8628 device flow — no copy-pasted secret",
+        description=(
+            "Start a device-flow login: print a code and a link, best-effort open a browser, "
+            "and poll until a human approves or denies it on kaya's own consent screen. On "
+            "success, saves the minted token to the config file exactly like `config set "
+            "--token` does."
+        ),
+    )
+    login.add_argument(
+        "--scope",
+        choices=("read", "write"),
+        default=None,
+        help="the scope to request (default: write) — the consent screen's own choice may "
+        "override it",
+    )
+
+    auth_commands.add_parser(
+        verbs.LOGOUT,
+        parents=[flags],
+        help="clear the locally saved token",
+        description=(
+            "Clear the token saved by `auth login` or `config set --token`. Purely local — "
+            "revoke it server-side from kaya's own Tokens page (or `DELETE /api/v1/tokens/{id}`) "
+            "if that is what you actually want."
+        ),
+    )
+
+    auth_commands.add_parser(
+        verbs.ME,
+        parents=[flags],
+        help="who the configured token authenticates as",
+        description="GET /api/v1/me through the configured credential: who is this, if anyone?",
     )
 
 
@@ -689,6 +751,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         # docstring for why bypassing `report()`'s exit-code table here is the point, not a bug.
         if getattr(args, "hook", False):
             return context.run_hook(args)
+
+        # `kaya auth login` (ADR 0013, KAN-1743) is handled here for the identical reason: no
+        # `Payload` for `render()` to format at the end of a multi-step, human-in-the-loop device
+        # flow. Unlike `context.run_hook`, `auth.run_login` does **not** swallow its own failures —
+        # it raises ordinary `KayaError` subclasses, which fall straight through to the `except
+        # KayaError` clause below, exactly like every other verb's failure. See `verbs.AUTH_LOGIN`
+        # and `kaya_cli.auth`'s own module docstring for why this word has no row in either
+        # dispatch table at all.
+        if args.command == verbs.AUTH and args.subcommand == verbs.LOGIN:
+            return auth.run_login(args)
 
         # KAN-549's banner, built **before** the request and printed **after** it — the only two
         # things about these two lines that matter.

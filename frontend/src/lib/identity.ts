@@ -187,3 +187,64 @@ export async function createToken(
 export async function revokeToken(id: number, options: IdentityRequestOptions = {}): Promise<void> {
   await identityRequest<null>(`/api/v1/tokens/${id}`, { method: 'DELETE' }, options)
 }
+
+// --- device-flow consent (ADR 0013, KAN-1743) -------------------------------------------------
+//
+// `DeviceConsent.svelte`'s three calls, all against `/auth/device/{user_code}...` — unversioned,
+// alongside `/auth/github/*`, and gated on the identical cookie session every other call in this
+// module already requires. `identityRequest` is reused unchanged rather than duplicated: these are
+// cookie-only calls with no bearer, exactly the shape every function above already has.
+
+export type DeviceAuthorizationStatus = 'pending' | 'approved' | 'denied'
+
+export interface DeviceAuthorization {
+  user_code: string
+  status: DeviceAuthorizationStatus
+  requested_scope: TokenScope
+  expires_at: string
+}
+
+/** `GET /auth/device/{userCode}` — what the consent screen renders. A `404` (`IdentityError`,
+ * status 404) means the code is unknown or has expired; the caller renders that as "this link no
+ * longer works" rather than retrying. */
+export function fetchDeviceAuthorization(
+  userCode: string,
+  options: IdentityRequestOptions = {},
+): Promise<DeviceAuthorization> {
+  return identityRequest<DeviceAuthorization>(
+    `/auth/device/${encodeURIComponent(userCode)}`,
+    { method: 'GET' },
+    options,
+  )
+}
+
+/** `POST /auth/device/{userCode}/approve` — mints nothing yet (the CLI's next poll does); returns
+ * the row as it now stands. A `409` (`IdentityError`) means the code was already
+ * approved/denied — the caller renders that state rather than retrying. */
+export function approveDeviceAuthorization(
+  userCode: string,
+  scope: TokenScope,
+  options: IdentityRequestOptions = {},
+): Promise<DeviceAuthorization> {
+  return identityRequest<DeviceAuthorization>(
+    `/auth/device/${encodeURIComponent(userCode)}/approve`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope }),
+    },
+    options,
+  )
+}
+
+/** `POST /auth/device/{userCode}/deny` — `204`, nothing to return. */
+export async function denyDeviceAuthorization(
+  userCode: string,
+  options: IdentityRequestOptions = {},
+): Promise<void> {
+  await identityRequest<null>(
+    `/auth/device/${encodeURIComponent(userCode)}/deny`,
+    { method: 'POST' },
+    options,
+  )
+}

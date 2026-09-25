@@ -109,7 +109,7 @@ EPIC-137) is where the day-to-day state lives.
 
 **This table is synced from BREADBOARD.md, not the other way round** — when a status here and there
 disagree, BREADBOARD.md is current and this table is stale; fix this table in the same PR that notices
-the drift (last synced 2026-09-25, KAN-1741, R19 shipped).
+the drift (last synced 2026-09-25, KAN-1743, R19 shipped, R20 in progress).
 
 | ID | Requirement | Status |
 |----|-------------|--------|
@@ -123,7 +123,7 @@ the drift (last synced 2026-09-25, KAN-1741, R19 shipped).
 | R17 | A published, browsable docs site for install/CLI/agent/self-hosting docs (Q34) | Shipped (KAN-1194–1197), live at <https://leejianrong.github.io/kaya/> |
 | R18 | Ambient session context: a session already knows recent notes without asking (ADR 0005, pandan V48) | Shipped (KAN-1198–1201) |
 | R19 | Kaya becomes its own authorization server — no runtime dependency on pandan for identity (ADR 0012, supersedes ADR 0002) | **Shipped** — KAN-1738/1739/1740/1741: GitHub OAuth App + fastapi-users + async engine + cookie sessions; `personal_access_token` table + `/api/v1/tokens` + the Tokens UI; `get_principal` cut over to kaya's own identity, the ADR 0002 introspection path deleted (not left dormant), `note.owner_id` re-pointed at `kaya_account` (migration `0009`); the board-embed preview's own "connect your pandan account" step (`/api/v1/pandan-link`, `pandan_link` table, `/pandan` SPA page). **Deliberate, accepted cutover cost**: a note created before migration `0009` keeps its old pandan UUID in `owner_id` with no row anywhere to back it, and is not reachable under anyone's new `KayaAccount` id — no reconciliation tooling was built (maintainer's explicit call: this is dev/dogfood data). **Known, tracked gap**: `card_resolution.py`'s wikilink resolution has the same broken-bearer defect the board-embed preview had and is not yet fixed. |
-| R20 | `kaya auth login/logout/status` (RFC 8628 device flow) + a hosted remote MCP endpoint (ADR 0013) | Not started — sequenced after R19 |
+| R20 | `kaya auth login/logout/status` (RFC 8628 device flow) + a hosted remote MCP endpoint (ADR 0013) | In progress — `kaya auth login/logout/me` **shipped** (KAN-1743: `/auth/device/*`, `device_authorization` table, `/device` consent page, `GET /api/v1/me`). Hosted MCP (KAN-1744) is **blocked on a design gap, not merely queued**: neither ADR 0013 nor pandan's own ADR 0025 specifies the browser-redirect OAuth 2.1 Authorization Code + PKCE mechanics a hosted MCP client needs — flagged to the maintainer rather than improvised past. Docs (KAN-1745) sequenced after it. |
 
 ## Requirements
 

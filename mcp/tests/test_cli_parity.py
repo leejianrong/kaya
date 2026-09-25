@@ -481,13 +481,24 @@ def test_the_two_readers_agree_about_which_words_exist() -> None:
     since `note` and `config` are `add_parser` calls too, while a dispatch key names a group only
     as the left half of a pair — so the group words are added to the left-hand side, derived from
     the pairs rather than typed out.
+
+    ``login`` (ADR 0013, KAN-1743) is added the same way, for the mirror-image reason. It is
+    `kaya_cli.verbs.AUTH_LOGIN` — a real `add_parser` word `declared_flags` correctly finds, with
+    **no row in either dispatch table** at all: `kaya auth login` is dispatched directly by
+    `kaya_cli.__main__.main`, before `verbs.run` ever sees it, because a multi-step,
+    human-in-the-loop device-flow login has no single `Payload` to hand `render()`
+    (`kaya_cli.auth.run_login`'s own module docstring has the full argument). `dispatch_words`'s own
+    docstring already draws this exact line for `verbs.BARE` — a dispatch row with no argv to name
+    it "has no business being in the set a row is checked against" — and this is that argument
+    turned around: a parser word with no row to check it against has no business being *absent*
+    from this one.
     """
     pairs = _cli_words()
     groups = {command for command, subcommand in pairs if subcommand is not None}
     leaves = {subcommand or command for command, subcommand in pairs}
 
     assert leaves, "the dispatch-table reader found no words at all"
-    assert set(_cli_flags()) == groups | leaves
+    assert set(_cli_flags()) == groups | leaves | {"login"}
 
 
 def test_the_shared_parent_parser_is_the_one_this_reader_thinks_it_is() -> None:

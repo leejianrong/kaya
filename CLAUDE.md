@@ -57,8 +57,14 @@ an ADR in the pandan repo; bare "ADR NNNN" means this repo's. Read `PLAN.md` bef
    explicitly-connected pandan credential now** (KAN-1741) — `/api/v1/pandan-link` stores one PAT
    per kaya account, encrypted (`app/identity/pandan_link.py`), and `app/api/embeds.py` forwards
    *that*, never the caller's own kaya-side bearer, which stopped being a pandan credential the same
-   cutover made. EPIC-283 is closed as of KAN-1741; EPIC-284 (device-flow CLI login, hosted MCP) is
-   next — check the board before assuming this paragraph is the final word.
+   cutover made. EPIC-283 is closed as of KAN-1741. **EPIC-284 is in progress**: `kaya auth
+   login/logout/me` shipped (KAN-1743, RFC 8628 device flow — `/auth/device/*`,
+   `app/identity/device_auth_router.py`, the `/device` consent page). Hosted MCP (KAN-1744) is
+   **blocked on a genuine design gap, flagged rather than improvised past**: neither ADR 0013 nor
+   pandan's own ADR 0025 (its stated mirror) specifies the browser-redirect OAuth 2.1 Authorization
+   Code + PKCE mechanics a hosted MCP client needs to obtain a token — see
+   `docs/roadmap/BREADBOARD.md`'s R20 section. Check the board before assuming this paragraph is the
+   final word.
 3. **`render()`'s signature is frozen** ([ADR 0005](docs/adr/0005-born-agent-conformant.md)). If a
    change needs to alter it, stop — that's the sequencing violated, not a reason to push through.
    Six shipped features found another answer (e.g. `Payload.limited_to()` applied at the call site).

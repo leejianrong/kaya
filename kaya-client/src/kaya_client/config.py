@@ -57,11 +57,12 @@ total.
 
 ### The token, and the one rule that outranks every other consideration here
 
-``KAYA_TOKEN`` holds a pandan PAT. This module reads it, hands it to ``KayaClient``, and does
-nothing else with it: it is never logged, never echoed, never included in an exception message and
-never returned as part of a diagnostic. ``MissingCredential`` names the *variable*, never a value —
-a truncated token is still a token (Q41/Q42). ADR 0002 buys kaya the property that it holds no
-replayable credential, and a config layer that printed what it resolved would give that away for a
+``KAYA_TOKEN`` holds a kaya PAT (`kaya_pat_…`, minted by kaya's own authorization server since ADR
+0012/KAN-1740 — before that cutover this was a pandan PAT, forwarded byte-for-byte under ADR 0002).
+This module reads it, hands it to ``KayaClient``, and does nothing else with it: it is never
+logged, never echoed, never included in an exception message and never returned as part of a
+diagnostic. ``MissingCredential`` names the *variable*, never a value — a truncated token is still
+a token (Q41/Q42). A config layer that printed what it resolved would give that away for a
 convenience nobody asked for.
 
 **``config show`` therefore prints ``set`` and not a fragment.** The sibling tool is the reference
@@ -77,9 +78,10 @@ the tempting diagnostic ("is it the right token?") is exactly what the rule forb
 
 ``make up`` serves the whole stack on ``:8000`` from one origin, and the SPA's dev proxy points at
 the same place, so ``http://localhost:8000`` is the address a checkout is already using. Defaulting
-to it means a developer configures exactly one thing, and that one thing is the one kaya cannot
-invent: ADR 0002 gives kaya no token format and no way to mint one, so a missing PAT is a refusal
-and never a fallback.
+to it means a developer configures exactly one thing, and that one thing is the one this package
+cannot invent: a bearer is either pasted by hand (the Tokens UI), or obtained via `kaya auth login`
+(ADR 0013, KAN-1743's RFC 8628 device flow) — either way a missing one is a refusal, never a
+fallback.
 """
 
 import json
@@ -275,14 +277,68 @@ def write_settings(
 
     path = config_path(env)
     merged = {**read_settings_file(env), **{file_key(k): v for k, v in changes.items()}}
+    _atomic_write(path, merged)
 
+    return settings_payload(env)
+
+
+def _atomic_write(path: Path, settings: dict[str, Any]) -> None:
+    """The write half of the read-modify-write discipline `write_settings`'s own docstring argues
+    for, factored out so `unset_token` below shares it rather than re-deriving "atomic, private
+    file" a second time.
+
+    Written to a sibling temporary file and ``os.replace``d, so an interrupted write leaves the old
+    file intact rather than a truncated one — the file holds the credential that makes every other
+    command work. ``0o600`` before the rename, not after, so there is no window in which a
+    world-readable file contains a PAT. The directory is created ``0o700`` for the same reason.
+    """
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_name(f"{path.name}.tmp")
-    temporary.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary.write_text(
+        json.dumps(settings, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     temporary.chmod(0o600)
     os.replace(temporary, path)
 
-    return settings_payload(env)
+
+def unset_token(env: Mapping[str, str] | None = None) -> Payload:
+    """Remove the stored token from the config file — ``kaya auth logout`` (ADR 0013, KAN-1743).
+
+    **Purely local.** There is no server-side revocation call here, the identical disposition
+    pandan's own `auth logout` has: this clears what the CLI *reads*, not the PAT itself, which
+    keeps authenticating until it is revoked from kaya's own Tokens page (or
+    `DELETE /api/v1/tokens/{id}`) if that is what the caller actually wants. A future device-flow
+    "log out everywhere" is a different, larger feature this verb does not claim to be.
+
+    An environment-exported ``KAYA_TOKEN`` is untouched — this function can only remove a *file*
+    key, and `_resolved`'s tier order means an exported variable would keep shadowing the file's
+    absence regardless. `kaya auth status` after `kaya auth logout` in a shell with `KAYA_TOKEN`
+    still exported would therefore still report signed in, correctly: the environment is still
+    supplying a credential, and this verb never claimed to reach into a caller's shell.
+
+    Idempotent: logging out with nothing stored is not an error, the same "nothing to undo" shape
+    `context uninstall` already has for a hook that was never installed.
+    """
+    key = file_key(TOKEN_ENV)
+    current = read_settings_file(env)
+    if key not in current:
+        return Payload.entity(
+            noun=SESSION_NOUN,
+            envelope_key=SESSION_ENVELOPE,
+            record={LOGGED_OUT_COLUMN: False},
+            columns=(LOGGED_OUT_COLUMN,),
+        )
+
+    path = config_path(env)
+    remaining = {k: v for k, v in current.items() if k != key}
+    _atomic_write(path, remaining)
+
+    return Payload.entity(
+        noun=SESSION_NOUN,
+        envelope_key=SESSION_ENVELOPE,
+        record={LOGGED_OUT_COLUMN: True},
+        columns=(LOGGED_OUT_COLUMN,),
+    )
 
 
 # ------------------------------------------------------------------------- resolution
@@ -435,6 +491,12 @@ PATH_COLUMN = "path"
 EXISTS_COLUMN = "exists"
 CONFIG_NOUN = "config file"
 CONFIG_ENVELOPE = "config"
+
+SESSION_NOUN = "session"
+SESSION_ENVELOPE = "session"
+LOGGED_OUT_COLUMN = "logged_out"
+"""ADR 0013's amendment (KAN-1743): `kaya auth logout`'s whole payload — one boolean, `True` unless
+there was nothing stored to clear. See `unset_token`."""
 
 
 def settings_payload(env: Mapping[str, str] | None = None) -> Payload:
