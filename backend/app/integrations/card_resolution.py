@@ -107,9 +107,9 @@ from typing import Literal, Protocol
 
 import httpx
 
-from app.auth.cache import digest
-from app.auth.upstream import split_timeout
+from app.auth.digest import digest
 from app.config import Settings
+from app.pandan_timeout import split_timeout
 
 CARDS_PATH = "/api/v1/cards"
 EPICS_PATH = "/api/v1/epics"
@@ -171,10 +171,10 @@ class CardBatch:
 
 
 class CardEpicUpstream(Protocol):
-    """The two calls this card needs, behind a seam fakeable at the HTTP boundary — ADR 0002's
-    reason for `IdentityUpstream` applies unchanged: pandan is a runtime dependency this suite
-    does not want a network for, and `httpx.MockTransport` lets a test assert against the real
-    request `PandanCardEpicUpstream` would put on the wire."""
+    """The two calls this card needs, behind a seam fakeable at the HTTP boundary — the same
+    reason `TeamMembershipUpstream` (`app/auth/team_upstream.py`) has one: pandan is a runtime
+    dependency this suite does not want a network for, and `httpx.MockTransport` lets a test
+    assert against the real request `PandanCardEpicUpstream` would put on the wire."""
 
     def fetch_cards(self, bearer: str, refs: Sequence[str]) -> CardBatch:
         """One request. ``refs`` must already be at or under pandan's combined-selector cap —
@@ -190,7 +190,7 @@ class CardEpicUpstream(Protocol):
 
 class PandanCardEpicUpstream:
     """``CardEpicUpstream`` over real HTTP. The bearer is forwarded byte for byte, exactly like
-    `PandanIdentityUpstream` — this module has no more business parsing it than that one does."""
+    `PandanTeamUpstream` — this module has no more business parsing it than that one does."""
 
     def __init__(
         self,
@@ -202,7 +202,7 @@ class PandanCardEpicUpstream:
         self._cards_url = base_url.rstrip("/") + CARDS_PATH
         self._epics_url = base_url.rstrip("/") + EPICS_PATH
         # `timeout` configures the client this builds; a `client` passed in (tests only) carries
-        # its own — see `PandanIdentityUpstream`'s constructor comment, the asymmetry is the same.
+        # its own — see `PandanTeamUpstream`'s constructor comment, the asymmetry is the same.
         self._client = client if client is not None else httpx.Client(timeout=timeout)
         # No explicit `Accept-Encoding` header: httpx's `Client` already sends
         # ``gzip, deflate`` by default (verified: `httpx.Client().headers["accept-encoding"]`), so

@@ -1,31 +1,29 @@
-"""Authentication: pandan resolves callers, kaya remembers the answer (ADR 0002).
+"""Authentication: kaya resolves its own callers now (ADR 0012, KAN-1740).
 
-Kaya has **no token format, no token table, and no prefix logic**. It takes the bearer it was
-given, asks pandan who that is, and caches the answer under a SHA-256 digest. The two things most
-likely to be "improved" back into bugs are written down at the top of the modules that hold them:
+Before this card, kaya had no identity of its own: it forwarded every bearer to pandan's
+``GET /api/v1/me`` and cached the answer (ADR 0002). ADR 0012 ends that — ``get_principal`` below
+resolves a caller from kaya's own ``kaya_account``/``kaya_session``/``personal_access_token`` tables
+(``app/identity/``), a local database lookup with no upstream to be slow, unavailable, or worth
+caching against. See ``app/auth/kaya_principal.py`` for the two ways in (cookie session, PAT
+bearer) and ``app/auth/dependencies.py`` for the HTTP wiring around it.
 
-- ``upstream.py`` — pandan answers `401` identically for a malformed token and a revoked one, so
-  there is nothing kaya could usefully infer from a token's shape even if it wanted to.
-- ``cache.py`` — the negative cache is what a ``startswith`` guard was reaching for, and it sheds
-  the same load without knowing anything about the token.
-- ``single_flight.py`` — deduplicating concurrent misses is not tidiness, it is what makes the
-  30 s read budget in ``upstream.py`` affordable without breaking ADR 0003 (KAN-666).
+**Existing notes' `owner_id` still points at the old pandan-mirror `user` table**
+(``app/models/user.py``) and is not reachable under a caller's new ``KayaAccount`` id — a
+deliberate, accepted cutover cost (``docs/roadmap/BREADBOARD.md``'s R19 section), not a bug this
+package works around.
 
-Import layering, deliberately one-way: ``principal`` ← ``cache``/``upstream``/``single_flight`` ←
-``resolver`` ←
-``authorization`` ← ``dependencies``, with ``mirror`` off to one side. ``resolver`` and
-``authorization`` reach for ``fastapi.HTTPException`` and nothing else of the framework — no
-``Depends``, no request, no session — so the entire HTTP contract, status codes and error bodies
-included, is exercisable by the no-infrastructure test layer. ``dependencies`` is the only module
-that knows FastAPI's dependency machinery exists, and ``mirror`` the only one holding a session.
+Import layering, deliberately one-way: ``principal`` ← ``kaya_principal`` ← ``dependencies`` ←
+``authorization``. ``kaya_principal`` and ``authorization`` reach for ``fastapi.HTTPException`` and
+nothing else of the framework — no ``Depends``, no request, no session type beyond the plain
+SQLAlchemy one — so the whole of resolution and authorization is exercisable by the
+no-infrastructure test layer.
 
-**Team-default access (ADR 0011, R16) is a parallel, narrower stack**: ``team_cache``/
-``team_upstream`` ← ``team_resolver`` ← ``dependencies``. It never imports and is never imported by
-the identity stack above — a stampede on one bearer's team check has no business coalescing with,
-or queuing behind, a stampede on that same bearer's identity check (`team_resolver.py`'s module
-docstring). Where the identity stack turns a pandan outage into a hard `503` (ADR 0002's one
-exception), `team_resolver.TeamAccessResolver` never raises at all — ADR 0011 made that dependency
-soft.
+**Team-default access (ADR 0011, R16) is a parallel, narrower stack, entirely unaffected by this
+card**: ``team_cache``/``team_upstream`` ← ``team_resolver`` ← ``dependencies``. It still calls
+pandan for every request (``GET /api/v1/teams``) and still needs the cache/upstream/single-flight
+shape identity's own stack used to — that need was never about identity, it was about this
+particular call being slow and worth shielding a stampede from, and pandan's `/api/v1/teams`
+endpoint is unchanged by anything in this card.
 """
 
 from app.auth.authorization import (
@@ -40,48 +38,38 @@ from app.auth.authorization import (
     notes_owned_by,
     notes_titled,
 )
-from app.auth.cache import PrincipalCache, digest
 from app.auth.dependencies import (
     get_principal,
-    get_resolver,
     get_team_access_resolver,
     reset_auth,
 )
-from app.auth.mirror import SqlAlchemyPrincipalMirror, ensure_team_mirrored
-from app.auth.principal import (
-    Principal,
-    PrincipalMirror,
-    TokenRejected,
-    UpstreamUnavailable,
+from app.auth.digest import digest
+from app.auth.errors import error_body
+from app.auth.kaya_principal import (
+    principal_from_cookie,
+    principal_from_pat,
+    resolve_principal,
 )
-from app.auth.resolver import PrincipalResolver, error_body, principal_from_bearer
+from app.auth.mirror import ensure_team_mirrored
+from app.auth.principal import Principal, UpstreamUnavailable
 from app.auth.single_flight import SingleFlight
 from app.auth.team_cache import TeamMembershipCache
 from app.auth.team_resolver import TeamAccessResolver
 from app.auth.team_upstream import PandanTeamUpstream, TeamMembershipUpstream
-from app.auth.upstream import IdentityUpstream, PandanIdentityUpstream, split_timeout
 
 __all__ = [
-    "IdentityUpstream",
-    "PandanIdentityUpstream",
     "PandanTeamUpstream",
     "Principal",
-    "PrincipalCache",
-    "PrincipalMirror",
-    "PrincipalResolver",
     "SingleFlight",
-    "SqlAlchemyPrincipalMirror",
     "TeamAccessResolver",
     "TeamMembershipCache",
     "TeamMembershipUpstream",
-    "TokenRejected",
     "UpstreamUnavailable",
     "authorize_note",
     "digest",
     "ensure_team_mirrored",
     "error_body",
     "get_principal",
-    "get_resolver",
     "get_team_access_resolver",
     "note_addressed_as_id",
     "note_addressed_as_ref",
@@ -92,7 +80,8 @@ __all__ = [
     "notes_named_by_id",
     "notes_owned_by",
     "notes_titled",
-    "principal_from_bearer",
+    "principal_from_cookie",
+    "principal_from_pat",
     "reset_auth",
-    "split_timeout",
+    "resolve_principal",
 ]

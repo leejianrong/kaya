@@ -1,24 +1,21 @@
-"""TTL cache of team-membership answers, keyed on a digest — the same shape as
-`app/auth/cache.py`'s `PrincipalCache`, deliberately **not** shared with it.
+"""TTL cache of team-membership answers, keyed on a digest.
 
-Two reasons for a second class rather than making `PrincipalCache` generic. First, the two caches
-answer different questions and decay to different things on a miss: `PrincipalCache`'s `None` is a
-cached *rejection* (ADR 0002) and surfaces as a `401`; this cache's `None` is "pandan could not be
-asked" and surfaces as ADR 0011's soft-fail — an *empty* membership set, never an error. Collapsing
-the two into one generic class would either lose that distinction at the type level or push it back
-out into every caller, for less clarity than the duplication below costs. Second,
-`PrincipalCache`'s own docstring narrates a real concurrency bug (a `lookup`/`del` race) this class
-must not reintroduce by drifting from its fix — copying the whole locking discipline, rules
-included, is safer than parameterizing a shared class and hoping a later edit to one preserves the
-other's invariant.
+Before ADR 0012's cutover (KAN-1740) this docstring justified itself against `app/auth/cache.py`'s
+`PrincipalCache` — a second class rather than a generic one, because the two caches decayed to
+different things on a miss (a cached *rejection*, surfacing as `401`, versus "pandan could not be
+asked", surfacing as ADR 0011's soft-fail empty set). `PrincipalCache` is gone now — kaya's own
+identity resolution is a local database lookup with nothing left to cache — but this cache is not:
+team-default access (ADR 0011) still calls pandan's `/api/v1/teams` for every caller, and still
+wants the identical shape (a positive/negative TTL split, one lock, the same `lookup`/`del` race
+`PrincipalCache`'s own docstring used to narrate) for the identical reason.
 
-`digest` is imported rather than reimplemented — it is a pure function with no state, so sharing it
-carries none of the risk sharing the stateful cache class would.
+`digest` is imported from `app.auth.digest` rather than reimplemented — it is a pure function with
+no state, so sharing it carries none of the risk sharing a stateful cache class would.
 
-The bound below is defense-in-depth rather than the load-shedding necessity it is for
-`PrincipalCache`: a garbage `Authorization` header never reaches this cache at all, because ADR
-0002's identity resolver already rejects it before `authorize_note`'s team-default rung ever runs.
-Kept anyway, for the same reason a seatbelt is worn on a route with no history of crashes.
+The bound below is defense-in-depth rather than a load-shedding necessity: a garbage `Authorization`
+header never reaches this cache at all, because `get_principal` already rejects it before
+`authorize_note`'s team-default rung ever runs. Kept anyway, for the same reason a seatbelt is worn
+on a route with no history of crashes.
 """
 
 import threading
@@ -26,7 +23,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from app.auth.cache import digest
+from app.auth.digest import digest
 
 DEFAULT_MAX_ENTRIES = 4096
 
@@ -41,8 +38,8 @@ class _Entry:
 
 class TeamMembershipCache:
     """TTL cache of team-membership answers, keyed on a digest. **Safe under concurrent use** —
-    see the module docstring for why this duplicates `PrincipalCache`'s locking rather than
-    sharing it. The two rules are identical and identically load-bearing:
+    see the module docstring for why this duplicates the now-retired `PrincipalCache`'s locking
+    rather than sharing it. The two rules are identical and identically load-bearing:
 
     1. Nothing injected is called while `_lock` is held (the clock is read before it is taken).
     2. `_evict` runs with the lock already held and never takes it itself.
@@ -65,7 +62,7 @@ class TeamMembershipCache:
 
     def lookup(self, token: str) -> tuple[bool, frozenset[int] | None]:
         """``(hit, teams)``. ``(True, None)`` is a cached "unknown"; ``(False, None)`` is a miss —
-        see `PrincipalCache.lookup` for why collapsing these two would be the bug."""
+        see the module docstring for why collapsing these two would be the bug."""
         key = digest(token)
         now = self._clock()
 

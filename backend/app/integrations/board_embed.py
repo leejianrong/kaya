@@ -36,8 +36,8 @@ from typing import Any, Protocol
 
 import httpx
 
-from app.auth.upstream import split_timeout
 from app.config import Settings
+from app.pandan_timeout import split_timeout
 
 CARDS_PATH = "/api/v1/cards"
 
