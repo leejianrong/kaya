@@ -12,7 +12,15 @@ row reddens nothing and changing one reddens exactly the row that moved.
 """
 
 import pytest
-from kaya_client import ApiError, KayaError, TransportError, UnknownFormat, UsageError
+from kaya_client import (
+    ApiError,
+    DeviceLoginDenied,
+    DeviceLoginExpired,
+    KayaError,
+    TransportError,
+    UnknownFormat,
+    UsageError,
+)
 
 from kaya_cli.failures import (
     EXIT_CONFLICT,
@@ -88,6 +96,8 @@ SHIPPED_ROWS = {
     "usage": 2,
     "unreachable": 1,
     "runtime": 1,
+    "device_login_denied": 1,
+    "device_login_expired": 1,
 }
 """Every row as shipped, written as literals. Adding a code adds a row *here* too — that is the
 add-only rule expressed as the smallest possible chore, and it is what makes the diff say so."""
@@ -136,7 +146,17 @@ def test_every_client_side_failure_class_has_a_row() -> None:
     Without this, a class added to `kaya_client.errors` with a fresh ``code`` silently exits `1`,
     and the first person to notice is whoever wrote a script around the number it should have had.
     """
-    codes = {cls.code for cls in (KayaError, UsageError, UnknownFormat, TransportError)}
+    codes = {
+        cls.code
+        for cls in (
+            KayaError,
+            UsageError,
+            UnknownFormat,
+            TransportError,
+            DeviceLoginDenied,
+            DeviceLoginExpired,
+        )
+    }
 
     assert codes <= set(EXIT_FOR_CODE)
 
@@ -278,6 +298,8 @@ def test_a_malformed_precondition_is_the_callers_error_not_a_runtime_failure() -
         (ApiError(404, {"error": {"code": "note_not_found", "message": "no"}}), 5),
         (ApiError(409, {"error": {"code": "note_conflict", "message": "no"}}), 6),
         (ApiError(422, {"error": {"code": "invalid_request", "message": "no"}}), 2),
+        (DeviceLoginDenied("denied"), 1),
+        (DeviceLoginExpired("expired"), 1),
     ],
 )
 def test_each_failure_class_reaches_its_number(failure: BaseException, expected: int) -> None:

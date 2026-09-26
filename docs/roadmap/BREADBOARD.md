@@ -396,7 +396,7 @@ independently implemented. Full reasoning is in
 
 | Part | Mechanism |
 |------|-----------|
-| `kaya auth login/logout/status` | RFC 8628 Device Authorization Grant against kaya's own authorization server (R19) — device code + user code + polling, same UX pattern as pandan's. **No board/workspace scoping step** — every kaya PAT is account-wide (R19's own PAT shape has no scoping dimension to consent to). |
+| `kaya auth login/logout/status` | **Shipped (`KAN-1743`).** RFC 8628 Device Authorization Grant against kaya's own authorization server (R19) — `POST /auth/device/code`/`token` (unauthenticated, RFC 8628's own flat `{"error": "<code>"}` shape) plus a cookie-session-gated `GET/POST /auth/device/{user_code}[/approve\|/deny]` consent screen (`DeviceApproval.svelte`, `/device`), backed by a new `device_authorization` table. **No board/workspace scoping step** — every kaya PAT is account-wide (R19's own PAT shape has no scoping dimension to consent to), though a `read`/`write` scope choice (`--scope`) is still requested and shown. The CLI's third verb is spelled `auth check`, not pandan's `auth status` — `context` already owns that bare word and `mcp/tests/test_cli_parity.py`'s reader refuses two verbs sharing one (the same collision `context print` hit against `config show`). The minted `kaya_pat_…` is written straight to the config file and never printed, unlike the Tokens UI's manual "copy this now" reveal. |
 | Hosted MCP | Streamable HTTP, RFC 9728 (protected resource metadata) + RFC 7591 Dynamic Client Registration (or its CIMD successor, whichever pandan's EPIC-282 settles on) + RFC 8707 resource-indicator token binding — the same resource-server shape as pandan ADR 0025, backed by kaya's own authorization server. |
 | Stdio MCP | Stays, repositioned as a documented self-hosting/offline fallback — the hosted endpoint and the CLI become the top-billed options. |
 
@@ -404,6 +404,6 @@ independently implemented. Full reasoning is in
 against) but not otherwise blocked on pandan's own EPIC-281/282 build — the RFC mechanics are
 spec-defined, not pandan-implementation-defined.
 
-**Cards:** `KAN-1743` (`kaya auth login/logout/status`), `KAN-1744` (hosted remote MCP endpoint),
-`KAN-1745` (docs: hosted MCP + CLI as top options, stdio as the fallback). All under `EPIC-284`. Not
-started — blocked on R19 (`KAN-1740`–`1741`) landing first.
+**Cards:** `KAN-1743` (`kaya auth login/logout/status` — **shipped**), `KAN-1744` (hosted remote MCP
+endpoint), `KAN-1745` (docs: hosted MCP + CLI as top options, stdio as the fallback). All under
+`EPIC-284`. `KAN-1744`/`1745` not started.

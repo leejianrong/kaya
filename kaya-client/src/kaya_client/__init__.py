@@ -78,8 +78,11 @@ for any of the six cards and must not move for what follows**; if a later card n
 that is the signal the sequencing broke, not a reason to push through. ``render``'s module docstring
 argues requirement by requirement why.
 
-Still to come: search and links (KAN-558/559, KAN-566), and the MCP adapter that calls all of this
-(V6).
+**`device_login` (ADR 0013, KAN-1743)** is the one module here with no `render()` in its path at
+all: `request_device_code`/`poll_once` are typed HTTP calls against `/auth/device/*`, not `/api/v1`,
+so they return no `Payload` — there is nothing about a device-flow login to project, truncate or
+serialize, only a raw secret to hand back once. `kaya-cli`'s `auth login` owns the interactive
+polling loop around them; see that module's own docstring for why the loop itself is not here.
 """
 
 from importlib.metadata import PackageNotFoundError, version
@@ -98,7 +101,16 @@ from kaya_client.config import (
     path_payload,
     read_settings_file,
     settings_payload,
+    token_status_payload,
+    unset_token,
     write_settings,
+)
+from kaya_client.device_login import (
+    DeviceCode,
+    MintedToken,
+    PollResult,
+    poll_once,
+    request_device_code,
 )
 from kaya_client.errors import (
     ARG_KEY,
@@ -106,6 +118,8 @@ from kaya_client.errors import (
     CONTRACT_KEYS,
     MESSAGE_KEY,
     ApiError,
+    DeviceLoginDenied,
+    DeviceLoginExpired,
     KayaError,
     MissingCredential,
     TransportError,
@@ -147,6 +161,9 @@ __all__ = [
     "COUNT_KEY",
     "DEFAULT_TEXT_LIMIT",
     "DESCRIPTION",
+    "DeviceCode",
+    "DeviceLoginDenied",
+    "DeviceLoginExpired",
     "ERROR_MARKER",
     "HELP_PREFIX",
     "HINTS",
@@ -163,9 +180,11 @@ __all__ = [
     "KayaClient",
     "KayaError",
     "Kind",
+    "MintedToken",
     "MissingCredential",
     "ParsedDocument",
     "Payload",
+    "PollResult",
     "Shaped",
     "TransportError",
     "UnknownFormat",
@@ -185,15 +204,19 @@ __all__ = [
     "overview",
     "parse_document",
     "path_payload",
+    "poll_once",
     "project",
     "read_settings_file",
     "render",
     "render_error",
+    "request_device_code",
     "serialize",
     "serialize_error",
     "settings_payload",
     "summary_line",
+    "token_status_payload",
     "truncate",
+    "unset_token",
     "version_line",
     "write_settings",
 ]

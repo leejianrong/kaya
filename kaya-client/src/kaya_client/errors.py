@@ -137,6 +137,23 @@ class TransportError(KayaError):
     code: ClassVar[str] = "unreachable"
 
 
+class DeviceLoginDenied(KayaError):
+    """`kaya auth login`'s device-flow request was explicitly denied on the consent screen (ADR
+    0013, KAN-1743). Distinct from an ``ApiError`` because there is no HTTP status behind it worth
+    keying on — RFC 8628's token endpoint answers every device-flow outcome with a flat `400` and a
+    bare ``{"error": "<code>"}``, never kaya's own ``{"error": {"code","message"}}`` shape, so this
+    class exists specifically to give that outcome a stable code string an adapter can branch on."""
+
+    code: ClassVar[str] = "device_login_denied"
+
+
+class DeviceLoginExpired(KayaError):
+    """The device code's ~15-minute window elapsed before a human acted on it. See
+    ``DeviceLoginDenied`` for why this is not an ``ApiError``."""
+
+    code: ClassVar[str] = "device_login_expired"
+
+
 class ApiError(KayaError):
     """The API answered, and the answer was a refusal.
 

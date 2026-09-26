@@ -36,6 +36,8 @@ from kaya_client import (
     read_settings_file,
     render,
     settings_payload,
+    token_status_payload,
+    unset_token,
     write_settings,
 )
 from kaya_client.config import (
@@ -508,3 +510,76 @@ def test_the_path_payload_says_so_once_the_file_is_there(home: dict[str, str]) -
     write_settings({API_URL_ENV: "https://kaya.example"}, home)
 
     assert path_payload(home).record["exists"] is True
+
+
+# --------------------------------------------------------------- unset_token (`kaya auth logout`)
+
+
+def test_unset_token_removes_the_key_from_the_file(home: dict[str, str]) -> None:
+    write_settings({TOKEN_ENV: "kaya_pat_something", API_URL_ENV: "https://kaya.example"}, home)
+
+    unset_token(home)
+
+    assert "token" not in written(home)
+    assert written(home)["api_url"] == "https://kaya.example", (
+        "a delete, not a second write_settings call — every other key must survive untouched"
+    )
+
+
+def test_unset_token_on_a_file_with_no_token_is_not_an_error(home: dict[str, str]) -> None:
+    write_settings({API_URL_ENV: "https://kaya.example"}, home)
+
+    unset_token(home)  # must not raise
+
+    assert written(home)["api_url"] == "https://kaya.example"
+
+
+def test_unset_token_with_no_config_file_at_all_is_not_an_error(home: dict[str, str]) -> None:
+    unset_token(home)  # must not raise, and must not create a file
+
+    assert not config_path(home).exists()
+
+
+def test_unset_token_reports_not_set_afterwards(home: dict[str, str]) -> None:
+    write_settings({TOKEN_ENV: "kaya_pat_something"}, home)
+
+    reported = rows(unset_token(home))
+
+    assert reported["token"] == (TOKEN_UNSET, UNSET_SOURCE)
+
+
+def test_unset_token_does_not_touch_an_environment_variable(home: dict[str, str]) -> None:
+    """`unset_token` cannot revoke a shell's own variable, and does not claim to — the file tier is
+    the only thing it ever touches."""
+    write_settings({TOKEN_ENV: "kaya_pat_from_the_file"}, home)
+    env = {**home, TOKEN_ENV: "kaya_pat_from_the_shell"}
+
+    unset_token(env)
+
+    assert token(env) == "kaya_pat_from_the_shell"
+
+
+# ------------------------------------------------------- token_status_payload (`kaya auth status`)
+
+
+def test_token_status_reports_not_set_with_nothing_configured(home: dict[str, str]) -> None:
+    payload = token_status_payload(home)
+
+    assert payload.record == {"key": "token", "value": TOKEN_UNSET, "source": UNSET_SOURCE}
+
+
+def test_token_status_reports_set_and_its_source_from_the_file(home: dict[str, str]) -> None:
+    write_settings({TOKEN_ENV: "kaya_pat_something"}, home)
+
+    payload = token_status_payload(home)
+
+    assert payload.record["value"] == TOKEN_SET
+    assert payload.record["source"] == FILE_SOURCE
+
+
+def test_token_status_never_leaks_a_fragment_of_the_token(home: dict[str, str]) -> None:
+    put(home, {"token": SECRET})
+
+    payload = token_status_payload(home)
+
+    assert not _fragments_in(SECRET, str(payload.record))

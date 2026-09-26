@@ -35,6 +35,10 @@ Module layout, one-way dependency (``models`` ← ``db`` ← ``manager`` ← `ba
   the mint/hash logic for kaya's own ``kaya_pat_…`` PATs, mirroring pandan ADR 0014. **Read through
   the sync engine, not this package's async one** — see ``pat.py``'s module docstring — so it sits
   beside ``models.py`` rather than depending on anything else here at runtime.
+- ``device_flow.py`` / ``device_flow_schemas.py`` / ``device_auth.py`` (KAN-1743, ADR 0013) — RFC
+  8628 device-flow login: the ``device_authorization`` table, its request/response shapes, and
+  ``/auth/device/*``. Mints a PAT through ``pat.py`` on the CLI's first successful poll; reads
+  through the sync engine for the identical reason ``pat.py`` does.
 
 **What KAN-1738/1739 do not yet do.** No note/team/attachment route depends on the identity this
 package resolves, and no route accepts a ``kaya_pat_…`` bearer for anything — ``authorize_note``
@@ -46,6 +50,7 @@ authorization arrives in V8"); this mirrors that sequencing on purpose rather th
 bigger, harder-to-review PR that changes login and authorization at once.
 """
 
+from app.identity.device_auth import router as device_auth_router
 from app.identity.router import install_identity_routes
 
-__all__ = ["install_identity_routes"]
+__all__ = ["device_auth_router", "install_identity_routes"]
