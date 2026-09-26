@@ -9,9 +9,13 @@ the observability layer and the SPA are all installable onto a bare ``FastAPI()`
 stand up the real surface without the real settings.
 """
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.routing import Route
 
 from app import __version__
 from app.api import (
@@ -26,9 +30,31 @@ from app.api import (
     tokens_router,
 )
 from app.api import router as api_router
-from app.identity import device_auth_router, install_identity_routes
+from app.identity import (
+    device_auth_router,
+    install_identity_routes,
+    oauth_authorize_router,
+    oauth_metadata_router,
+    oauth_register_router,
+    oauth_server_metadata_router,
+)
+
+# Imported directly, not via `app.identity`'s own `__init__.py` — see that file's comment on
+# `mcp_host` for the circular-import reason this one line has to come after every other
+# `app.identity`/`app.api` import above has already run.
+from app.identity.mcp_host import hosted_mcp_app, hosted_mcp_lifespan
 from app.observability import install_observability
 from app.spa import mount_spa
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Enters `hosted_mcp_lifespan` (ADR 0014, KAN-1744) for the duration of this app's own — see
+    `app/identity/mcp_host.py`'s module docstring for why the hosted MCP transport needs its own
+    lifespan entered explicitly rather than inheriting this one for free."""
+    async with hosted_mcp_lifespan():
+        yield
+
 
 app = FastAPI(
     title="kaya",
@@ -36,6 +62,7 @@ app = FastAPI(
     version=__version__,
     docs_url="/docs",
     openapi_url="/openapi.json",
+    lifespan=_lifespan,
 )
 
 # KAN-963. Every bundle figure this project has ever quoted (ADR 0001 §2's obligation, and every
@@ -151,6 +178,29 @@ app.include_router(tokens_router)
 # argument. Registration order is immaterial against every other router — no other route matches
 # `/pandan-link`.
 app.include_router(pandan_link_router)
+
+# ADR 0014 (KAN-1744): RFC 7591 DCR (`/auth/register`) and the authorization_code+PKCE grant
+# (`/auth/authorize*`) — the browser-redirect flow a hosted MCP client completes, sharing
+# `device_auth_router`'s token endpoint (`POST /auth/device/token`, extended for
+# `grant_type=authorization_code`) rather than adding a second one. Registration order is
+# immaterial against every other router — no other route matches `/auth/register` or
+# `/auth/authorize`.
+app.include_router(oauth_register_router)
+app.include_router(oauth_authorize_router)
+
+# ADR 0013/0014 (KAN-1744): RFC 9728 protected-resource metadata and RFC 8414 authorization-server
+# metadata — the two discovery documents a cold MCP client reads before it can even start the
+# authorization_code grant above. Unversioned `.well-known` paths, not `/api/v1`.
+app.include_router(oauth_metadata_router)
+app.include_router(oauth_server_metadata_router)
+
+# ADR 0013/0014 (KAN-1744): the hosted MCP endpoint itself. A plain `Route`, not `include_router`
+# or `app.mount` — see `app/identity/mcp_host.py`'s module docstring for why a `Mount` breaks a
+# bare `POST /mcp`, and why this ASGI app (not a FastAPI dependency) is the auth chokepoint for
+# everything under this one path. Registered before `mount_spa` below, so a request to exactly
+# `/mcp` reaches this rather than the SPA's catch-all — `app/spa.py`'s own `RESERVED_PREFIXES`
+# is the structural guard that a sub-path under `/mcp` still 404s instead of becoming a deep link.
+app.router.routes.append(Route("/mcp", hosted_mcp_app))
 
 
 class Health(BaseModel):

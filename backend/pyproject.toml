@@ -37,6 +37,11 @@ dependencies = [
     # Already a transitive dependency of `httpx-oauth`/`fastapi-users`; explicit because this is the
     # first place in `app/` that imports it directly.
     "cryptography>=45",
+    # ADR 0014 (KAN-1744): hosting `kaya-mcp`'s Streamable HTTP transport on this backend
+    # (`app/identity/mcp_host.py`) means importing its finished `MCPServer` instance — a deliberate,
+    # narrow exception to "nothing depends on an adapter", argued in ADR 0014's own "necessary,
+    # narrow exception" section. `kaya-client` itself gains no new dependency either way.
+    "kaya-mcp",
 ]
 
 [project.optional-dependencies]
@@ -45,6 +50,9 @@ dev = [
     "ruff>=0.9",
     "testcontainers[postgres]>=4.15.0",
 ]
+
+[tool.uv.sources]
+kaya-mcp = { path = "../mcp", editable = true }
 
 [build-system]
 requires = ["hatchling>=1.31.0"]

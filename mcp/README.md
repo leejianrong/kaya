@@ -12,6 +12,24 @@ layer. KAN-964 deleted it: KAN-566 landed all three layers, so the refusal was n
 sequencing gap. **This package now invents no failure of its own**, which is what ADR 0004's arrow
 predicts of a thin adapter — every failure a tool can raise is a `kaya_client` one.
 
+## Two transports, one tool registry, since KAN-1744
+
+`src/kaya_mcp/server.py`'s `server` instance is served over **stdio** (`kaya-mcp`, one local
+subprocess per user, `__main__.py`'s only job) and, since ADR 0013/0014, over **Streamable HTTP** —
+mounted at `/mcp` on kaya's own backend (`backend/app/identity/mcp_host.py`), reachable from a
+hosted client (Claude.ai, ChatGPT, Cursor) that cannot spawn a local subprocess. It is the *same*
+six tools either way; nothing here forked for the hosted case.
+
+The one thing that does differ is how a tool call gets its `KayaClient`: the stdio transport is one
+process per user, so `tools.py`'s `_client()` falls back to `open_client()`'s env-var-configured
+singleton exactly as before KAN-1744. The hosted transport is one process serving every caller, so
+`mcp_host.py`'s bearer-auth middleware stashes the validated caller's own token in a per-request
+contextvar (`src/kaya_mcp/request_auth.py`) before a tool ever runs, and `_client()` builds a fresh
+`KayaClient` from that instead — see that module's own docstring for the full bridge. Auth itself is
+kaya's backend's job, not this package's or the MCP SDK's: `mcp_host.py` validates a bearer against
+`personal_access_token` directly, never standing up a second, parallel authorization server inside
+the SDK.
+
 ## The direction: `MCP ⊆ CLI`
 
 **This is the one place that states it.** Every other document in this repo links here rather than
