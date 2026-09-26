@@ -1,13 +1,13 @@
 [project]
 name = "kaya-mcp"
-version = "0.4.0"
+version = "0.5.0"
 description = "kaya's MCP server — a thin adapter over kaya-client"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     "kaya-client",
-    "mcp>=1.2.0",
+    "mcp>=2.0,<3",
 ]
 # KAN-569 lands the MCP SDK: the six tools ADR 0006 froze are now real, so the dependency that
 # stands the server up finally has tools behind it. KAN-964 (0.3.0) made the sixth one work — it had
@@ -17,6 +17,16 @@ dependencies = [
 # required-ness moved — but what a host is *told* did, which is behaviour a consumer can see, so it
 # is a bump for the same reason and not a cosmetic exemption. ADR 0006 §3's own lesson: "cosmetic is
 # a claim requiring proof, not a category exempt from it".
+# KAN-1744 bounds this to a major, mirroring pandan's own KAN-585 fix: `MCPServer`/
+# `streamable_http_app()`/`TransportSecuritySettings` are 2.x-era API (the SDK's own `server.py`
+# docstring: v1 was `FastMCP`, renamed at 2.0.0) — an unbounded `>=1.2.0` let a future `mcp>=3.0`
+# release break this package silently, with no test catching it until an install picked it up.
+# Same card (0.5.0): `kaya_mcp.request_auth` (a per-request bearer contextvar) and `tools.py`'s
+# `_client()` indirection are new, behavioural surface — the hosted Streamable HTTP transport
+# (`backend/app/identity/mcp_host.py`) is this package's first caller of either, but the stdio
+# transport's own `open_client()` fallback path is unchanged and every existing test still passes
+# unmodified, which is the point: this package still has exactly one behaviour for its one shipped
+# transport, with a second transport's seam added beside it rather than through it.
 
 [project.optional-dependencies]
 dev = [

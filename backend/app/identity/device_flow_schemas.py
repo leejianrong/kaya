@@ -32,12 +32,6 @@ class DeviceCodeResponse(BaseModel):
     interval: int
 
 
-class DeviceTokenRequest(BaseModel):
-    """`POST /auth/device/token`'s body: the device code to poll with."""
-
-    device_code: str
-
-
 class DeviceAuthorizationRead(BaseModel):
     """The consent screen's own read (`GET /auth/device/{user_code}`) **and** its own write
     (`POST .../approve`, `POST .../deny`'s error path) — one shape for all three, so the consent
