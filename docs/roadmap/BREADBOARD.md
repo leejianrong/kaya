@@ -390,14 +390,19 @@ unreachable from a hosted client (Claude.ai, ChatGPT, Cursor) that can't spawn a
 
 **Decision, in one line.** Mirror pandan ADR 0024 (device flow) and ADR 0025 (hosted remote MCP),
 independently implemented. Full reasoning is in
-[ADR 0013](../adr/0013-device-flow-and-hosted-mcp.md) — not repeated here.
+[ADR 0013](../adr/0013-device-flow-and-hosted-mcp.md) — not repeated here. Building the hosted MCP
+half surfaced a gap ADR 0013 shared with pandan's own ADR 0025: no grant type was specified for a
+*browser-embedded* client (device flow has no redirect target). [ADR 0014](../adr/0014-oauth-authorization-code-pkce-grant.md)
+fills it, mirroring pandan's own identical discovery and fix (ADR 0026) — with one deliberate
+simplification: no refresh-token rotation, since a token this grant mints is an ordinary, long-lived
+`kaya_pat_…` like every other kaya credential (ADR 0012), not a short-lived one needing renewal.
 
 **Shape**
 
 | Part | Mechanism |
 |------|-----------|
 | `kaya auth login/logout/status` | **Shipped (`KAN-1743`).** RFC 8628 Device Authorization Grant against kaya's own authorization server (R19) — `POST /auth/device/code`/`token` (unauthenticated, RFC 8628's own flat `{"error": "<code>"}` shape) plus a cookie-session-gated `GET/POST /auth/device/{user_code}[/approve\|/deny]` consent screen (`DeviceApproval.svelte`, `/device`), backed by a new `device_authorization` table. **No board/workspace scoping step** — every kaya PAT is account-wide (R19's own PAT shape has no scoping dimension to consent to), though a `read`/`write` scope choice (`--scope`) is still requested and shown. The CLI's third verb is spelled `auth check`, not pandan's `auth status` — `context` already owns that bare word and `mcp/tests/test_cli_parity.py`'s reader refuses two verbs sharing one (the same collision `context print` hit against `config show`). The minted `kaya_pat_…` is written straight to the config file and never printed, unlike the Tokens UI's manual "copy this now" reveal. |
-| Hosted MCP | Streamable HTTP, RFC 9728 (protected resource metadata) + RFC 7591 Dynamic Client Registration (or its CIMD successor, whichever pandan's EPIC-282 settles on) + RFC 8707 resource-indicator token binding — the same resource-server shape as pandan ADR 0025, backed by kaya's own authorization server. |
+| Hosted MCP | **Shipped (`KAN-1744`, ADR 0014).** Streamable HTTP (`app/identity/mcp_host.py`, a plain `Route("/mcp", ...)` mounted on the same backend, never `Mount` — see that module's docstring for why), RFC 9728 protected-resource metadata + RFC 8414 authorization-server metadata (`app/identity/oauth_metadata.py`/`oauth_server_metadata.py`), RFC 7591 DCR **and** CIMD resolution (`POST /auth/register`, `app/identity/oauth_client.py` — mirrors pandan's own build, which settled on both simultaneously rather than choosing one), and RFC 8707 resource-indicator binding enforced by the new authorization_code+PKCE grant ([ADR 0014](../adr/0014-oauth-authorization-code-pkce-grant.md)). Bearer validation reuses `app.auth.kaya_principal.principal_from_pat` — the identical lookup `/api/v1` itself uses, since an OAuth-issued token is a `personal_access_token` row too. Hosting `kaya-mcp`'s existing tool registry on the backend is a deliberate, narrow exception to "nothing depends on an adapter" — ADR 0014's own section argues why, mirroring pandan's identical build accepting the identical coupling. |
 | Stdio MCP | Stays, repositioned as a documented self-hosting/offline fallback — the hosted endpoint and the CLI become the top-billed options. |
 
 **Fit-check.** Sequenced strictly after R19 (a device flow needs an authorization server to grant
@@ -405,5 +410,5 @@ against) but not otherwise blocked on pandan's own EPIC-281/282 build — the RF
 spec-defined, not pandan-implementation-defined.
 
 **Cards:** `KAN-1743` (`kaya auth login/logout/status` — **shipped**), `KAN-1744` (hosted remote MCP
-endpoint), `KAN-1745` (docs: hosted MCP + CLI as top options, stdio as the fallback). All under
-`EPIC-284`. `KAN-1744`/`1745` not started.
+endpoint — **shipped**), `KAN-1745` (docs: hosted MCP + CLI as top options, stdio as the fallback).
+All under `EPIC-284`. `KAN-1745` not started.

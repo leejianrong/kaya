@@ -8,10 +8,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  approveAuthorize,
   approveDeviceAuthorization,
   createToken,
+  denyAuthorize,
   denyDeviceAuthorization,
   fetchCurrentUser,
+  getAuthorizeInfo,
   getDeviceAuthorization,
   githubLoginUrl,
   IdentityError,
@@ -224,5 +227,84 @@ describe('tokens CRUD', () => {
     const fetchImpl = fakeFetch(jsonResponse(404, { error: { code: 'not_found', message: 'token not found' } }))
 
     await expect(revokeToken(999, { fetchImpl })).rejects.toThrow('token not found')
+  })
+})
+
+describe('authorization_code+PKCE consent (ADR 0014, KAN-1744)', () => {
+  const params = {
+    client_id: 'kaya_client_abc',
+    redirect_uri: 'https://claude.ai/callback',
+    code_challenge: 'a-challenge',
+    code_challenge_method: 'S256',
+    resource: 'https://kaya.example/mcp',
+    scope: 'write' as const,
+    state: 'xyz',
+  }
+
+  it('getAuthorizeInfo sends every param on the query string', async () => {
+    const fetchImpl = fakeFetch(
+      jsonResponse(200, { client_name: 'Claude.ai', requested_scope: 'write', resource: params.resource }),
+    )
+
+    const info = await getAuthorizeInfo(params, { fetchImpl })
+
+    expect(info.client_name).toBe('Claude.ai')
+    const [url, init] = vi.mocked(fetchImpl).mock.calls[0] as [string, RequestInit]
+    expect(url).toBe(
+      '/auth/authorize/info?client_id=kaya_client_abc&redirect_uri=https%3A%2F%2Fclaude.ai%2Fcallback&' +
+        'code_challenge=a-challenge&code_challenge_method=S256&resource=https%3A%2F%2Fkaya.example%2Fmcp&' +
+        'scope=write&state=xyz',
+    )
+    expect(init.method).toBe('GET')
+  })
+
+  it('getAuthorizeInfo omits state from the query string when null', async () => {
+    const fetchImpl = fakeFetch(
+      jsonResponse(200, { client_name: null, requested_scope: 'write', resource: params.resource }),
+    )
+
+    await getAuthorizeInfo({ ...params, state: null }, { fetchImpl })
+
+    const [url] = vi.mocked(fetchImpl).mock.calls[0] as [string]
+    expect(url).not.toContain('state=')
+  })
+
+  it('approveAuthorize posts the full params as JSON and returns the redirect', async () => {
+    const fetchImpl = fakeFetch(
+      jsonResponse(200, { redirect_to: 'https://claude.ai/callback?code=abc&state=xyz' }),
+    )
+
+    const result = await approveAuthorize(params, { fetchImpl })
+
+    expect(result.redirect_to).toBe('https://claude.ai/callback?code=abc&state=xyz')
+    const [url, init] = vi.mocked(fetchImpl).mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/auth/authorize/approve')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toEqual(params)
+  })
+
+  it('denyAuthorize posts to the deny sub-path', async () => {
+    const fetchImpl = fakeFetch(
+      jsonResponse(200, { redirect_to: 'https://claude.ai/callback?error=access_denied' }),
+    )
+
+    await denyAuthorize(params, { fetchImpl })
+
+    const [url] = vi.mocked(fetchImpl).mock.calls[0] as [string]
+    expect(url).toBe('/auth/authorize/deny')
+  })
+
+  it('surfaces RFC 6749 flat error_description, not kaya-shaped error.message', async () => {
+    const fetchImpl = fakeFetch(
+      jsonResponse(400, { error: 'invalid_client', error_description: 'unknown client_id' }),
+    )
+
+    await expect(getAuthorizeInfo(params, { fetchImpl })).rejects.toThrow('unknown client_id')
+  })
+
+  it('falls back to the bare error code when a flat error carries no description', async () => {
+    const fetchImpl = fakeFetch(jsonResponse(400, { error: 'invalid_request' }))
+
+    await expect(getAuthorizeInfo(params, { fetchImpl })).rejects.toThrow('invalid_request')
   })
 })

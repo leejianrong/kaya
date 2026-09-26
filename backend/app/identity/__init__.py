@@ -39,6 +39,14 @@ Module layout, one-way dependency (``models`` ← ``db`` ← ``manager`` ← `ba
   8628 device-flow login: the ``device_authorization`` table, its request/response shapes, and
   ``/auth/device/*``. Mints a PAT through ``pat.py`` on the CLI's first successful poll; reads
   through the sync engine for the identical reason ``pat.py`` does.
+- ``oauth_authorize.py`` / ``oauth_authorize_schemas.py`` / ``oauth_authorize_router.py`` /
+  ``oauth_client.py`` / ``oauth_register.py`` / ``oauth_metadata.py`` /
+  ``oauth_server_metadata.py`` / ``mcp_host.py`` (KAN-1744, ADR 0014) — the authorization_code+PKCE
+  grant a hosted MCP client completes, RFC 7591/CIMD client registration, RFC 9728/8414 discovery,
+  and the hosted Streamable HTTP transport itself. Extends ``device_flow.py``'s
+  ``device_authorization`` table (one row shape, two grants) rather than a parallel one; mints a
+  PAT through ``pat.py`` exactly like device flow does, with no refresh token (ADR 0014's
+  deliberate simplification).
 
 **What KAN-1738/1739 do not yet do.** No note/team/attachment route depends on the identity this
 package resolves, and no route accepts a ``kaya_pat_…`` bearer for anything — ``authorize_note``
@@ -51,6 +59,29 @@ bigger, harder-to-review PR that changes login and authorization at once.
 """
 
 from app.identity.device_auth import router as device_auth_router
+from app.identity.oauth_authorize_router import router as oauth_authorize_router
+from app.identity.oauth_metadata import router as oauth_metadata_router
+from app.identity.oauth_register import router as oauth_register_router
+from app.identity.oauth_server_metadata import router as oauth_server_metadata_router
 from app.identity.router import install_identity_routes
 
-__all__ = ["device_auth_router", "install_identity_routes"]
+# `hosted_mcp_app`/`hosted_mcp_lifespan` (`app/identity/mcp_host.py`) are deliberately NOT
+# re-exported here, unlike every other router above: `mcp_host.py` imports
+# `app.auth.kaya_principal.principal_from_pat`, and `app.auth.kaya_principal` itself imports
+# `app.identity.models` — reached from `app.auth`'s own import chain, which means this very
+# `__init__.py` runs *while* `app.auth.kaya_principal` is still mid-import the first time anything
+# reaches this package. Adding `mcp_host` to this file's own top-level imports closes that loop
+# (`app.identity` → `mcp_host` → `app.auth.kaya_principal`, which is the module still executing).
+# `app/main.py` imports `app.identity.mcp_host` directly, in a later import statement, by which
+# point `app.api`'s own earlier import has already fully resolved `app.auth.kaya_principal` — the
+# same fix `app/identity/device_auth.py` uses for `app.auth.errors` one layer down, applied here
+# because `mcp_host.py`'s dependency has a real cycle that submodule has none of.
+
+__all__ = [
+    "device_auth_router",
+    "install_identity_routes",
+    "oauth_authorize_router",
+    "oauth_metadata_router",
+    "oauth_register_router",
+    "oauth_server_metadata_router",
+]
