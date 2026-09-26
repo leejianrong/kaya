@@ -187,3 +187,51 @@ export async function createToken(
 export async function revokeToken(id: number, options: IdentityRequestOptions = {}): Promise<void> {
   await identityRequest<null>(`/api/v1/tokens/${id}`, { method: 'DELETE' }, options)
 }
+
+// --- Device-flow consent (ADR 0013, KAN-1743) --------------------------------------------------
+
+export type DeviceAuthorizationStatus = 'pending' | 'approved' | 'denied'
+
+export interface DeviceAuthorization {
+  user_code: string
+  status: DeviceAuthorizationStatus
+  requested_scope: TokenScope
+  expires_at: string
+}
+
+/** `GET /auth/device/{userCode}`: what was requested, and whether it is still waiting on a human.
+ * A code that does not exist or has expired rejects with a `404` `IdentityError`, same as any
+ * other refusal here — there is no `null` case the way `fetchCurrentUser` has one, because an
+ * absent code is not an expected steady state the way "not signed in" is. */
+export async function getDeviceAuthorization(
+  userCode: string,
+  options: IdentityRequestOptions = {},
+): Promise<DeviceAuthorization> {
+  return identityRequest<DeviceAuthorization>(
+    `/auth/device/${encodeURIComponent(userCode)}`,
+    { method: 'GET' },
+    options,
+  )
+}
+
+export async function approveDeviceAuthorization(
+  userCode: string,
+  options: IdentityRequestOptions = {},
+): Promise<DeviceAuthorization> {
+  return identityRequest<DeviceAuthorization>(
+    `/auth/device/${encodeURIComponent(userCode)}/approve`,
+    { method: 'POST' },
+    options,
+  )
+}
+
+export async function denyDeviceAuthorization(
+  userCode: string,
+  options: IdentityRequestOptions = {},
+): Promise<DeviceAuthorization> {
+  return identityRequest<DeviceAuthorization>(
+    `/auth/device/${encodeURIComponent(userCode)}/deny`,
+    { method: 'POST' },
+    options,
+  )
+}

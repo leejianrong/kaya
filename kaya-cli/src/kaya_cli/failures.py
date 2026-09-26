@@ -156,6 +156,8 @@ EXIT_FOR_CODE: Mapping[str, int] = MappingProxyType(
         "unreachable": EXIT_RUNTIME,
         "no_credential": EXIT_RUNTIME,
         "runtime": EXIT_RUNTIME,
+        "device_login_denied": EXIT_RUNTIME,
+        "device_login_expired": EXIT_RUNTIME,
     }
 )
 """The named-code table. **Add-only**: a row may be added, never renumbered.
@@ -169,6 +171,13 @@ mutating the table from the outside; adding one is editing this file, in a diff 
 missing ``KAYA_TOKEN`` is not a rejected credential: nothing was refused because nothing was asked,
 and a script that re-authenticated on `3` would be minting a PAT to replace one that was never
 presented. The distinction is the same one `errors.py` draws between ``TransportError`` and a `401`.
+
+``device_login_denied``/``device_login_expired`` are KAN-1743's addition, both `1`: neither is an
+``ApiError`` (RFC 8628's token endpoint answers in its own flat shape, never kaya's
+``{"error": {...}}``, which is exactly why `kaya_client.device_login` raises named exceptions rather
+than surfacing an ``ApiError`` for either), and neither meaning matches `3`/`4` — no credential was
+ever presented for pandan's `401`/`403` reasoning to apply to. "Something did not succeed, try
+`kaya auth login` again" is `1`'s whole meaning, exactly as written above.
 """
 
 EXIT_FOR_STATUS: Mapping[int, int] = MappingProxyType(
