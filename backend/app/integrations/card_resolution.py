@@ -67,12 +67,26 @@ through B and asserting the upstream sees a second call rather than the cache an
 
 ## Why this is not reachable by an unauthenticated caller, and why it still needs a bound
 
-`resolve()` is only ever called with a bearer that has already cleared ADR 0002's principal
-resolution on the request it is serving — KAN-566 wired that in, at `GET /api/v1/notes/{ref}/links`,
-whose `NoteFromRef` dependency resolves a principal from the same header before the route body runs
-— so unlike `PrincipalCache`'s negative half — built specifically to shed load from a stranger
+`resolve()` is only ever called with a bearer that is the caller's own **linked pandan PAT**
+(`app/identity/pandan_link.py`'s `linked_pandan_bearer`, via `app/integrations/dependencies.py`'s
+`card_resolution_bearer`), never a bare pass-through of whatever `Authorization` header the request
+arrived with — that dependency resolves a principal through `get_principal` before the route body
+runs, so unlike `PrincipalCache`'s negative half — built specifically to shed load from a stranger
 sending garbage `Authorization` headers with no request past that — this cache is not a surface a
-caller can reach without a credential that already worked. It still needs `DEFAULT_MAX_ENTRIES`:
+caller can reach without a credential that already worked.
+
+**This used to be a bare forward of the caller's kaya-side bearer instead, and that was a defect,
+not a design choice.** Before ADR 0012's cutover (KAN-1740) the same PAT authenticated both apps
+(ADR 0002), so forwarding the caller's own kaya-side bearer straight to pandan happened to be
+correct. `KAN-1740` ended that: a `kaya_pat_…` (or no bearer at all, from a cookie session) reaches
+pandan as a credential it has never seen, which the "unavailable" degrade path below correctly
+cannot distinguish from an outage — but *should* be distinguishable, because a caller who has never
+linked a pandan account is not the same fact as pandan being down. `app/api/embeds.py`'s
+board-embed preview hit the identical defect first and was fixed in `KAN-1741`
+(`docs/PLAN.md`'s R19 row, `docs/roadmap/BREADBOARD.md`'s board-embed Fit-check); this module was
+the explicitly tracked, deliberately sequenced-after gap, closed the same way.
+
+It still needs `DEFAULT_MAX_ENTRIES`:
 the key space here is *per (caller, ticket)* rather than per-caller, so one authenticated caller
 referencing many distinct nonexistent refs across many notes over time grows this cache faster than
 `PrincipalCache`'s one-entry-per-token ever could. Bounded, with the same evict-expired-then-oldest

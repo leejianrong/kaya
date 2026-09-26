@@ -64,7 +64,7 @@ from app.api.schemas import LinkList, LinkRead, NoteList, NoteRead
 from app.auth import Principal, get_principal, notes_linking_to, notes_named_by_id
 from app.db import get_session
 from app.integrations.card_resolution import ResolvedTicket, classify_ref
-from app.integrations.dependencies import CallerBearer, CardResolver
+from app.integrations.dependencies import CardResolutionBearer, CardResolver
 from app.models.note_link import TARGET_KIND_NOTE, NoteLink
 
 router = APIRouter(prefix="/api/v1", tags=["links"])
@@ -258,7 +258,7 @@ def _release_the_connection(session: Session) -> None:
 def note_links(
     note: NoteFromRef,
     session: DbSession,
-    bearer: CallerBearer,
+    bearer: CardResolutionBearer,
     resolver: CardResolver,
 ) -> LinkList:
     """Every ``[[...]]`` this note's body currently contains, with what each one points at.
@@ -273,9 +273,12 @@ def note_links(
     a caller cannot act differently on "pandan said no" and "pandan could not be asked" — see
     ``LinkRead.resolved_ref``, which enumerates the four ways ``null`` arrives.
 
-    ``bearer`` being ``None`` skips resolution rather than refusing the read: unreachable in
-    practice, since ``NoteFromRef`` has already resolved a principal from that same header, and the
-    degradation is the honest answer anyway (``app/integrations/dependencies.py``).
+    ``bearer`` is the caller's own **linked** pandan PAT (`app/integrations/dependencies.py`'s
+    `card_resolution_bearer`), never the caller's kaya-side bearer — see that dependency's
+    docstring for why forwarding the latter was a defect after ADR 0012's cutover (KAN-1740), fixed
+    the same way `app/api/embeds.py`'s board-embed preview was (KAN-1741). ``None`` skips
+    resolution rather than refusing the read: it means this caller has never connected a pandan
+    account, which is not a reason to fail a read of their own note's local edges.
     """
     edges = outbound_edges(session, note.id)
     targets = note_targets(session, note.owner_id, edges)
