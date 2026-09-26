@@ -48,12 +48,12 @@ def test_client_uses_the_override_token_and_the_configured_api_url_when_one_is_s
             return False
 
     monkeypatch.setattr(tools, "KayaClient", FakeKayaClient)
-    set_request_token("kaya_pat_the_callers_own_token")
+    set_request_token("kaya_pat_FAKEthe_callers_own_token")
 
     with tools._client():
         pass
 
-    assert seen == [(BASE_URL, "kaya_pat_the_callers_own_token")]
+    assert seen == [(BASE_URL, "kaya_pat_FAKEthe_callers_own_token")]
 
 
 def test_client_falls_back_to_open_client_when_no_override_is_set(monkeypatch) -> None:
@@ -99,11 +99,11 @@ def test_the_override_never_leaks_into_open_clients_own_branch(monkeypatch) -> N
             return False
 
     monkeypatch.setattr(tools, "KayaClient", FakeKayaClient)
-    set_request_token("kaya_pat_the_hosted_callers_token")
+    set_request_token("kaya_pat_FAKEthe_hosted_callers_token")
 
     with tools._client():
         pass
 
-    assert seen == ["kaya_pat_the_hosted_callers_token"], (
+    assert seen == ["kaya_pat_FAKEthe_hosted_callers_token"], (
         "the stdio KAYA_TOKEN must never be used once a per-request override is live"
     )

@@ -97,7 +97,7 @@ def test_a_request_with_no_bearer_is_401_with_rfc9728_discovery(client: Any) -> 
 
 
 def test_a_request_with_an_unrecognised_bearer_is_401(client: Any) -> None:
-    headers = {**MCP_HEADERS, "Authorization": "Bearer kaya_pat_this-token-was-never-minted"}
+    headers = {**MCP_HEADERS, "Authorization": "Bearer kaya_pat_FAKEthis-token-was-never-minted"}
 
     response = client.post(MCP, json=TOOLS_LIST_BODY, headers=headers)
 
