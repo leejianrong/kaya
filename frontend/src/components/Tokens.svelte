@@ -187,9 +187,8 @@
     <p>Checking your session…</p>
   {:else if phase === 'signed-out'}
     <p class="lede">
-      Sign in with the GitHub account you want kaya tokens minted for. This page is kaya's own —
-      separate from the pandan account the rest of this app still authenticates with until a later
-      card finishes wiring these tokens into the note API.
+      Sign in with the GitHub account you want kaya tokens minted for. A minted token is what
+      authenticates the rest of this app, the CLI and MCP — no pandan account is needed (ADR 0012).
     </p>
     <button type="button" onclick={signIn} data-testid="github-signin">Sign in with GitHub</button>
   {:else}
