@@ -3,6 +3,7 @@
   import EditorPane from './components/EditorPane.svelte'
   import GraphView from './components/GraphView.svelte'
   import Landing from './components/Landing.svelte'
+  import NavColumn from './components/NavColumn.svelte'
   import PandanConnect from './components/PandanConnect.svelte'
   import PreviewPane from './components/PreviewPane.svelte'
   import RightRail from './components/RightRail.svelte'
@@ -422,7 +423,8 @@
 
 <div
   class="shell"
-  class:unauthenticated={!authed || route.name === 'tokens' || route.name === 'device'}
+  class:unauthenticated={!authed}
+  class:tokens-or-device={authed && (route.name === 'tokens' || route.name === 'device')}
   class:railed
 >
   <header class="topbar">
@@ -474,6 +476,10 @@
       </button>
     {/if}
   </header>
+
+  {#if authed}
+    <NavColumn {route} />
+  {/if}
 
   {#if route.name === 'tokens'}
     <main>
@@ -544,8 +550,8 @@
 <style>
   .shell {
     display: grid;
-    grid-template-areas: 'topbar topbar' 'sidebar main';
-    grid-template-columns: minmax(12rem, 18rem) 1fr;
+    grid-template-areas: 'topbar topbar topbar' 'nav sidebar main';
+    grid-template-columns: 5.5rem minmax(12rem, 18rem) 1fr;
     grid-template-rows: auto 1fr;
     height: 100dvh;
   }
@@ -554,12 +560,21 @@
      a fixed-ish rail rather than a `1fr` pane, because it holds one column of titles and giving it
      a third of the width would take that width from the document. */
   .shell.railed {
-    grid-template-areas: 'topbar topbar topbar' 'sidebar main rail';
-    grid-template-columns: minmax(12rem, 18rem) 1fr minmax(11rem, 16rem);
+    grid-template-areas: 'topbar topbar topbar topbar' 'nav sidebar main rail';
+    grid-template-columns: 5.5rem minmax(12rem, 18rem) 1fr minmax(11rem, 16rem);
   }
 
-  /* No sidebar without a credential: there is nothing to list, and an empty rail beside a
-     sign-in page reads as a broken app rather than as a locked one. */
+  /* `NavColumn` switches between sections that do not exist here: `Tokens`/`DeviceApproval` each
+     fill `main` alone, the same way `Landing` does, so there is no `sidebar`/`rail` track to
+     reserve — but the column itself still renders (`App.svelte`'s own `{#if authed}` above), which
+     `.unauthenticated` below deliberately does not get. */
+  .shell.tokens-or-device {
+    grid-template-areas: 'topbar topbar' 'nav main';
+    grid-template-columns: 5.5rem 1fr;
+  }
+
+  /* No sidebar, no nav column, without a credential: there is nothing to list or switch between,
+     and either one beside a sign-in page reads as a broken app rather than as a locked one. */
   .shell.unauthenticated {
     grid-template-areas: 'topbar' 'main';
     grid-template-columns: 1fr;
@@ -653,11 +668,25 @@
 
     /* Three columns is one too many here, so the rail goes *below* the document rather than beside
        it. It keeps its own region either way, which is what stops the narrow layout from being a
-       second place the toggle-cannot-reach-it property has to be re-established. */
+       second place the toggle-cannot-reach-it property has to be re-established. `nav` spans both
+       stacked rows (named twice below) for the same reason `sidebar` already does — it is a
+       column, not something that stacks with them. */
     .shell.railed {
-      grid-template-areas: 'topbar topbar' 'sidebar main' 'sidebar rail';
-      grid-template-columns: minmax(12rem, 18rem) 1fr;
+      grid-template-areas: 'topbar topbar topbar' 'nav sidebar main' 'nav sidebar rail';
+      grid-template-columns: 3.75rem minmax(12rem, 18rem) 1fr;
       grid-template-rows: auto 1fr auto;
+    }
+
+    /* `nav`'s own track shrinks here too (`NavColumn.svelte` has the matching narrower item
+       styling): at a phone's width, `sidebar`'s 12rem minimum already claims half the viewport, so
+       `nav` at its laptop-width 5.5rem left `main` cut off rather than merely cramped — measured
+       with a real 390px viewport, not assumed. */
+    .shell {
+      grid-template-columns: 3.75rem minmax(12rem, 18rem) 1fr;
+    }
+
+    .shell.tokens-or-device {
+      grid-template-columns: 3.75rem 1fr;
     }
   }
 

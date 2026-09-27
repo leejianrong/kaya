@@ -69,8 +69,6 @@ describe('the component harness', () => {
 
     expect(target.querySelector('nav')).not.toBeNull()
     expect(target.textContent).toContain('Weekly review')
-    // Not `querySelector('a')`: KAN-1050's "Graph" link is the first anchor in the sidebar now, so
-    // this asks for the note row specifically.
     expect(target.querySelector('a[href^="/notes/"]')?.getAttribute('href')).toBe('/notes/NOTE-6')
   })
 
@@ -486,5 +484,101 @@ describe('the pandan nav link (KAN-1157)', () => {
     await settle()
 
     expect(host.querySelector('[data-testid="pandan-link"]')).toBeNull()
+  })
+})
+
+describe('the nav column', () => {
+  const realFetch = globalThis.fetch
+  const realPathname = window.location.pathname
+
+  function jsonResponse(status: number, body: unknown): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  /** `/api/v1/meta` and `/users/me` both answered emptily — nothing in this block is about the
+   * pandan link or `Tokens.svelte`'s own cookie session, both already covered elsewhere. */
+  beforeEach(() => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/v1/notes') {
+        return jsonResponse(200, { notes: [] })
+      }
+      if (url === '/api/v1/meta') {
+        return jsonResponse(200, { pandan_url: null })
+      }
+      return jsonResponse(404, { error: { code: 'not_found', message: `nothing fake at ${url}` } })
+    }) as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    window.history.pushState({}, '', realPathname)
+  })
+
+  async function until(predicate: () => boolean, label: string): Promise<void> {
+    for (let turn = 0; turn < 400; turn += 1) {
+      flushSync()
+      if (predicate()) {
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    throw new Error(`timed out waiting for ${label}`)
+  }
+
+  it('is absent with no credential — nothing to switch between beside a sign-in page', () => {
+    const target = render(App, {})
+    expect(target.querySelector('[data-testid="nav-column"]')).toBeNull()
+  })
+
+  it('renders once authenticated, with Notes active on the home route', async () => {
+    auth.setToken(FAKE_TOKEN)
+    const target = render(App, {})
+    await until(() => target.querySelector('[data-testid="nav-column"]') !== null, 'the nav column')
+
+    expect(target.querySelector('[data-testid="nav-item-notes"]')?.getAttribute('aria-current')).toBe(
+      'page',
+    )
+    expect(target.querySelector('[data-testid="nav-item-graph"]')?.getAttribute('aria-current')).toBeNull()
+    expect(target.querySelector('[data-testid="nav-item-tokens"]')?.getAttribute('aria-current')).toBeNull()
+  })
+
+  it('marks Graph active on the /graph route', async () => {
+    window.history.pushState({}, '', '/graph')
+    auth.setToken(FAKE_TOKEN)
+    const target = render(App, {})
+    await until(() => target.querySelector('[data-testid="nav-column"]') !== null, 'the nav column')
+
+    expect(target.querySelector('[data-testid="nav-item-graph"]')?.getAttribute('aria-current')).toBe(
+      'page',
+    )
+    expect(target.querySelector('[data-testid="nav-item-notes"]')?.getAttribute('aria-current')).toBeNull()
+  })
+
+  it('still renders, with Tokens active, on the /tokens route — no sidebar there to anchor to', async () => {
+    window.history.pushState({}, '', '/tokens')
+    auth.setToken(FAKE_TOKEN)
+    const target = render(App, {})
+    await until(() => target.querySelector('[data-testid="nav-column"]') !== null, 'the nav column')
+
+    expect(target.querySelector('[data-testid="nav-item-tokens"]')?.getAttribute('aria-current')).toBe(
+      'page',
+    )
+  })
+
+  it('navigates to /graph without a reload when clicked', async () => {
+    auth.setToken(FAKE_TOKEN)
+    const target = render(App, {})
+    await until(() => target.querySelector('[data-testid="nav-column"]') !== null, 'the nav column')
+
+    target.querySelector<HTMLAnchorElement>('[data-testid="nav-item-graph"]')!.click()
+    await until(() => window.location.pathname === '/graph', 'the route to change')
+
+    expect(target.querySelector('[data-testid="nav-item-graph"]')?.getAttribute('aria-current')).toBe(
+      'page',
+    )
   })
 })
