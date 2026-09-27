@@ -6,13 +6,12 @@
   it lives outside the `{#if authed}`/`Landing` branch there. Minting your first kaya-native
   credential cannot itself require one already being pasted into the tab.
 
-  **"Use this token now" is this file's one deliberate bridge to that other credential.** Since
-  KAN-1740 a `kaya_pat_…` has worked as the bearer every note-API call sends — this page just never
-  offered a way to start using one without leaving the tab, copying it, and pasting it into
-  `Landing.svelte`'s own field. The button calls the same `setToken` that field does and the same
-  `onaccept` callback `Landing.svelte` already calls, so `App.svelte` needs no separate path for it
-  — but this page still owns its own cookie-session identity entirely and this is the only place
-  the two credentials touch.
+  **"Use this token now" is this file's own bridge to that other credential, for a token minted
+  here by hand.** `App.svelte` has a second, silent one of its own now — a fresh cookie session with
+  no bearer yet gets one minted automatically on load, which is what actually answers "why sign in
+  at all if a token still has to be pasted somewhere." This page's own button stays for the case
+  that isn't automatic: picking a specific *named* token (this device, a script, the CLI) to also
+  become this tab's bearer, without waiting for or fighting the automatic one.
 
   Session state (`user`) lives here, not in `App.svelte`: unlike the bearer credential, a cookie
   session change here has no effect on the rest of the shell (nothing else in the app reads it yet),
@@ -54,20 +53,6 @@
   let scope: TokenScope = $state('write')
   let problem: string | null = $state(null)
   let busy = $state(false)
-
-  // `/auth/github/callback` (`backend/app/identity/router.py`'s `_redirect_declined_oauth`)
-  // redirects back here with this query param rather than leaving the tab on a raw JSON error
-  // body — this page is the only thing that reaches that route, so this is the one place that
-  // needs to read it. `replaceState`, not a plain read, so a later reload of this same tab does
-  // not re-show a message about an attempt from minutes ago.
-  const oauthError = new URLSearchParams(globalThis.location.search).get('oauth_error')
-  if (oauthError !== null) {
-    problem =
-      oauthError === 'access_denied'
-        ? 'GitHub sign-in was cancelled.'
-        : 'GitHub sign-in failed. Try again.'
-    history.replaceState(null, '', globalThis.location.pathname)
-  }
 
   $effect(() => {
     const abort = new AbortController()

@@ -235,6 +235,43 @@ describe('the landing state', () => {
   })
 })
 
+describe('returning from a declined or failed GitHub consent screen', () => {
+  afterEach(() => {
+    history.replaceState(null, '', '/')
+  })
+
+  it('shows a friendly message for a declined consent screen, and clears the query param', async () => {
+    history.pushState(null, '', '/?oauth_error=access_denied')
+
+    render(Landing, { rejected: null, onaccept: () => {} })
+    await until(
+      () => host.querySelector('[data-testid="sign-in-problem"]') !== null,
+      'the declined-consent message',
+    )
+
+    expect(host.querySelector('[data-testid="sign-in-problem"]')?.textContent).toBe(
+      'GitHub sign-in was cancelled.',
+    )
+    // `_redirect_declined_oauth`'s query param is single-use: a reload of this same tab should
+    // not re-show a message about an attempt from minutes ago.
+    expect(globalThis.location.search).toBe('')
+  })
+
+  it('shows a generic message for any other oauth_error value', async () => {
+    history.pushState(null, '', '/?oauth_error=oauth_failed')
+
+    render(Landing, { rejected: null, onaccept: () => {} })
+    await until(
+      () => host.querySelector('[data-testid="sign-in-problem"]') !== null,
+      'the failure message',
+    )
+
+    expect(host.querySelector('[data-testid="sign-in-problem"]')?.textContent).toBe(
+      'GitHub sign-in failed. Try again.',
+    )
+  })
+})
+
 describe('the paste form', () => {
   it('is never a GET, and its field cannot be serialized into a URL', () => {
     render(Landing, { rejected: null, onaccept: () => {} })

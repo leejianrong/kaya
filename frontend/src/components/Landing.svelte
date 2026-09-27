@@ -59,6 +59,22 @@
    * malformed-paste complaint under the hero — neither of which the person just did. */
   let signInProblem: string | null = $state(null)
 
+  // `/auth/github/callback` (`backend/app/identity/router.py`'s `_redirect_declined_oauth`)
+  // redirects back here — `POST_LOGIN_REDIRECT`, the same target a *successful* callback uses —
+  // with this query param rather than leaving the tab on a raw JSON error body. A successful
+  // attempt carries no such param, so this never fires on the path where `App.svelte`'s own silent
+  // cookie-to-bearer bootstrap is about to swap this page out for the note list anyway.
+  // `replaceState`, not a plain read, so a later reload of this same tab does not re-show a message
+  // about an attempt from minutes ago.
+  const oauthError = new URLSearchParams(globalThis.location.search).get('oauth_error')
+  if (oauthError !== null) {
+    signInProblem =
+      oauthError === 'access_denied'
+        ? 'GitHub sign-in was cancelled.'
+        : 'GitHub sign-in failed. Try again.'
+    history.replaceState(null, '', globalThis.location.pathname)
+  }
+
   function submit(event: SubmitEvent): void {
     // First statement in the handler. A form with no `method` submits as GET, which would put the
     // credential in the address bar, in history and in the backend's request line — the exact
@@ -132,7 +148,7 @@
     </div>
 
     {#if signInProblem}
-      <p class="refused" role="alert">{signInProblem}</p>
+      <p class="refused" role="alert" data-testid="sign-in-problem">{signInProblem}</p>
     {/if}
   </section>
 

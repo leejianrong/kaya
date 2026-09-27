@@ -582,3 +582,126 @@ describe('the nav column', () => {
     )
   })
 })
+
+describe('the silent cookie-to-bearer bootstrap', () => {
+  const realFetch = globalThis.fetch
+
+  function jsonResponse(status: number, body: unknown): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  function createdToken(): unknown {
+    return {
+      id: 1,
+      name: 'browser',
+      scope: 'write',
+      token_prefix: 'kaya_pat_ab12',
+      created_at: '2026-09-28T00:00:00Z',
+      last_used_at: null,
+      expires_at: null,
+      token: FAKE_TOKEN,
+    }
+  }
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+  })
+
+  async function until(predicate: () => boolean, label: string): Promise<void> {
+    for (let turn = 0; turn < 400; turn += 1) {
+      flushSync()
+      if (predicate()) {
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    throw new Error(`timed out waiting for ${label}`)
+  }
+
+  async function settle(): Promise<void> {
+    for (let turn = 0; turn < 12; turn += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      flushSync()
+    }
+  }
+
+  it('mints and uses a bearer silently from a live cookie session, with no button click', async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url === '/api/v1/tokens' && method === 'POST') {
+        return jsonResponse(201, createdToken())
+      }
+      if (url === '/api/v1/notes') {
+        return jsonResponse(200, { notes: [note()] })
+      }
+      if (url === '/api/v1/meta') {
+        return jsonResponse(200, { pandan_url: null })
+      }
+      return jsonResponse(404, { error: { code: 'not_found', message: `nothing fake at ${url}` } })
+    }) as unknown as typeof fetch
+
+    expect(auth.credentialState()).toBe('not set')
+    const target = render(App, {})
+
+    await until(() => (target.textContent ?? '').includes('Weekly review'), 'the note list')
+
+    expect(auth.credentialState()).toBe('set')
+    expect(target.querySelector('.landing')).toBeNull()
+    expect(target.querySelector('[data-testid="nav-column"]')).not.toBeNull()
+  })
+
+  it('stays on the landing state when there is no live cookie session either', async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/v1/tokens') {
+        return jsonResponse(401, { error: { code: 'unauthorized', message: 'not signed in' } })
+      }
+      return jsonResponse(404, { error: { code: 'not_found', message: `nothing fake at ${url}` } })
+    }) as unknown as typeof fetch
+
+    const target = render(App, {})
+    await settle()
+
+    expect(auth.credentialState()).toBe('not set')
+    expect(target.querySelector('.landing')).not.toBeNull()
+  })
+
+  it('does not re-provision after "Clear token" — a deliberate clear must actually leave the note view', async () => {
+    let tokenPosts = 0
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url === '/api/v1/tokens' && method === 'POST') {
+        tokenPosts += 1
+        return jsonResponse(201, createdToken())
+      }
+      if (url === '/api/v1/notes') {
+        return jsonResponse(200, { notes: [note()] })
+      }
+      if (url === '/api/v1/meta') {
+        return jsonResponse(200, { pandan_url: null })
+      }
+      return jsonResponse(404, { error: { code: 'not_found', message: `nothing fake at ${url}` } })
+    }) as unknown as typeof fetch
+
+    const target = render(App, {})
+    await until(() => (target.textContent ?? '').includes('Weekly review'), 'the note list')
+    expect(tokenPosts).toBe(1)
+
+    target.querySelector<HTMLButtonElement>('[data-testid="clear-token"]')!.click()
+    flushSync()
+    expect(auth.credentialState()).toBe('not set')
+    expect(target.querySelector('.landing')).not.toBeNull()
+
+    // The one thing a `$effect` keyed on `authed` alone would get wrong: minting a second bearer the
+    // instant it saw `authed` flip back to `false`, making "Clear token" look like it did nothing.
+    await settle()
+    expect(tokenPosts).toBe(1)
+    expect(auth.credentialState()).toBe('not set')
+    expect(target.querySelector('.landing')).not.toBeNull()
+  })
+})
