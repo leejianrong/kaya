@@ -8,8 +8,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  approveDeviceAuthorization,
   createToken,
+  denyDeviceAuthorization,
   fetchCurrentUser,
+  getDeviceAuthorization,
   githubLoginUrl,
   IdentityError,
   listTokens,
@@ -75,6 +78,88 @@ describe('logout', () => {
 
     const [url, init] = vi.mocked(fetchImpl).mock.calls[0] as [string, RequestInit]
     expect(url).toBe('/auth/logout')
+    expect(init.method).toBe('POST')
+  })
+})
+
+describe('device-flow consent (ADR 0013, KAN-1743)', () => {
+  it('getDeviceAuthorization reads /auth/device/{userCode}', async () => {
+    const fetchImpl = fakeFetch(
+      jsonResponse(200, {
+        user_code: 'WDJB-MJHT',
+        status: 'pending',
+        requested_scope: 'write',
+        expires_at: '2026-09-26T12:00:00Z',
+      }),
+    )
+
+    const found = await getDeviceAuthorization('WDJB-MJHT', { fetchImpl })
+
+    expect(found.status).toBe('pending')
+    const [url, init] = vi.mocked(fetchImpl).mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/auth/device/WDJB-MJHT')
+    expect(init.method).toBe('GET')
+  })
+
+  it('getDeviceAuthorization encodes the code as one path segment', async () => {
+    const fetchImpl = fakeFetch(
+      jsonResponse(200, {
+        user_code: 'a/b',
+        status: 'pending',
+        requested_scope: 'write',
+        expires_at: '2026-09-26T12:00:00Z',
+      }),
+    )
+
+    await getDeviceAuthorization('a/b', { fetchImpl })
+
+    const [url] = vi.mocked(fetchImpl).mock.calls[0] as [string]
+    expect(url).toBe('/auth/device/a%2Fb')
+  })
+
+  it('a code the API does not recognise rejects with a 404 IdentityError, never null', async () => {
+    const fetchImpl = fakeFetch(
+      jsonResponse(404, { error: { code: 'device_code_not_found', message: 'code not found' } }),
+    )
+
+    await expect(getDeviceAuthorization('NOPE-CODE', { fetchImpl })).rejects.toMatchObject({
+      status: 404,
+    })
+  })
+
+  it('approveDeviceAuthorization posts to the approve sub-path', async () => {
+    const fetchImpl = fakeFetch(
+      jsonResponse(200, {
+        user_code: 'WDJB-MJHT',
+        status: 'approved',
+        requested_scope: 'write',
+        expires_at: '2026-09-26T12:00:00Z',
+      }),
+    )
+
+    const approved = await approveDeviceAuthorization('WDJB-MJHT', { fetchImpl })
+
+    expect(approved.status).toBe('approved')
+    const [url, init] = vi.mocked(fetchImpl).mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/auth/device/WDJB-MJHT/approve')
+    expect(init.method).toBe('POST')
+  })
+
+  it('denyDeviceAuthorization posts to the deny sub-path', async () => {
+    const fetchImpl = fakeFetch(
+      jsonResponse(200, {
+        user_code: 'WDJB-MJHT',
+        status: 'denied',
+        requested_scope: 'write',
+        expires_at: '2026-09-26T12:00:00Z',
+      }),
+    )
+
+    const denied = await denyDeviceAuthorization('WDJB-MJHT', { fetchImpl })
+
+    expect(denied.status).toBe('denied')
+    const [url, init] = vi.mocked(fetchImpl).mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/auth/device/WDJB-MJHT/deny')
     expect(init.method).toBe('POST')
   })
 })

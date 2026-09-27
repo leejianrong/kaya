@@ -115,7 +115,8 @@ EPILOGUE = (
     "`note move <ref> <path>`, `note delete <ref>`. Links: `links <ref>` for what a note points\n"
     "at, `backlinks <ref>` for what points at it. Export/import (R12): `note export <ref>`,\n"
     "`note import <file>`, `export-all <dir>`, `import-all <dir>`. Configuration:\n"
-    "`config show`, `config set`, `config path`. Ambient session context (R18): `context install`\n"
+    "`config show`, `config set`, `config path`. Sign in (R20): `auth login` (device flow),\n"
+    "`auth logout`, `auth check`. Ambient session context (R18): `context install`\n"
     "wires a Claude Code SessionStart hook so an agent session starts with your recent notes;\n"
     "`context uninstall`, `context status`, `context print [--hook]`. `note list --q TERM`\n"
     "searches title and body; `--fields a,b,c` selects columns on a list, and prose is cut to\n"
@@ -126,6 +127,8 @@ EPILOGUE = (
 NOTE_HELP = "create, read, change and delete the notes you own"
 
 CONFIG_HELP = "read and write the local kaya configuration"
+
+AUTH_HELP = "sign in with a device-flow login, sign out, or check whether a token is configured"
 
 CONTEXT_HELP = (
     "install/uninstall the Claude Code SessionStart hook that gives an agent session your "
@@ -231,6 +234,9 @@ def build_parser() -> StructuredParser:
 
     config = commands.add_parser(verbs.CONFIG, help=CONFIG_HELP, description=CONFIG_HELP)
     _add_config_verbs(config.add_subparsers(dest="subcommand", required=True), flags)
+
+    auth = commands.add_parser(verbs.AUTH, help=AUTH_HELP, description=AUTH_HELP)
+    _add_auth_verbs(auth.add_subparsers(dest="subcommand", required=True), flags)
 
     context_group = commands.add_parser(
         verbs.CONTEXT, help=CONTEXT_HELP, description=CONTEXT_HELP
@@ -525,6 +531,52 @@ def _add_config_verbs(config_commands, flags: argparse.ArgumentParser) -> None:
         parents=[flags],
         help="print the config file's path, whether or not it exists yet",
         description="Print the config file's path, and whether it exists.",
+    )
+
+
+def _add_auth_verbs(auth_commands, flags: argparse.ArgumentParser) -> None:
+    """`auth {login,logout,check}` (ADR 0013, KAN-1743): RFC 8628 device-flow login against kaya's
+    own authorization server (ADR 0012), so onboarding an agent needs no hand-carried secret and no
+    Tokens UI visit at all. **Not `auth status`**, despite ADR 0013's own wording — see
+    `kaya_cli.verbs.CHECK`'s docstring for the word collision that forced the rename.
+
+    `login` is the one verb here with a flag of its own: `--scope`, the same `read`/`write` choice
+    `config set --token` has no opinion about but `POST /api/v1/tokens` already accepts (ADR 0012,
+    KAN-1739) — mirrored here because a device-flow-minted token is still a token, and the consent
+    screen shows exactly what was requested before a human approves it.
+    """
+    login = auth_commands.add_parser(
+        verbs.LOGIN,
+        parents=[flags],
+        help="sign in via a browser (RFC 8628 device flow) and store the minted token",
+        description=(
+            "Start a device-flow login: prints a link and a short code, opens a browser, and "
+            "polls until a human approves or denies it there. On approval the minted kaya_pat_… "
+            "is written straight to the config file and never printed."
+        ),
+    )
+    login.add_argument(
+        "--scope",
+        choices=("read", "write"),
+        default="write",
+        help="the access level to request (default: write)",
+    )
+
+    auth_commands.add_parser(
+        verbs.LOGOUT,
+        parents=[flags],
+        help="remove the stored token from the config file",
+        description=(
+            "Remove the stored token from the config file. Safe to run when already logged out; "
+            "cannot revoke a token set via KAYA_TOKEN in the environment."
+        ),
+    )
+
+    auth_commands.add_parser(
+        verbs.CHECK,
+        parents=[flags],
+        help="report whether a token is configured, and where it would come from",
+        description="Read-only: is a token configured, and from the environment or the file?",
     )
 
 

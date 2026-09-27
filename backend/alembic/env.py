@@ -25,6 +25,7 @@ from sqlalchemy import engine_from_config, pool
 from app.config import get_settings
 
 # Imported for its effect on Base.metadata — see (1) above. Do not "clean up" any of these.
+from app.identity import device_flow as identity_device_flow  # noqa: F401
 from app.identity import models as identity_models  # noqa: F401
 from app.identity import pandan_link as identity_pandan_link  # noqa: F401
 from app.identity import pat as identity_pat  # noqa: F401

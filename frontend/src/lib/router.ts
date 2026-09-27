@@ -1,14 +1,14 @@
 /**
- * Five routes, still zero dependencies.
+ * Six routes, still zero dependencies.
  *
  * `frontend/package.json` has only devDependencies today — Svelte compiles away, so the shipped
  * bundle carries no runtime code that isn't ours. A router library for `/`, `/notes/:ref`,
- * `/graph`, `/tokens` and `/pandan` would be the first crossing of that line, and it would buy
- * nested layouts, route guards and loaders that nothing in V3–V6 (or KAN-1739/1741) asks for.
- * CodeMirror 6 is the first runtime dependency worth having and that is KAN-553's deliberate
- * crossing, measured in its own PR. KAN-1050's `/graph`, KAN-1739's `/tokens` and KAN-1741's
- * `/pandan` are the same call made again: one more arm on the closed union below, not a reason to
- * reach for one.
+ * `/graph`, `/tokens`, `/pandan` and `/device` would be the first crossing of that line, and it
+ * would buy nested layouts, route guards and loaders that nothing in V3–V6 (or KAN-1739/1741/1743)
+ * asks for. CodeMirror 6 is the first runtime dependency worth having and that is KAN-553's
+ * deliberate crossing, measured in its own PR. KAN-1050's `/graph`, KAN-1739's `/tokens`,
+ * KAN-1741's `/pandan` and KAN-1743's `/device` are the same call made again: one more arm on the
+ * closed union below, not a reason to reach for one.
  *
  * **Parsing is a pure function and reactivity is not this module's business.** `parseRoute` takes a
  * string and returns a value, so it is testable in a node environment with no DOM, and `App.svelte`
@@ -17,6 +17,11 @@
  *
  * The server side of this already works: `backend/app/spa.py` serves `index.html` for any
  * unreserved path, so `/notes/NOTE-4` pasted into the address bar loads the app and lands here.
+ *
+ * `/device`'s `?user_code=...` query string (`verification_uri_complete`, KAN-1743) is exactly
+ * what this module's own `normalize` strips on purpose (see below) — `DeviceApproval.svelte` reads
+ * `location.search` itself, the same layering `Tokens.svelte` already uses for its own session
+ * state rather than lifting it into the route value.
  */
 
 /** Where the app is. A closed union, so a new region has to be handled everywhere at once. */
@@ -26,6 +31,7 @@ export type Route =
   | { name: 'graph' }
   | { name: 'tokens' }
   | { name: 'pandan' }
+  | { name: 'device' }
   | { name: 'unknown'; path: string }
 
 /**
@@ -65,6 +71,10 @@ export function parseRoute(pathname: string): Route {
     return { name: 'pandan' }
   }
 
+  if (path === '/device') {
+    return { name: 'device' }
+  }
+
   return { name: 'unknown', path }
 }
 
@@ -81,6 +91,8 @@ export function routeHref(route: Route): string {
       return '/tokens'
     case 'pandan':
       return '/pandan'
+    case 'device':
+      return '/device'
     case 'unknown':
       return route.path
   }

@@ -48,6 +48,13 @@ context row in `VERBS`. See `kaya_cli.context`'s module docstring for the hook m
 `--hook` mode bypasses both tables entirely (`__main__.main` dispatches it directly, before
 `verbs.run`).
 
+**KAN-1743's `auth {login,logout,status}` join `LOCAL_VERBS` for a sharper version of the same
+reason.** `open_client()` raises `MissingCredential` when no token is configured — exactly the
+state `auth login` starts from, so it cannot be handed an already-open `KayaClient` the way `VERBS`'
+rows are. `auth login` still talks to the network (unauthenticated `/auth/device/*` calls, via
+`kaya_client.device_login`), which `config`'s own local verbs never do — "local" is about *not
+depending on an existing session*, not about staying offline.
+
 ### The ref is passed through untouched, on six verbs now
 
 `kaya note get note-12` sends ``note-12``. ADR 0008 puts every spelling through one resolver in
@@ -91,6 +98,8 @@ more than the convenience, and the convenience is not even lost: the shell alrea
 ``--body-file /dev/stdin``, with no code here at all.
 """
 
+import time
+import webbrowser
 from argparse import Namespace
 from collections.abc import Callable, Mapping
 
@@ -99,9 +108,14 @@ from kaya_client import (
     TOKEN_ENV,
     KayaClient,
     Payload,
+    api_url,
     open_client,
     path_payload,
+    poll_once,
+    request_device_code,
     settings_payload,
+    token_status_payload,
+    unset_token,
     write_settings,
 )
 
@@ -153,6 +167,17 @@ CONFIG = "config"
 SET = "set"
 SHOW = "show"
 PATH = "path"
+
+AUTH = "auth"
+LOGIN = "login"
+LOGOUT = "logout"
+CHECK = "check"
+"""`auth {login,logout,check}` (ADR 0013, KAN-1743): RFC 8628 device-flow login against kaya's own
+authorization server (ADR 0012). **Not `status`**, even though ADR 0013/pandan ADR 0024 both call
+it that — `context` already owns that bare word, and `mcp/tests/test_cli_parity.py`'s reader keys
+`__main__.py`'s subparsers on the word alone, refusing two verbs that share one (see `context.py`'s
+own module docstring, which hit the identical collision against `config show` and picked `print`
+for the same reason)."""
 
 CONTEXT = "context"
 INSTALL = "install"
@@ -303,6 +328,63 @@ def _config_set(args: Namespace) -> Payload:
     return write_settings({API_URL_ENV: args.api_url, TOKEN_ENV: args.token})
 
 
+# ------------------------------------------------------------------------------- auth
+
+
+def _auth_login(args: Namespace) -> Payload:
+    """`kaya auth login` (ADR 0013, KAN-1743): RFC 8628 device-flow login, no token required to
+    start — the same reason `config show` is a local verb, this one must be too: `open_client()`
+    would raise `MissingCredential` before this ever ran, on the one command whose entire job is
+    supplying that credential for the first time.
+
+    **The interactive loop lives here, not in `kaya_client.device_login`** — printing the code,
+    best-effort-opening a browser, and sleeping between polls are this adapter's own terminal
+    concerns, the same split `kaya_client`'s own module docstring argues for. `time.sleep` between
+    polls rather than on the way in: the first poll happens only after the human has had the full
+    interval to act, matching `gh auth login`'s own cadence and RFC 8628's suggested floor.
+
+    Every failure — denied, expired, unreachable — is a `KayaError` this function lets propagate
+    unhandled, exactly like every other verb in this file; `main`'s single funnel reports it.
+
+    On success, the minted `kaya_pat_…` is written straight to the config file and **never
+    printed** — device flow's whole point is that a human never has to see or copy the raw secret,
+    unlike the Tokens UI's manual "copy this now" reveal (R7.1). The returned `Payload` is
+    `write_settings`' own effective-configuration row, the identical shape `config set --token`
+    already produces, so the confirmation says "token: set" rather than repeating the secret.
+    """
+    code = request_device_code(api_url(), args.scope)
+    print(f"First, visit this link in your browser:\n\n  {code.verification_uri_complete}\n")
+    print(f"If it doesn't open automatically, enter this code: {code.user_code}\n")
+    webbrowser.open(code.verification_uri_complete)
+
+    interval = code.interval
+    while True:
+        time.sleep(interval)
+        result = poll_once(api_url(), code.device_code)
+        if result == "slow_down":
+            interval += 5
+            continue
+        if result == "pending":
+            continue
+        break
+
+    return write_settings({TOKEN_ENV: result.token})
+
+
+def _auth_logout(_args: Namespace) -> Payload:
+    """`kaya auth logout`: remove the stored `kaya_pat_…` from the config file. Idempotent — logging
+    out twice is not an error, matching `kaya_client.config.unset_token`'s own stance. Cannot revoke
+    a `KAYA_TOKEN` set in the environment, and does not claim to (see that function's docstring)."""
+    return unset_token()
+
+
+def _auth_status(_args: Namespace) -> Payload:
+    """`kaya auth check`: is a credential configured, and where would it come from. The
+    auth-specific row of `config show` — see `token_status_payload`'s own docstring for why this is
+    not simply an alias for `config show`."""
+    return token_status_payload()
+
+
 VERBS: Mapping[tuple[str | None, str | None], Verb] = {
     BARE: _overview,
     (NOTE, LIST): _note_list,
@@ -330,6 +412,9 @@ LOCAL_VERBS: Mapping[tuple[str, str], LocalVerb] = {
     (CONFIG, SET): _config_set,
     (CONFIG, SHOW): _config_show,
     (CONFIG, PATH): _config_path,
+    (AUTH, LOGIN): _auth_login,
+    (AUTH, LOGOUT): _auth_logout,
+    (AUTH, CHECK): _auth_status,
     (CONTEXT, INSTALL): context.cmd_install,
     (CONTEXT, UNINSTALL): context.cmd_uninstall,
     (CONTEXT, STATUS): context.cmd_status,

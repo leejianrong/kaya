@@ -54,6 +54,22 @@ describe('parseRoute', () => {
     expect(parseRoute('/pandan/extra')).toEqual({ name: 'unknown', path: '/pandan/extra' })
   })
 
+  it('reads /device as the device-flow consent route (ADR 0013, KAN-1743)', () => {
+    expect(parseRoute('/device')).toEqual({ name: 'device' })
+    expect(parseRoute('/device/')).toEqual({ name: 'device' })
+  })
+
+  it('does not let a note ref shadow /device, or the reverse', () => {
+    expect(parseRoute('/notes/device')).toEqual({ name: 'note', ref: 'device' })
+    expect(parseRoute('/device/extra')).toEqual({ name: 'unknown', path: '/device/extra' })
+  })
+
+  it('strips ?user_code=... from /device the same way it strips any other query', () => {
+    // `verification_uri_complete` carries the code as a query param; `DeviceApproval.svelte` reads
+    // it from `location.search` itself rather than through the route (`router.ts`'s own docstring).
+    expect(parseRoute('/device?user_code=WDJB-MJHT')).toEqual({ name: 'device' })
+  })
+
   it('passes every spelling the backend accepts straight through', () => {
     // `app/api/refs.py` is the single place an identifier is parsed, and it takes all three. A
     // second grammar here would either reject something the API accepts or accept something it
@@ -99,7 +115,15 @@ describe('parseRoute', () => {
 
 describe('routeHref', () => {
   it('round-trips every real route', () => {
-    for (const path of ['/', '/notes/NOTE-12', '/notes/12', '/graph', '/tokens', '/pandan']) {
+    for (const path of [
+      '/',
+      '/notes/NOTE-12',
+      '/notes/12',
+      '/graph',
+      '/tokens',
+      '/pandan',
+      '/device',
+    ]) {
       expect(routeHref(parseRoute(path))).toBe(path)
     }
   })

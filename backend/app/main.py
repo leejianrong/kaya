@@ -26,7 +26,7 @@ from app.api import (
     tokens_router,
 )
 from app.api import router as api_router
-from app.identity import install_identity_routes
+from app.identity import device_auth_router, install_identity_routes
 from app.observability import install_observability
 from app.spa import mount_spa
 
@@ -132,6 +132,12 @@ app.include_router(meta_router)
 # `KAYA_GITHUB_OAUTH_CLIENT_ID`/`_SECRET` and the GitHub routes simply don't register, same as
 # every other optional integration this module composes.
 install_identity_routes(app)
+
+# ADR 0013 (KAN-1743): `/auth/device/*`, RFC 8628 device-flow login. Unversioned like every other
+# `/auth/*` route, for the same reason `install_identity_routes` is — see
+# `app/identity/device_auth.py`'s module docstring. Registration order is immaterial against every
+# other router: no other route matches `/auth/device` or `/auth/device/{user_code}`.
+app.include_router(device_auth_router)
 
 # ADR 0012 (KAN-1739): `/api/v1/tokens`. A seventh router under `/api/v1` for the reason
 # `app/api/tokens.py` argues: it is the one route group here gated on kaya's own cookie-session

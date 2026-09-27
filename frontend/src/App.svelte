@@ -1,4 +1,5 @@
 <script lang="ts">
+  import DeviceApproval from './components/DeviceApproval.svelte'
   import EditorPane from './components/EditorPane.svelte'
   import GraphView from './components/GraphView.svelte'
   import Landing from './components/Landing.svelte'
@@ -56,6 +57,11 @@
    * identity (`lib/identity.ts`, ADR 0012), which is a wholly different credential from the one
    * `authed` tracks, and minting your first `kaya_pat_…` cannot itself require a credential already
    * being pasted into the tab. It owns its own session check entirely; this file only routes to it.
+   *
+   * KAN-1743's `route.name === 'device'` is the same exception for the same reason — `verification_
+   * uri_complete` is very plausibly the *first* URL a fresh machine's browser ever opens for kaya,
+   * so `DeviceApproval.svelte` reaches the identical cookie-session seam `Tokens.svelte` does, and
+   * must be reachable with no `authed` bearer in this tab at all.
    */
 
   let route: Route = $state(currentRoute())
@@ -412,7 +418,11 @@
   }
 </script>
 
-<div class="shell" class:unauthenticated={!authed || route.name === 'tokens'} class:railed>
+<div
+  class="shell"
+  class:unauthenticated={!authed || route.name === 'tokens' || route.name === 'device'}
+  class:railed
+>
   <header class="topbar">
     <a class="brand" href="/" onclick={(event) => interceptClick(event, '/')}>kaya</a>
     <span class="tagline">markdown notes, API-first</span>
@@ -466,6 +476,10 @@
   {#if route.name === 'tokens'}
     <main>
       <Tokens />
+    </main>
+  {:else if route.name === 'device'}
+    <main>
+      <DeviceApproval />
     </main>
   {:else if authed}
     <Sidebar {notes} {route} loading={listing} {query} onsearch={search} oncreate={createAndOpen} />

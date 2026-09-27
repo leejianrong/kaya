@@ -57,11 +57,12 @@ total.
 
 ### The token, and the one rule that outranks every other consideration here
 
-``KAYA_TOKEN`` holds a pandan PAT. This module reads it, hands it to ``KayaClient``, and does
-nothing else with it: it is never logged, never echoed, never included in an exception message and
-never returned as part of a diagnostic. ``MissingCredential`` names the *variable*, never a value —
-a truncated token is still a token (Q41/Q42). ADR 0002 buys kaya the property that it holds no
-replayable credential, and a config layer that printed what it resolved would give that away for a
+``KAYA_TOKEN`` holds a `kaya_pat_…` — kaya's own credential, since ADR 0012's cutover (KAN-1740);
+before that it held a pandan PAT, back when the same secret authenticated both apps (ADR 0002, now
+superseded). This module reads it, hands it to ``KayaClient``, and does nothing else with it: it is
+never logged, never echoed, never included in an exception message and never returned as part of a
+diagnostic. ``MissingCredential`` names the *variable*, never a value — a truncated token is still a
+token (Q41/Q42). A config layer that printed what it resolved would give that away for a
 convenience nobody asked for.
 
 **``config show`` therefore prints ``set`` and not a fragment.** The sibling tool is the reference
@@ -99,7 +100,8 @@ API_URL_ENV = "KAYA_API_URL"
 """The kaya deployment to talk to. PLAN §Config."""
 
 TOKEN_ENV = "KAYA_TOKEN"
-"""The caller's pandan PAT, forwarded byte-for-byte and never parsed (ADR 0002)."""
+"""The caller's `kaya_pat_…` bearer (ADR 0012, KAN-1740), forwarded byte-for-byte and never
+parsed — kaya has no token format any adapter needs to understand, only to hold."""
 
 MAX_TEXT_CHARS_ENV = "KAYA_MAX_TEXT_CHARS"
 """How much prose a read returns before the truncation hint (KAN-547). PLAN §Config."""
@@ -273,14 +275,43 @@ def write_settings(
                 arg=file_key(name),
             )
 
-    path = config_path(env)
     merged = {**read_settings_file(env), **{file_key(k): v for k, v in changes.items()}}
+    _atomic_write(config_path(env), merged)
 
+    return settings_payload(env)
+
+
+def _atomic_write(path: Path, settings: dict[str, Any]) -> None:
+    """The write `write_settings` and `unset_token` both need: a sibling temporary file,
+    ``os.replace``d into place, so an interrupted write leaves the old file intact rather than a
+    truncated one — the file holds the credential that makes every other command work. ``0o600``
+    before the rename, not after, so there is no window in which a world-readable file contains a
+    PAT. The directory is created ``0o700`` for the same reason."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_name(f"{path.name}.tmp")
-    temporary.write_text(json.dumps(merged, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    text = json.dumps(settings, indent=2, ensure_ascii=False) + "\n"
+    temporary.write_text(text, encoding="utf-8")
     temporary.chmod(0o600)
     os.replace(temporary, path)
+
+
+def unset_token(env: Mapping[str, str] | None = None) -> Payload:
+    """Remove ``token`` from the config file (`kaya auth logout`, KAN-1743) — a **delete**, not a
+    blank write. `write_settings` refuses an empty value on purpose (see its own docstring); this
+    function is the other half of that rule, for the one caller that genuinely wants the key gone
+    rather than merely cleared to ``""``.
+
+    Removing a key that was never there is not an error: logging out on a machine that was never
+    logged in is idempotent, the same stance every other read-only-shaped kaya verb takes. A
+    ``KAYA_TOKEN`` set in the **environment** is untouched — it was never in the file to remove, it
+    still wins over the file on the next call to `token()`, and this function has no way to revoke
+    a shell's own variable, so it does not claim to.
+    """
+    current = read_settings_file(env)
+    key = file_key(TOKEN_ENV)
+    if key in current:
+        remaining = {k: v for k, v in current.items() if k != key}
+        _atomic_write(config_path(env), remaining)
 
     return settings_payload(env)
 
@@ -336,8 +367,8 @@ def token(env: Mapping[str, str] | None = None) -> str:
     value, _ = _resolved(TOKEN_ENV, env)
     if not value:
         raise MissingCredential(
-            f"no kaya token configured — set {TOKEN_ENV} to a pandan personal access token, or "
-            f"put one under {file_key(TOKEN_ENV)!r} in the config file",
+            f"no kaya token configured — run `kaya auth login`, or set {TOKEN_ENV} to a "
+            f"kaya_pat_… token, or put one under {file_key(TOKEN_ENV)!r} in the config file",
             arg=TOKEN_ENV,
         )
     return value
@@ -491,6 +522,29 @@ def _shown(env_name: str, env: Mapping[str, str] | None) -> tuple[str, str]:
     if not raw:
         return DEFAULT_API_URL, DEFAULT_SOURCE
     return raw, source
+
+
+CREDENTIAL_NOUN = "credential"
+CREDENTIAL_COLUMNS = (KEY_COLUMN, VALUE_COLUMN, SOURCE_COLUMN)
+
+
+def token_status_payload(env: Mapping[str, str] | None = None) -> Payload:
+    """`kaya auth status`: whether a credential is configured, and where it would come from.
+
+    The narrower, auth-specific view of `settings_payload` — `api_url`/`max_text_chars` are not
+    this verb's concern, and a caller asking "am I logged in?" should not have to skip two rows to
+    find the one that answers it. Same redaction as `config show`'s own token row (`TOKEN_SET`/
+    `TOKEN_UNSET`, never a fragment) and the same reason: `token_status_payload` and
+    `settings_payload` both call `_shown`, so there is exactly one line in this package that
+    decides what a bearer looks like on a terminal, not two that could drift apart.
+    """
+    value, source = _shown(TOKEN_ENV, env)
+    return Payload.entity(
+        noun=CREDENTIAL_NOUN,
+        envelope_key=CREDENTIAL_NOUN,
+        record={KEY_COLUMN: file_key(TOKEN_ENV), VALUE_COLUMN: value, SOURCE_COLUMN: source},
+        columns=CREDENTIAL_COLUMNS,
+    )
 
 
 def path_payload(env: Mapping[str, str] | None = None) -> Payload:
