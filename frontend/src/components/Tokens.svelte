@@ -42,6 +42,20 @@
   let problem: string | null = $state(null)
   let busy = $state(false)
 
+  // `/auth/github/callback` (`backend/app/identity/router.py`'s `_redirect_declined_oauth`)
+  // redirects back here with this query param rather than leaving the tab on a raw JSON error
+  // body — this page is the only thing that reaches that route, so this is the one place that
+  // needs to read it. `replaceState`, not a plain read, so a later reload of this same tab does
+  // not re-show a message about an attempt from minutes ago.
+  const oauthError = new URLSearchParams(globalThis.location.search).get('oauth_error')
+  if (oauthError !== null) {
+    problem =
+      oauthError === 'access_denied'
+        ? 'GitHub sign-in was cancelled.'
+        : 'GitHub sign-in failed. Try again.'
+    history.replaceState(null, '', globalThis.location.pathname)
+  }
+
   $effect(() => {
     const abort = new AbortController()
     fetchCurrentUser({ signal: abort.signal })

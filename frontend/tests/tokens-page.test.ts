@@ -138,6 +138,43 @@ describe('signed out', () => {
   })
 })
 
+describe('returning from a declined or failed GitHub consent screen', () => {
+  afterEach(() => {
+    history.replaceState(null, '', '/')
+  })
+
+  it('shows a friendly message for a declined consent screen, and clears the query param', async () => {
+    history.pushState(null, '', '/tokens?oauth_error=access_denied')
+
+    render()
+    await until(
+      () => host.querySelector('[data-testid="problem"]') !== null,
+      'the declined-consent message',
+    )
+
+    expect(host.querySelector('[data-testid="problem"]')?.textContent).toBe(
+      'GitHub sign-in was cancelled.',
+    )
+    // `_redirect_declined_oauth`'s query param is single-use: a reload of this same tab should
+    // not re-show a message about an attempt from minutes ago.
+    expect(globalThis.location.search).toBe('')
+  })
+
+  it('shows a generic message for any other oauth_error value', async () => {
+    history.pushState(null, '', '/tokens?oauth_error=oauth_failed')
+
+    render()
+    await until(
+      () => host.querySelector('[data-testid="problem"]') !== null,
+      'the failure message',
+    )
+
+    expect(host.querySelector('[data-testid="problem"]')?.textContent).toBe(
+      'GitHub sign-in failed. Try again.',
+    )
+  })
+})
+
 describe('signed in', () => {
   beforeEach(() => {
     session = { id: 'abc-123', email: 'alice@example.com' }

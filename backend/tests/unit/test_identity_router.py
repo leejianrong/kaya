@@ -67,6 +67,20 @@ def test_oauth_authorize_route_registers_once_both_credentials_are_set() -> None
     assert "test-client-id" in body["authorization_url"]
 
 
+def test_oauth_authorize_requests_read_only_scopes_not_httpx_oauths_readwrite_default() -> None:
+    """`httpx_oauth.clients.github.GitHubOAuth2`'s own default is `["user", "user:email"]` —
+    GitHub's plain `user` scope is read/write (its consent screen literally says so), and kaya
+    only ever reads a profile to resolve an id/email at login. `read:user` is the read-only
+    equivalent."""
+    client = TestClient(_app(CONFIGURED))
+
+    response = client.get("/auth/github/authorize")
+
+    body = response.json()
+    assert "scope=read%3Auser+user%3Aemail" in body["authorization_url"]
+    assert "scope=user+user" not in body["authorization_url"]
+
+
 def test_oauth_state_is_signed_with_the_configured_auth_secret() -> None:
     """The state parameter is an itsdangerous-signed token, not a bare client secret leaking into
     a URL — a coarse but real check that `kaya_auth_secret` is actually the thing signing it."""
@@ -78,6 +92,23 @@ def test_oauth_state_is_signed_with_the_configured_auth_secret() -> None:
     assert "state=" in body["authorization_url"]
     assert "test-client-secret" not in body["authorization_url"]
     assert "test-auth-secret" not in body["authorization_url"]
+
+
+def test_declining_the_github_consent_screen_redirects_to_tokens_not_a_raw_json_body() -> None:
+    """`/auth/github/callback` is a browser-navigated redirect target, reached only after GitHub's
+    own consent screen — never a `fetch()` call. Clicking "Cancel" there sends GitHub back with
+    `error=access_denied`, which used to fall through to the API's generic `{"error": {...}}` JSON
+    handler and leave the tab sitting on a bare JSON body. It now redirects to `/tokens` instead,
+    the one page that can reach this route, carrying the reason as a query param that page reads."""
+    client = TestClient(_app(CONFIGURED))
+
+    response = client.get(
+        "/auth/github/callback?error=access_denied&state=irrelevant",
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/tokens?oauth_error=access_denied"
 
 
 def test_a_missing_secret_half_of_the_credential_also_disables_oauth() -> None:
