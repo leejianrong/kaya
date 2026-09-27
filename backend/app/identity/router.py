@@ -22,7 +22,12 @@ from httpx_oauth.integrations.fastapi import OAuth2AuthorizeCallbackError
 from starlette.responses import RedirectResponse
 
 from app.config import Settings, get_settings
-from app.identity.backend import build_auth_backend, build_github_oauth_client, oauth_configured
+from app.identity.backend import (
+    POST_LOGIN_REDIRECT,
+    build_auth_backend,
+    build_github_oauth_client,
+    oauth_configured,
+)
 from app.identity.manager import get_user_manager
 from app.identity.schemas import UserRead, UserUpdate
 
@@ -41,12 +46,14 @@ async def _redirect_declined_oauth(
     there by GitHub itself after the consent screen — never a `fetch()`, never the CLI, never MCP.
     The API's one error shape (`{"error": {...}}`, `app/api/errors.py`'s own docstring: "every
     failure") is a contract for a caller that can read a body; a browser sitting on a bare JSON
-    page mid-navigation cannot do anything with it. `/tokens` is the only page that can currently
-    reach this route (`Tokens.svelte`'s `signIn`), so it is where a declined or failed attempt
-    sends you back, with a query param that page reads and clears rather than a raw exception body.
+    page mid-navigation cannot do anything with it. Shares `POST_LOGIN_REDIRECT` with a *successful*
+    callback (`RedirectingCookieTransport`) rather than its own target, so both outcomes of the one
+    attempt land in the one place that can say something about either — `Landing.svelte` reads and
+    clears the query param this carries, the same way `Tokens.svelte` used to before that page
+    stopped being the only door to a working tab.
     """
     reason = exc.detail if exc.detail == _DECLINED else "oauth_failed"
-    return RedirectResponse(url=f"/tokens?oauth_error={reason}", status_code=302)
+    return RedirectResponse(url=f"{POST_LOGIN_REDIRECT}?oauth_error={reason}", status_code=302)
 
 
 def install_identity_routes(app: FastAPI, settings: Settings | None = None) -> None:

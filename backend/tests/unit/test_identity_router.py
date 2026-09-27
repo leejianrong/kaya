@@ -94,12 +94,13 @@ def test_oauth_state_is_signed_with_the_configured_auth_secret() -> None:
     assert "test-auth-secret" not in body["authorization_url"]
 
 
-def test_declining_the_github_consent_screen_redirects_to_tokens_not_a_raw_json_body() -> None:
+def test_declining_the_github_consent_screen_redirects_home_not_a_raw_json_body() -> None:
     """`/auth/github/callback` is a browser-navigated redirect target, reached only after GitHub's
     own consent screen — never a `fetch()` call. Clicking "Cancel" there sends GitHub back with
     `error=access_denied`, which used to fall through to the API's generic `{"error": {...}}` JSON
-    handler and leave the tab sitting on a bare JSON body. It now redirects to `/tokens` instead,
-    the one page that can reach this route, carrying the reason as a query param that page reads."""
+    handler and leave the tab sitting on a bare JSON body. It now redirects to `/` instead — the
+    same `POST_LOGIN_REDIRECT` a successful callback uses — carrying the reason as a query param
+    `Landing.svelte` reads and clears."""
     client = TestClient(_app(CONFIGURED))
 
     response = client.get(
@@ -108,7 +109,7 @@ def test_declining_the_github_consent_screen_redirects_to_tokens_not_a_raw_json_
     )
 
     assert response.status_code == 302
-    assert response.headers["location"] == "/tokens?oauth_error=access_denied"
+    assert response.headers["location"] == "/?oauth_error=access_denied"
 
 
 def test_a_missing_secret_half_of_the_credential_also_disables_oauth() -> None:

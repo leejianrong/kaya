@@ -27,9 +27,14 @@ COOKIE_NAME = "kayaauth"
 pandan's own `kanbanauth` cookie — the two apps no longer share a credential (ADR 0012), so nothing
 requires the names to coincide, and the two origins are separate besides."""
 
-POST_LOGIN_REDIRECT = "/tokens"
-"""Where a successful `/auth/github/callback` sends the browser — the one page that can mint a
-`kaya_pat_…` from a fresh cookie session."""
+POST_LOGIN_REDIRECT = "/"
+"""Where a completed `/auth/github/callback` sends the browser, whether it succeeded or was
+declined (`app/identity/router.py`'s `_redirect_declined_oauth` shares this constant) —
+`App.svelte` itself turns a fresh cookie session into a `kaya_pat_…` silently on load and needs no
+page of its own to do it on, unlike before this existed, when `/tokens` was the only place that
+could mint one by hand. `/tokens` is still where a *named*, purpose-specific token (for the CLI, a
+script, a second device) gets minted deliberately — this redirect is just no longer the only door
+to a working tab."""
 
 
 class RedirectingCookieTransport(CookieTransport):

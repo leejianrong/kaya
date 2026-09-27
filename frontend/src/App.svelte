@@ -10,7 +10,8 @@
   import Sidebar from './components/Sidebar.svelte'
   import Tokens from './components/Tokens.svelte'
   import { ApiError } from './lib/api'
-  import { clearToken, credentialState } from './lib/auth'
+  import { clearToken, credentialState, setToken } from './lib/auth'
+  import { createToken } from './lib/identity'
   import { resolvePandanHref } from './lib/meta'
   import { createNote, getNote, listNotes } from './lib/notes'
   import {
@@ -168,6 +169,53 @@
    * state the moment the API says the credential is no good.
    */
   let authed = $state(credentialState() === 'set')
+
+  /**
+   * Silent cookie-to-bearer bootstrap (ADR 0012's two credential types, bridged exactly once).
+   *
+   * `get_principal` (`backend/app/auth/kaya_principal.py`) already accepts a live `kaya_session`
+   * cookie for every note-API call — kaya has never actually needed a pasted `kaya_pat_…` to reach
+   * the note list, only `apiRequest`'s own bearer-or-refuse precheck (`lib/api.ts`) never learned
+   * that. Reworking every `apiRequest` caller to try a bearer-less request and fall back to the
+   * cookie would touch `attachments.ts`/`embeds.ts`/`graph.ts` and their pinned
+   * `MissingCredential`-before-the-fetch tests for a much smaller win: this tab still needs its own
+   * `kaya_pat_…` in `sessionStorage` regardless, because that is the one thing every other API call
+   * in the app already assumes exists. So instead of teaching the whole API layer a second
+   * credential shape, a `kaya_pat_…` is minted here, silently, the moment a live cookie session is
+   * found and no bearer is already set — closing the loop `Tokens.svelte`'s "Use this token now"
+   * button closes by hand, automatically, which is what actually answers "why can't I just sign in
+   * with GitHub".
+   *
+   * `attempted`, not a re-run on every `authed` flip, is what keeps this from fighting **Clear
+   * token**: that button sets `authed = false` on a live cookie session on purpose, and a `$effect`
+   * keyed on `authed` alone would silently re-mint a bearer the instant it saw that flip, making
+   * "Clear token" appear to do nothing. Tried once per page load, succeeds or fails once, and never
+   * fires again for the rest of this tab's lifetime either way.
+   *
+   * **Initialized from `authed`'s own starting value, not a bare `false`.** A tab that arrives with
+   * a bearer already has no reason to ever try this, including later — if that bearer is discarded
+   * by a `401` or a deliberate **Clear token** ten minutes into the session, `authed` flips to
+   * `false` and this effect reads that, but it must not treat a *later* discard the same as never
+   * having tried at all. Starting `true` whenever `credentialState()` already reads `set` is what
+   * keeps a `401` from silently re-authenticating a tab that just had its credential refused.
+   */
+  let attemptedCookieBootstrap = credentialState() === 'set'
+
+  $effect(() => {
+    if (authed || attemptedCookieBootstrap) {
+      return
+    }
+    attemptedCookieBootstrap = true
+    createToken({ name: 'browser', scope: 'write' })
+      .then((created) => {
+        setToken(created.token)
+        authed = true
+      })
+      .catch(() => {
+        // No live cookie session — genuinely logged out. Landing is already what renders for
+        // `!authed`; there is nothing further to do or report.
+      })
+  })
 
   /** The API's own words for why the last credential was refused. Shown by the landing state. */
   let rejected: string | null = $state(null)
