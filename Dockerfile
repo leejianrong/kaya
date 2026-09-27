@@ -172,7 +172,15 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=6 \
 # "the schema is current" is a visible step with its own exit code, rather than something the web
 # server does on the way up and swallows.
 #
-# Proxy headers are left at uvicorn's default. Under an Ingress that is not yet right, and ADR 0010
-# §Consequences names this exact class of bug as one the MVP knowingly leaves unproven until the
-# homelab. Nothing kaya returns today is an absolute URL, so it does not bite yet.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# `--forwarded-allow-ips=*`: ADR 0010 §Consequences flagged proxy headers as "left at uvicorn's
+# default... this class of bug is unproven until the homelab, because nothing kaya returns today is
+# an absolute URL, so it does not bite yet" — KAN-1738/1744 are the first features that build one
+# (`request.base_url` in `app/identity/oauth_metadata.py`, `oauth_server_metadata.py`,
+# `oauth_authorize.py`), and it bit: fronted by Fly's edge (or any Ingress), the container's peer is
+# never `127.0.0.1` (uvicorn's own `--forwarded-allow-ips` default), so `X-Forwarded-Proto` was
+# never trusted and every derived URL came back `http://` against an `https://`-only GitHub OAuth
+# callback and RFC 9728/8414 metadata. `*` trusts every peer's forwarded headers rather than listing
+# one platform's proxy IPs, because the container's own network topology (Fly's `[http_service]`,
+# the k8s `Service` in front of `deploy/k8s/`) is the only path in either way — there is no direct
+# route to this port that isn't already through one of them.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--forwarded-allow-ips=*"]
