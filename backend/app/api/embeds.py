@@ -36,14 +36,12 @@ from http import HTTPStatus
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.schemas import BoardEmbedResponse, EmbedCard
 from app.auth import Principal, error_body, get_principal
-from app.config import get_settings
 from app.db import get_session
-from app.identity.pandan_link import PandanLink, decrypt_token
+from app.identity.pandan_link import linked_pandan_bearer
 from app.integrations.dependencies import BoardResolver
 
 router = APIRouter(prefix="/api/v1", tags=["embeds"])
@@ -82,19 +80,6 @@ def board_embed_query(
     return BoardEmbedQuery(board=board, view=view, column=column)
 
 
-def linked_pandan_bearer(db: Session, principal: Principal) -> str | None:
-    """The caller's own linked pandan PAT, decrypted, or `None` if they have never connected one
-    (`app/api/pandan_link.py`) or the stored ciphertext can no longer be read back (a
-    `KAYA_AUTH_SECRET` rotation since — `decrypt_token`'s own docstring). Both collapse to the
-    same `None`, on purpose: `BoardEmbedResolver.resolve` cannot and should not act differently on
-    either, the same "a caller cannot act differently" argument `BoardEmbedResult` already makes
-    for `unavailable`."""
-    link = db.scalar(select(PandanLink).where(PandanLink.user_id == principal.id))
-    if link is None:
-        return None
-    return decrypt_token(link.encrypted_token, get_settings().kaya_auth_secret)
-
-
 EmbedQuery = Annotated[BoardEmbedQuery, Depends(board_embed_query)]
 CurrentPrincipal = Annotated[Principal, Depends(get_principal)]
 DbSession = Annotated[Session, Depends(get_session)]
@@ -115,7 +100,7 @@ def get_board_embed(
     down, the board/view does not exist, or the caller cannot see it — and `cards` is `[]` in
     every one of those cases, or for a legitimately empty result (`BoardEmbedResponse`'s
     docstring, ADR 0003)."""
-    bearer = linked_pandan_bearer(db, principal)
+    bearer = linked_pandan_bearer(db, principal.id)
     result = resolver.resolve(bearer, query.board, view_id=query.view, column=query.column)
     return BoardEmbedResponse(
         unavailable=result.unavailable,
