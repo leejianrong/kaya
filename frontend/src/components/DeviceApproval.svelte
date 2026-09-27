@@ -1,45 +1,84 @@
 <!--
   ADR 0013's consent screen (KAN-1743): approve or deny a `kaya auth login` device-flow request.
+  Since ADR 0014 (KAN-1744), the **same** component also serves a second entry path: a
+  browser-embedded MCP client's authorization_code+PKCE redirect.
 
   Reachable at `/device`, and — like `Tokens.svelte`, unlike `PandanConnect.svelte` — a **peer** of
   `App.svelte`'s whole `authed`/`Landing` branch rather than nested inside it. This page is very
   plausibly the *first* thing a brand-new machine's browser ever opens for kaya: the CLI printed the
-  link before anything else existed. It needs kaya's own cookie session (`lib/identity.ts`), which
-  is a wholly separate credential from `authed`'s `kaya_pat_…` bearer, and there is no reason to make
-  approving a device login depend on a credential that login's own job is to hand out.
+  link before anything else existed, or a hosted MCP client's own "Connect" button did. It needs
+  kaya's own cookie session (`lib/identity.ts`), which is a wholly separate credential from `authed`'s
+  `kaya_pat_…` bearer, and there is no reason to make approving either flow depend on a credential
+  that flow's own job is to hand out.
 
-  `user_code` comes from the query string (`?user_code=...`, RFC 8628's `verification_uri_complete`)
-  rather than from the route — `lib/router.ts`'s own docstring explains why the route itself carries
-  none of it. A code the query string didn't supply falls back to an editable field, matching
-  `gh auth login`'s own dual presentation: the CLI's browser-opened link fills it in automatically,
-  and the short code printed beside it is the fallback for a person who typed the bare
-  `verification_uri` in by hand instead.
+  **`mode` is read from the query string once, at mount, never from the route** — `lib/router.ts`'s
+  own docstring explains why the route itself carries none of it. `?user_code=...` (RFC 8628's
+  `verification_uri_complete`) means device mode; `?client_id=&redirect_uri=...` (the backend's own
+  `GET /auth/authorize` redirect, ADR 0014) means authorize mode. A code the query string didn't
+  supply for device mode falls back to an editable field, matching `gh auth login`'s own dual
+  presentation; authorize mode has no such fallback — every required param arrives together or the
+  request is invalid, since nothing about it is ever hand-typed.
+
+  **Authorize mode ends by leaving this page entirely** (`window.location.assign`, a real top-level
+  navigation back to the requesting app) rather than rendering a resolved state in place the way
+  device mode's approve/deny do — there is nothing on this origin left to show once the browser is
+  on its way back to the MCP client.
 -->
 <script lang="ts">
   import {
+    approveAuthorize,
     approveDeviceAuthorization,
+    denyAuthorize,
     denyDeviceAuthorization,
     fetchCurrentUser,
+    getAuthorizeInfo,
     getDeviceAuthorization,
     githubLoginUrl,
     IdentityError,
+    type AuthorizeInfo,
+    type AuthorizeParams,
     type CurrentUser,
     type DeviceAuthorization,
+    type TokenScope,
   } from '../lib/identity'
 
   type Phase = 'checking' | 'signed-out' | 'entering-code' | 'loaded' | 'not-found'
+  type Mode = 'device' | 'authorize'
+
+  const query = new URLSearchParams(globalThis.location?.search ?? '')
+  const isAuthorizeAttempt = query.has('client_id') || query.has('redirect_uri')
+  const mode: Mode = isAuthorizeAttempt ? 'authorize' : 'device'
+  const authorizeParams: AuthorizeParams | null = isAuthorizeAttempt
+    ? parseAuthorizeParams(query)
+    : null
 
   let phase: Phase = $state('checking')
   let user: CurrentUser | null = $state(null)
-  let userCode = $state(readUserCodeFromQuery())
+  let userCode = $state(query.get('user_code') ?? '')
   let authorization: DeviceAuthorization | null = $state(null)
+  let authorizeInfo: AuthorizeInfo | null = $state(null)
   let problem: string | null = $state(null)
   let busy = $state(false)
 
-  function readUserCodeFromQuery(): string {
-    // Not `lib/router.ts`'s business (see this file's own header) — the query string is this
-    // component's alone, exactly the layering `Tokens.svelte` already keeps for its session state.
-    return new URLSearchParams(globalThis.location?.search ?? '').get('user_code') ?? ''
+  function parseAuthorizeParams(params: URLSearchParams): AuthorizeParams | null {
+    const clientId = params.get('client_id')
+    const redirectUri = params.get('redirect_uri')
+    const codeChallenge = params.get('code_challenge')
+    const codeChallengeMethod = params.get('code_challenge_method')
+    const resource = params.get('resource')
+    if (!clientId || !redirectUri || !codeChallenge || !codeChallengeMethod || !resource) {
+      return null
+    }
+    const scope: TokenScope = params.get('scope') === 'read' ? 'read' : 'write'
+    return {
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      code_challenge: codeChallenge,
+      code_challenge_method: codeChallengeMethod,
+      resource,
+      scope,
+      state: params.get('state'),
+    }
   }
 
   $effect(() => {
@@ -54,7 +93,7 @@
           phase = 'signed-out'
           return
         }
-        await loadCode(abort.signal)
+        await load(abort.signal)
       })
       .catch((error: unknown) => {
         if (!abort.signal.aborted) {
@@ -65,7 +104,28 @@
     return () => abort.abort()
   })
 
-  async function loadCode(signal?: AbortSignal): Promise<void> {
+  async function load(signal?: AbortSignal): Promise<void> {
+    if (mode === 'authorize') {
+      if (authorizeParams === null) {
+        phase = 'not-found'
+        return
+      }
+      try {
+        authorizeInfo = await getAuthorizeInfo(authorizeParams, { signal })
+        if (signal?.aborted) {
+          return
+        }
+        phase = 'loaded'
+      } catch (error) {
+        if (signal?.aborted) {
+          return
+        }
+        problem = describe(error)
+        phase = 'not-found'
+      }
+      return
+    }
+
     if (userCode.trim() === '') {
       phase = 'entering-code'
       return
@@ -93,7 +153,7 @@
   async function submitCode(event: SubmitEvent): Promise<void> {
     event.preventDefault()
     problem = null
-    await loadCode()
+    await load()
   }
 
   async function signIn(): Promise<void> {
@@ -109,6 +169,11 @@
   async function approve(): Promise<void> {
     busy = true
     try {
+      if (mode === 'authorize' && authorizeParams) {
+        const result = await approveAuthorize(authorizeParams)
+        globalThis.location.assign(result.redirect_to)
+        return
+      }
       authorization = await approveDeviceAuthorization(userCode.trim())
     } catch (error) {
       problem = describe(error)
@@ -120,6 +185,11 @@
   async function deny(): Promise<void> {
     busy = true
     try {
+      if (mode === 'authorize' && authorizeParams) {
+        const result = await denyAuthorize(authorizeParams)
+        globalThis.location.assign(result.redirect_to)
+        return
+      }
       authorization = await denyDeviceAuthorization(userCode.trim())
     } catch (error) {
       problem = describe(error)
@@ -137,13 +207,17 @@
 </script>
 
 <main class="device-approval">
-  <h1>Sign in to the CLI</h1>
+  <h1>{mode === 'authorize' ? 'Connect an application' : 'Sign in to the CLI'}</h1>
 
   {#if phase === 'checking'}
     <p>Checking your session…</p>
   {:else if phase === 'signed-out'}
     <p class="lede">
-      Sign in with the GitHub account you want <code>kaya auth login</code> connected to.
+      {#if mode === 'authorize'}
+        Sign in with the GitHub account you want this application connected to.
+      {:else}
+        Sign in with the GitHub account you want <code>kaya auth login</code> connected to.
+      {/if}
     </p>
     <button type="button" onclick={signIn} data-testid="github-signin">Sign in with GitHub</button>
   {:else if phase === 'entering-code'}
@@ -163,8 +237,28 @@
     </form>
   {:else if phase === 'not-found'}
     <p class="refused" role="alert" data-testid="not-found">
-      That code has expired or does not exist. Run <code>kaya auth login</code> again.
+      {#if mode === 'authorize'}
+        {problem ?? 'This request is invalid or has expired — go back and try connecting again.'}
+      {:else}
+        That code has expired or does not exist. Run <code>kaya auth login</code> again.
+      {/if}
     </p>
+  {:else if phase === 'loaded' && mode === 'authorize' && authorizeInfo}
+    <p class="lede">
+      Signed in as <strong data-testid="current-email">{user?.email}</strong>.
+    </p>
+    <section class="consent" data-testid="pending-consent">
+      <p>
+        <strong>{authorizeInfo.client_name ?? 'An application'}</strong> wants to connect to your
+        kaya account, with <strong>{authorizeInfo.requested_scope}</strong> access to your notes.
+      </p>
+      <div class="actions">
+        <button type="button" onclick={approve} disabled={busy} data-testid="approve">
+          Approve
+        </button>
+        <button type="button" onclick={deny} disabled={busy} data-testid="deny">Deny</button>
+      </div>
+    </section>
   {:else if phase === 'loaded' && authorization}
     <p class="lede">
       Signed in as <strong data-testid="current-email">{user?.email}</strong>.
@@ -194,7 +288,7 @@
     {/if}
   {/if}
 
-  {#if problem}
+  {#if problem && phase !== 'not-found'}
     <p class="refused" role="alert" data-testid="problem">{problem}</p>
   {/if}
 </main>

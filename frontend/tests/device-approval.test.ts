@@ -17,12 +17,22 @@ interface Authorization {
   expires_at: string
 }
 
+interface RegisteredClient {
+  client_name: string | null
+}
+
 let host: HTMLDivElement
 const mounted: unknown[] = []
 const realFetch = globalThis.fetch
 
 let session: { id: string; email: string } | null
 let codes: Map<string, Authorization>
+let oauthClients: Map<string, RegisteredClient>
+
+const AUTHORIZE_PARAMS =
+  'client_id=kaya_client_abc&redirect_uri=https%3A%2F%2Fclaude.ai%2Fcallback&' +
+  'code_challenge=abc123&code_challenge_method=S256&resource=https%3A%2F%2Fkaya.example%2Fmcp&' +
+  'scope=write&state=xyz'
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -37,10 +47,12 @@ beforeEach(() => {
   window.history.pushState({}, '', '/device')
   session = null
   codes = new Map()
+  oauthClients = new Map([['kaya_client_abc', { client_name: 'Claude.ai' }]])
 
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const method = init?.method ?? 'GET'
+    const [path, search] = url.split('?')
 
     if (url === '/users/me') {
       return session === null
@@ -51,6 +63,24 @@ beforeEach(() => {
       return jsonResponse(200, {
         authorization_url: 'https://github.com/login/oauth/authorize?x=1',
       })
+    }
+    if (path === '/auth/authorize/info' && method === 'GET') {
+      const clientId = new URLSearchParams(search).get('client_id') ?? ''
+      const client = oauthClients.get(clientId)
+      if (client === undefined) {
+        return jsonResponse(400, { error: 'invalid_client', error_description: 'unknown client_id' })
+      }
+      return jsonResponse(200, {
+        client_name: client.client_name,
+        requested_scope: new URLSearchParams(search).get('scope') ?? 'write',
+        resource: new URLSearchParams(search).get('resource'),
+      })
+    }
+    if ((path === '/auth/authorize/approve' || path === '/auth/authorize/deny') && method === 'POST') {
+      const body = JSON.parse(init?.body as string) as { redirect_uri: string; state: string | null }
+      const outcome = path.endsWith('approve') ? 'code=a-fresh-code' : 'error=access_denied'
+      const state = body.state !== null ? `&state=${body.state}` : ''
+      return jsonResponse(200, { redirect_to: `${body.redirect_uri}?${outcome}${state}` })
     }
     const match = /^\/auth\/device\/([^/]+)(\/(approve|deny))?$/.exec(url)
     if (match) {
@@ -193,5 +223,90 @@ describe('a code that does not exist', () => {
     await until(() => host.querySelector('[data-testid="not-found"]') !== null, 'not-found')
 
     expect(host.querySelector('[data-testid="pending-consent"]')).toBeNull()
+  })
+})
+
+describe('authorize mode (ADR 0014, KAN-1744): a client_id+redirect_uri redirect', () => {
+  let assignSpy: ReturnType<typeof vi.fn>
+
+  const realLocation = window.location
+
+  beforeEach(() => {
+    session = { id: 'alice-id', email: 'alice@example.com' }
+    window.history.pushState({}, '', `/device?${AUTHORIZE_PARAMS}`)
+    assignSpy = vi.fn()
+    Object.defineProperty(window, 'location', {
+      value: { ...realLocation, assign: assignSpy },
+      configurable: true,
+      writable: true,
+    })
+  })
+
+  afterEach(() => {
+    Object.defineProperty(window, 'location', {
+      value: realLocation,
+      configurable: true,
+      writable: true,
+    })
+  })
+
+  it('shows the requesting client name and scope, with no code form', async () => {
+    render()
+    await until(() => host.querySelector('[data-testid="pending-consent"]') !== null, 'consent')
+
+    expect(host.querySelector('[data-testid="code-form"]')).toBeNull()
+    expect(host.textContent).toContain('Claude.ai')
+    expect(host.textContent).toContain('write')
+  })
+
+  it('approving navigates the browser to the redirect_to URL, never resolves in place', async () => {
+    render()
+    await until(() => host.querySelector('[data-testid="approve"]') !== null, 'approve button')
+
+    host.querySelector<HTMLButtonElement>('[data-testid="approve"]')!.click()
+    await until(() => assignSpy.mock.calls.length > 0, 'navigation')
+
+    const [destination] = assignSpy.mock.calls[0] as [string]
+    expect(destination).toBe('https://claude.ai/callback?code=a-fresh-code&state=xyz')
+    expect(host.querySelector('[data-testid="approved-state"]')).toBeNull()
+  })
+
+  it('denying navigates to the redirect_to URL with access_denied', async () => {
+    render()
+    await until(() => host.querySelector('[data-testid="deny"]') !== null, 'deny button')
+
+    host.querySelector<HTMLButtonElement>('[data-testid="deny"]')!.click()
+    await until(() => assignSpy.mock.calls.length > 0, 'navigation')
+
+    const [destination] = assignSpy.mock.calls[0] as [string]
+    expect(destination).toBe('https://claude.ai/callback?error=access_denied&state=xyz')
+  })
+
+  it('an unknown client_id shows the not-found state with the server message', async () => {
+    oauthClients.clear()
+    render()
+    await until(() => host.querySelector('[data-testid="not-found"]') !== null, 'not-found')
+
+    expect(host.textContent).toContain('unknown client_id')
+  })
+})
+
+describe('authorize mode with an incomplete query string', () => {
+  beforeEach(() => {
+    session = { id: 'alice-id', email: 'alice@example.com' }
+    // client_id present, but none of the other required PKCE/resource params — must not be
+    // mistaken for device mode (which would otherwise show an empty code-entry form).
+    window.history.pushState({}, '', '/device?client_id=kaya_client_abc')
+  })
+
+  it('shows not-found immediately, with no network call at all', async () => {
+    render()
+    await until(() => host.querySelector('[data-testid="not-found"]') !== null, 'not-found')
+
+    expect(host.querySelector('[data-testid="code-form"]')).toBeNull()
+    const calledAuthorizeInfo = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.some(([input]) => String(input).startsWith('/auth/authorize/info'))
+    expect(calledAuthorizeInfo).toBe(false)
   })
 })

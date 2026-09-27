@@ -53,6 +53,15 @@ RESERVED_PREFIXES: tuple[str, ...] = (
     # (`fastapi-users`' `/users/me`), unversioned like `/health` — see `app/identity/router.py`.
     "/auth",
     "/users",
+    # ADR 0013/0014 (KAN-1744): the hosted MCP endpoint (`/mcp`, `app/identity/mcp_host.py`) and
+    # its two discovery documents (`/.well-known/oauth-protected-resource/mcp`,
+    # `/.well-known/oauth-authorization-server` — RFC 9728/8414). `/mcp` itself is a literal route
+    # registered ahead of this fallback, so it never actually reaches this list in practice, but a
+    # typo'd sub-path (`/mcp/nonexistent`) or an unregistered `.well-known` document must still 404
+    # as JSON rather than become an SPA deep link, and this list is the structural guard that makes
+    # that a decision rather than an accident.
+    "/mcp",
+    "/.well-known",
 )
 """Path namespaces the server owns. The SPA is never served for one, matched route or not.
 

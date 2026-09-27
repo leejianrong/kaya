@@ -103,16 +103,26 @@ function safeParse(text: string): unknown {
 }
 
 function errorMessage(payload: unknown): string | null {
-  if (
-    payload !== null &&
-    typeof payload === 'object' &&
-    'error' in payload &&
-    typeof (payload as { error: unknown }).error === 'object' &&
-    (payload as { error: { message?: unknown } }).error !== null
-  ) {
-    const message = (payload as { error: { message?: unknown } }).error.message
+  if (payload === null || typeof payload !== 'object' || !('error' in payload)) {
+    return null
+  }
+  const error = (payload as { error: unknown }).error
+
+  // kaya's own shape: `{"error": {"code", "message", ...}}`.
+  if (typeof error === 'object' && error !== null) {
+    const message = (error as { message?: unknown }).message
     return typeof message === 'string' ? message : null
   }
+
+  // RFC 6749 §5.2's flat shape — `{"error": "<code>", "error_description": "..."}` — the wire
+  // format `/auth/authorize*`/`/auth/register` speak (ADR 0014), never kaya's own nested one, for
+  // the same reason `app/identity/oauth_authorize_router.py`'s module docstring gives: this is
+  // OAuth protocol surface, not this codebase's own REST convention.
+  if (typeof error === 'string') {
+    const description = (payload as { error_description?: unknown }).error_description
+    return typeof description === 'string' ? description : error
+  }
+
   return null
 }
 
@@ -232,6 +242,93 @@ export async function denyDeviceAuthorization(
   return identityRequest<DeviceAuthorization>(
     `/auth/device/${encodeURIComponent(userCode)}/deny`,
     { method: 'POST' },
+    options,
+  )
+}
+
+// --- authorization_code+PKCE consent (ADR 0014, KAN-1744) ---------------------------------------
+
+/** The OAuth params a browser-embedded client's redirect carries — read from `location.search` by
+ * `DeviceApproval.svelte`'s own second entry path, never constructed here. Mirrors the backend's
+ * `AuthorizeParams` field for field. */
+export interface AuthorizeParams {
+  client_id: string
+  redirect_uri: string
+  code_challenge: string
+  code_challenge_method: string
+  resource: string
+  scope: TokenScope
+  state: string | null
+}
+
+export interface AuthorizeInfo {
+  client_name: string | null
+  requested_scope: TokenScope
+  resource: string
+}
+
+export interface AuthorizeRedirect {
+  redirect_to: string
+}
+
+function authorizeQuery(params: AuthorizeParams): string {
+  const query = new URLSearchParams({
+    client_id: params.client_id,
+    redirect_uri: params.redirect_uri,
+    code_challenge: params.code_challenge,
+    code_challenge_method: params.code_challenge_method,
+    resource: params.resource,
+    scope: params.scope,
+  })
+  if (params.state !== null) {
+    query.set('state', params.state)
+  }
+  return query.toString()
+}
+
+/** `GET /auth/authorize/info`: which client is asking, for what scope/resource. Re-validates
+ * everything `GET /auth/authorize` did rather than trusting the URL alone — there is no persisted
+ * row for this flow until approval. */
+export async function getAuthorizeInfo(
+  params: AuthorizeParams,
+  options: IdentityRequestOptions = {},
+): Promise<AuthorizeInfo> {
+  return identityRequest<AuthorizeInfo>(
+    `/auth/authorize/info?${authorizeQuery(params)}`,
+    { method: 'GET' },
+    options,
+  )
+}
+
+/** Mints a short-lived, single-use authorization code and returns the URL to navigate the browser
+ * to — a real top-level navigation back to the requesting app, off kaya's own UI entirely (unlike
+ * device flow's approve, which resolves in place). */
+export async function approveAuthorize(
+  params: AuthorizeParams,
+  options: IdentityRequestOptions = {},
+): Promise<AuthorizeRedirect> {
+  return identityRequest<AuthorizeRedirect>(
+    '/auth/authorize/approve',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    },
+    options,
+  )
+}
+
+export async function denyAuthorize(
+  params: AuthorizeParams,
+  options: IdentityRequestOptions = {},
+): Promise<AuthorizeRedirect> {
+  return identityRequest<AuthorizeRedirect>(
+    '/auth/authorize/deny',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    },
     options,
   )
 }

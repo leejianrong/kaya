@@ -9,7 +9,9 @@ tracks *work*, kaya holds the *knowledge*.
 Five packages, one dependency arrow (ADR 0001): `kaya-cli` and `mcp/` are thin adapters over
 `kaya-client` (all payload shaping — projection, truncation, aggregates, serialization — lives there,
 never in an adapter); `frontend/` is a browsable SPA that calls `backend/` directly; nothing depends
-on an adapter.
+on an adapter — **with one narrow, deliberate exception since KAN-1744**: `backend/app/identity/
+mcp_host.py` imports `kaya_mcp.server.server` to host its Streamable HTTP transport on the same
+origin (ADR 0014's own section argues why; `kaya-client` itself gains no new dependency either way).
 
 **Status: the MVP is done, and kaya is past it.** All six planned slices shipped (V1 backend, V2a/V2b
 CLI, V3 SPA editor, V4 search, V5 cross-linking including wikilink autocomplete, V6 MCP — all six MCP
@@ -57,13 +59,18 @@ an ADR in the pandan repo; bare "ADR NNNN" means this repo's. Read `PLAN.md` bef
    explicitly-connected pandan credential now** (KAN-1741) — `/api/v1/pandan-link` stores one PAT
    per kaya account, encrypted (`app/identity/pandan_link.py`), and `app/api/embeds.py` forwards
    *that*, never the caller's own kaya-side bearer, which stopped being a pandan credential the same
-   cutover made. EPIC-283 is closed as of KAN-1741. **EPIC-284's first card is done**: `kaya auth
-   login/logout/check` (KAN-1743, ADR 0013) — RFC 8628 device-flow login against kaya's own
-   authorization server, a new `device_authorization` table, and a `/device` consent screen
+   cutover made. EPIC-283 is closed as of KAN-1741. **EPIC-284's first two cards are done.**
+   KAN-1743: `kaya auth login/logout/check` (ADR 0013) — RFC 8628 device-flow login against kaya's
+   own authorization server, a new `device_authorization` table, and a `/device` consent screen
    (`DeviceApproval.svelte`). The CLI's third verb is spelled `check`, not pandan's `auth status` —
    `context` already owns that bare word (`mcp/tests/test_cli_parity.py`'s reader refuses two verbs
-   sharing one). Hosted remote MCP (KAN-1744) and its docs pass (KAN-1745) are next — check the
-   board before assuming this paragraph is the final word.
+   sharing one). KAN-1744: a hosted remote MCP endpoint (ADR 0014) — Streamable HTTP mounted on the
+   same backend (`app/identity/mcp_host.py`), RFC 9728/8414 discovery, RFC 7591 DCR + CIMD client
+   registration, and RFC 8707 resource binding via a **new authorization_code+PKCE grant** ADR 0013
+   hadn't specified — the identical gap pandan hit building its own EPIC-282 (ADR 0026), fixed the
+   same way except kaya mints an ordinary, long-lived `kaya_pat_…` rather than adding refresh-token
+   rotation (ADR 0014's own "deliberate simplification" section). Its docs pass (KAN-1745) is next
+   — check the board before assuming this paragraph is the final word.
 3. **`render()`'s signature is frozen** ([ADR 0005](docs/adr/0005-born-agent-conformant.md)). If a
    change needs to alter it, stop — that's the sequencing violated, not a reason to push through.
    Six shipped features found another answer (e.g. `Payload.limited_to()` applied at the call site).
