@@ -27,6 +27,16 @@
 # what `kaya_cli.context.packaged_skill_path()` looks for under `_MEIPASS` either way this is built.
 # A build without this line still installs the hook and just reports the skill as unbundled
 # (`packaged_skill_path()` returns `None` rather than raising).
+#
+# THE SOURCE HALF IS AN ABSOLUTE PATH, NOT `src/kaya_cli/skills` RELATIVE TO THIS SCRIPT'S `cd
+# kaya-cli` BELOW. PyInstaller 6.22 resolves a relative `--add-data` source against `--specpath`
+# (`$work`, a `mktemp -d` outside the repo entirely), not the working directory the command runs
+# from — undocumented and a behaviour change from whatever version this script was first proven
+# against, since nothing here ever pinned one (`uv run --with pyinstaller` floats to latest). Measured
+# directly: the exact invocation below fails with `Unable to find '$work/src/kaya_cli/skills'` when
+# the source is spelled relatively, and succeeds once it is spelled as `$(pwd)/src/kaya_cli/skills`.
+# An absolute path sidesteps the question of which directory PyInstaller resolves a relative one
+# against, this version or the next.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
@@ -43,7 +53,7 @@ uv run --with pyinstaller pyinstaller \
   --specpath "$work" \
   --copy-metadata kaya-notes \
   --copy-metadata kaya-client \
-  --add-data "src/kaya_cli/skills:kaya_cli/skills" \
+  --add-data "$(pwd)/src/kaya_cli/skills:kaya_cli/skills" \
   --noconfirm \
   --clean \
   --log-level WARN \

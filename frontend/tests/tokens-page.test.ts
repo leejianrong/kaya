@@ -9,6 +9,7 @@ import { type Component, flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Tokens from '../src/components/Tokens.svelte'
+import * as auth from '../src/lib/auth'
 
 interface Call {
   url: string
@@ -89,11 +90,13 @@ afterEach(() => {
     unmount(instance as never)
   }
   host.remove()
+  auth.clearToken()
+  history.replaceState(null, '', '/')
   globalThis.fetch = realFetch
 })
 
-function render(): HTMLDivElement {
-  mounted.push(mount(Tokens as Component<Record<string, never>>, { target: host, props: {} }))
+function render(props: { onaccept?: () => void } = {}): HTMLDivElement {
+  mounted.push(mount(Tokens as Component<{ onaccept?: () => void }>, { target: host, props }))
   flushSync()
   return host
 }
@@ -221,6 +224,37 @@ describe('signed in', () => {
     expect(host.querySelector('[data-testid="token-list"]')?.textContent).not.toContain(
       'FAKEsecretvalue1234',
     )
+  })
+
+  it('"Use this token now" stores the bearer, calls onaccept, hides the secret, and leaves /tokens', async () => {
+    history.pushState(null, '', '/tokens')
+    const onaccept = vi.fn()
+    render({ onaccept })
+    await until(() => host.querySelector('[data-testid="create-form"]') !== null, 'the create form')
+
+    const nameInput = host.querySelector<HTMLInputElement>('#token-name')!
+    nameInput.value = 'laptop'
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+
+    const form = host.querySelector<HTMLFormElement>('[data-testid="create-form"]')!
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await until(
+      () => host.querySelector('[data-testid="use-token-now"]') !== null,
+      'the "use this token now" button',
+    )
+
+    expect(auth.credentialState()).toBe('not set')
+
+    host.querySelector<HTMLButtonElement>('[data-testid="use-token-now"]')!.click()
+    flushSync()
+
+    expect(auth.credentialState()).toBe('set')
+    expect(onaccept).toHaveBeenCalledTimes(1)
+    // The reveal disappears with the rest of `justCreated` — nothing about the raw secret survives
+    // past this call, the same guarantee `revoke` already gives it.
+    expect(host.querySelector('[data-testid="created-secret"]')).toBeNull()
+    expect(globalThis.location.pathname).toBe('/')
   })
 
   it('revoking a token removes it from the list', async () => {
