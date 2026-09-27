@@ -64,16 +64,33 @@ ENV UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/opt/kaya/venv
 
 WORKDIR /src
+# backend/pyproject.toml's [tool.uv.sources] names kaya-mcp by a *relative* path, `../mcp` (ADR
+# 0014's narrow exception to ADR 0001), which itself names kaya-client by `../kaya-client` (ADR
+# 0004) — so both have to sit at those paths in this stage's filesystem, with their own source
+# rather than just their manifests, the same reasoning mcp/Dockerfile's own deps stage already
+# applies to kaya-client for the identical reason: a path dependency is a regular dependency uv
+# builds a wheel for, not the "current project" `--no-install-project` skips below.
+COPY kaya-client/pyproject.toml kaya-client/README.md ./kaya-client/
+COPY kaya-client/src ./kaya-client/src
+COPY mcp/pyproject.toml mcp/README.md ./mcp/
+COPY mcp/src ./mcp/src
+
+WORKDIR /src/backend
 # README.md is here because pyproject.toml names it as the project readme; without it uv refuses to
 # read the metadata at all.
 COPY backend/pyproject.toml backend/uv.lock backend/README.md ./
 
 # Two syncs, and the split is the layer boundary: this one resolves and installs *dependencies*
-# and is invalidated by uv.lock alone, so editing a route does not re-download SQLAlchemy.
+# and is invalidated by uv.lock (and kaya-mcp/kaya-client's own sources) alone, so editing a route
+# does not re-download SQLAlchemy.
 #
 # --frozen: fail if uv.lock disagrees with pyproject.toml rather than silently re-resolving, the
 #   same promise `npm ci` makes above and the same one CI makes.
-RUN uv sync --frozen --no-dev --no-install-project
+# --no-editable: kaya-mcp and kaya-client mark themselves `editable = true` for local development
+#   (`uv sync` from a checkout), but an editable install is a reference back to this build stage's
+#   /src, which will not exist in the runtime image — the same correction mcp/Dockerfile's own deps
+#   stage makes for kaya-client.
+RUN uv sync --frozen --no-dev --no-install-project --no-editable
 
 COPY backend/app ./app
 # And this one installs kaya itself, non-editable, so `app` lands in site-packages **with its
