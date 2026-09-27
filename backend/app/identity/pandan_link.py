@@ -36,9 +36,10 @@ import uuid
 from datetime import datetime
 
 from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import BigInteger, DateTime, ForeignKey, String, func, select
+from sqlalchemy.orm import Mapped, Session, mapped_column
 
+from app.config import get_settings
 from app.models.base import Base
 
 
@@ -87,10 +88,35 @@ def encrypt_token(raw: str, secret: str) -> str:
 def decrypt_token(encrypted: str, secret: str) -> str | None:
     """The inverse of `encrypt_token`, or `None` if it cannot be recovered — a `KAYA_AUTH_SECRET`
     rotation since the link was stored, or a corrupted row, both land here rather than raising.
-    Callers treat `None` exactly like "never connected" (`app/api/embeds.py`): a link kaya can no
-    longer read is indistinguishable, from the caller's chair, from one that was never made, and the
-    fix is the same either way — reconnect."""
+    Callers treat `None` exactly like "never connected" (`linked_pandan_bearer`, below): a link kaya
+    can no longer read is indistinguishable, from the caller's chair, from one that was never made,
+    and the fix is the same either way — reconnect."""
     try:
         return Fernet(_fernet_key(secret)).decrypt(encrypted.encode()).decode("utf-8")
     except (InvalidToken, ValueError):
         return None
+
+
+def linked_pandan_bearer(db: Session, principal_id: uuid.UUID) -> str | None:
+    """The kaya account ``principal_id``'s linked pandan PAT, decrypted, or ``None`` if it has
+    never connected one, or the stored ciphertext can no longer be read back (a `KAYA_AUTH_SECRET`
+    rotation since — `decrypt_token`'s own docstring). Both collapse to the same `None` on purpose:
+    every caller of this function already treats "not connected" and "can't decrypt" identically,
+    because neither can act differently on the two (`app/api/embeds.py`'s own docstring makes this
+    argument for `BoardEmbedResolver.resolve`; `app/integrations/dependencies.py`'s
+    `card_resolution_bearer` is the second caller that needs the identical collapse).
+
+    Lives here rather than in either caller, because both need the same lookup and this is the
+    lowest module that already owns the table and the decryption — originally written inline in
+    `app/api/embeds.py` (KAN-1741) when it had exactly one caller; moved here once
+    `card_resolution.py`'s wikilink resolution needed the identical lookup rather than the
+    caller-forwarding it was doing instead (see that module's docstring).
+
+    Takes a bare ``principal_id`` rather than a ``Principal`` — this module sits below
+    ``app.auth`` (which already imports `app.identity`, see `app/auth/kaya_principal.py`), so
+    importing `Principal` back up here would be a cycle, and a UUID is all this lookup ever
+    needed."""
+    link = db.scalar(select(PandanLink).where(PandanLink.user_id == principal_id))
+    if link is None:
+        return None
+    return decrypt_token(link.encrypted_token, get_settings().kaya_auth_secret)
