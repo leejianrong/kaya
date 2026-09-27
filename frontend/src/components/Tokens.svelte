@@ -6,11 +6,13 @@
   it lives outside the `{#if authed}`/`Landing` branch there. Minting your first kaya-native
   credential cannot itself require one already being pasted into the tab.
 
-  **What this page cannot yet do: authenticate anything else.** A minted `kaya_pat_…` does not work
-  as the `Authorization` bearer this app's note API calls send until `KAN-1740` wires a PAT bearer
-  into request authentication — see `app/identity/pat.py`'s module docstring. This page says so
-  rather than implying otherwise, the same "state the direction, don't imply parity" discipline
-  CLAUDE.md's docs convention asks for elsewhere.
+  **"Use this token now" is this file's one deliberate bridge to that other credential.** Since
+  KAN-1740 a `kaya_pat_…` has worked as the bearer every note-API call sends — this page just never
+  offered a way to start using one without leaving the tab, copying it, and pasting it into
+  `Landing.svelte`'s own field. The button calls the same `setToken` that field does and the same
+  `onaccept` callback `Landing.svelte` already calls, so `App.svelte` needs no separate path for it
+  — but this page still owns its own cookie-session identity entirely and this is the only place
+  the two credentials touch.
 
   Session state (`user`) lives here, not in `App.svelte`: unlike the bearer credential, a cookie
   session change here has no effect on the rest of the shell (nothing else in the app reads it yet),
@@ -30,6 +32,17 @@
     type TokenScope,
     type TokenSummary,
   } from '../lib/identity'
+  import { setToken } from '../lib/auth'
+  import { navigate } from '../lib/router'
+
+  const {
+    onaccept,
+  }: {
+    /** Mirrors `Landing.svelte`'s own prop of the same name: the bearer credential is stored
+     * (`useNow` did it); `App.svelte` may flip `authed`. Optional because nothing requires this
+     * page's other callers (a bare mount in a test, say) to wire it up. */
+    onaccept?: () => void
+  } = $props()
 
   type Phase = 'checking' | 'signed-out' | 'signed-in'
 
@@ -128,6 +141,22 @@
     }
   }
 
+  /**
+   * The bridge this file's docstring describes. `justCreated` is cleared the same way `revoke`
+   * clears it — nothing about the raw secret survives past this call — and `navigate('/')` is what
+   * actually gets a person off `/tokens` and looking at their notes: `App.svelte`'s `authed` flip
+   * alone would not, since `route.name === 'tokens'` is checked before `authed` in its template.
+   */
+  function useNow(): void {
+    if (justCreated === null) {
+      return
+    }
+    setToken(justCreated.token)
+    justCreated = null
+    onaccept?.()
+    navigate('/')
+  }
+
   async function revoke(id: number): Promise<void> {
     busy = true
     try {
@@ -180,6 +209,9 @@
           Copy this now — it will not be shown again:
         </p>
         <code>{justCreated.token}</code>
+        <button type="button" onclick={useNow} data-testid="use-token-now">
+          Use this token now
+        </button>
       </section>
     {/if}
 
@@ -245,6 +277,10 @@
     padding: 0.75rem 1rem;
     border: 1px solid var(--border);
     border-radius: 0.35rem;
+  }
+
+  .reveal [data-testid='use-token-now'] {
+    margin-top: 0.75rem;
   }
 
   .reveal code {

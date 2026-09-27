@@ -56,7 +56,9 @@
    * credential" that `authed` otherwise enforces. `Tokens.svelte` reaches kaya's own cookie-session
    * identity (`lib/identity.ts`, ADR 0012), which is a wholly different credential from the one
    * `authed` tracks, and minting your first `kaya_pat_…` cannot itself require a credential already
-   * being pasted into the tab. It owns its own session check entirely; this file only routes to it.
+   * being pasted into the tab. It owns its own session check entirely; this file only routes to it
+   * and hands it the same `accept` callback `Landing` gets, so a freshly minted token can flip
+   * `authed` and leave `/tokens` without a second credential ever passing through this file.
    *
    * KAN-1743's `route.name === 'device'` is the same exception for the same reason — `verification_
    * uri_complete` is very plausibly the *first* URL a fresh machine's browser ever opens for kaya,
@@ -475,7 +477,7 @@
 
   {#if route.name === 'tokens'}
     <main>
-      <Tokens />
+      <Tokens onaccept={accept} />
     </main>
   {:else if route.name === 'device'}
     <main>
