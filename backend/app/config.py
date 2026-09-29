@@ -292,6 +292,21 @@ class Settings(BaseSettings):
     """`1`/`true` marks the session cookie `Secure` (HTTPS-only). Off by default — dev and the test
     suite run over http — set it in prod."""
 
+    kaya_e2e_auth_bypass: bool = Field(
+        default=False,
+        validation_alias="KAYA_E2E_AUTH_BYPASS",
+    )
+    """Mirrors pandan's own `E2E_AUTH_BYPASS` (`pandan/backend/app/users.py`), for the identical
+    reason: KAN-1791 removed the browser paste-a-token flow (`Landing.svelte`'s manual PAT paste),
+    and GitHub OAuth is kaya's *only* login path (`app/identity/router.py`'s own comment on
+    `/auth/login`) — there is no scripted way through a real GitHub consent screen in CI. When set,
+    `install_identity_routes` (`app/identity/router.py`) mounts `POST /auth/test-login`, which mints
+    a real `kayaauth` cookie session for an arbitrary email with no GitHub round trip at all.
+    **Never set in prod — it is a login bypass**, exactly the same caveat as `kaya_auth_secret`'s
+    insecure dev default above. Only `frontend/playwright.config.ts`'s `webServer` (and
+    `docker-compose.e2e.yml`, kaya's e2e overlay) ever set it; nothing else does. Off by default,
+    matching every other feature-gate field on this class."""
+
     spa_dist: Path | None = Field(
         default=None,
         validation_alias="KAYA_SPA_DIST",

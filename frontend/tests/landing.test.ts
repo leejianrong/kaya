@@ -1,37 +1,21 @@
 // @vitest-environment jsdom
 /**
- * The landing state, the one-time PAT paste, and the `401` you must be able to walk out of
- * (KAN-555).
+ * The landing state (KAN-555; KAN-1740's identity cutover; KAN-1791 removed the browser
+ * paste-a-token flow entirely).
  *
- * ## Why this file asserts over the DOM rather than over return values
+ * There is no longer a credential-bearing surface in this component for a fragment sweep to run
+ * over. Before KAN-1791, a live token sat in the paste field's `value` property mid-paste, which is
+ * why this file used to carry an elaborate sweep (`surfaces()`/`sweep()`) over the serialized HTML,
+ * every `href` and every request URL. GitHub sign-in is a pure redirect instead — `githubLoginUrl()`
+ * resolves to a URL and the tab navigates, so no credential value ever exists inside this component
+ * at all, and there is nothing left here for that sweep to protect. `tests/auth.test.ts` still
+ * sweeps everything the credential seam itself exposes, and `tests/tokens-page.test.ts` covers the
+ * one remaining place a token is typed and shown (`Tokens.svelte`'s "Use this token now").
  *
- * `tests/auth.test.ts` sweeps every four-character fragment of a fake token across everything the
- * credential seam *exposes*, and it stays green while a component renders the token into a `<p>`.
- * That is CLAUDE.md's rule about structural guards turned on this card: the seam's sweep proves the
- * seam, and nothing else. This card adds three surfaces the seam cannot see — the rendered landing
- * page, the form during and after a paste, and the error state after a bad token — so the sweep here
- * runs over `document.body.innerHTML`, over every `href` in the page, and over every URL the app
- * hands to `fetch`.
- *
- * ## Where the credential legitimately *is*
- *
- * Mid-paste it is in the input's `value` **property**, which is unavoidable — it is the field the
- * person is typing into. It is not in the serialized HTML, because Svelte's `bind:value` writes the
- * property and never the attribute, and the serialized HTML is what a devtools "copy element", an
- * HTML snapshot and a bug report all carry. `holds the token only as a value property` asserts both
- * halves of that on purpose: if the sweep ever stopped being able to tell the difference, it would
- * be passing for the wrong reason.
- *
- * ## If you re-run this sweep by hand against a *live* PAT, read this first
- *
- * A real credential since KAN-1740's cutover is prefixed `kaya_pat_` — kaya's own format (ADR
- * 0012), not the `pandan_pat_`/`kanban_pat_` this page used to ask for. The page's copy no longer
- * needs to say the word "pandan" as the source of identity (it isn't, any more), so the collision
- * this section used to document — the product's own name sharing a four-character fragment with
- * the fake token's `kanban_` prefix — is no longer live: `Landing.svelte`'s one remaining mention
- * of "pandan" (a reassurance that no pandan account is needed) doesn't share a fragment with either
- * fake token below. Still worth checking by hand if this file is ever edited to say "pandan" near a
- * literal `kanb`/`anba`/`nban`/`pand`/`anda`/`ndan` — the sweep would (correctly) flag it.
+ * What is still this file's job: the landing copy itself, the GitHub sign-in button, the
+ * declined/failed consent-screen message (and its single-use query param), and the `rejected`
+ * banner `App.svelte`'s `discard()` still feeds this component after a real `401` — relocated from
+ * the now-deleted paste section into the hero, beside the one credential-acquisition path left.
  */
 
 import { type Component, flushSync, mount, unmount } from 'svelte'
@@ -40,7 +24,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from '../src/App.svelte'
 import Landing from '../src/components/Landing.svelte'
 import * as auth from '../src/lib/auth'
-import { FAKE_TOKEN, fragments } from './token'
+import { FAKE_TOKEN } from './token'
 
 const PANDAN = 'https://pandan.example.test'
 
@@ -55,13 +39,7 @@ const NOTE = {
   team_id: null,
 }
 
-interface Call {
-  url: string
-  init: RequestInit | undefined
-}
-
 let host: HTMLDivElement
-let calls: Call[]
 const mounted: unknown[] = []
 const realFetch = globalThis.fetch
 
@@ -82,20 +60,21 @@ function refusal(status: number, code: string, message: string): Response {
 beforeEach(() => {
   host = document.createElement('div')
   document.body.append(host)
-  calls = []
   notesAnswer = () => jsonResponse(200, { notes: [NOTE] })
 
   // The ambient `fetch`, not an injected one: the components under test reach the network through
   // `lib/api.ts` with no seam for a test to pass a fake through, and inventing one would be a
   // production parameter that exists for this file.
-  globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input)
-    calls.push({ url, init })
     if (url === '/api/v1/meta') {
-      return jsonResponse(200, { pandan_url: PANDAN })
+      return jsonResponse(200, { pandan_url: null })
     }
     if (url === '/api/v1/notes') {
       return notesAnswer()
+    }
+    if (url === '/users/me') {
+      return refusal(401, 'unauthorized', 'not signed in')
     }
     return refusal(404, 'not_found', `nothing fake at ${url}`)
   }) as unknown as typeof fetch
@@ -147,61 +126,6 @@ async function until(predicate: () => boolean, label: string): Promise<void> {
   throw new Error(`timed out waiting for ${label}`)
 }
 
-function field(): HTMLInputElement {
-  const input = host.querySelector<HTMLInputElement>('[data-testid="paste-form"] input')
-  expect(input).not.toBeNull()
-  return input!
-}
-
-/** Type into the field the way a paste does: set the value, then let Svelte hear about it. */
-function type(value: string): void {
-  const input = field()
-  input.value = value
-  input.dispatchEvent(new Event('input', { bubbles: true }))
-  flushSync()
-}
-
-function submitForm(): void {
-  const form = host.querySelector<HTMLFormElement>('[data-testid="paste-form"]')!
-  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-  flushSync()
-}
-
-/**
- * Every surface this card is responsible for, as one string per surface.
- *
- * The `Authorization` header is deliberately **not** in here: the token belongs in exactly one
- * place, and that is it. Everything else — the serialized page, the links, the request URLs — is
- * swept.
- */
-function surfaces(): Record<string, string> {
-  const hrefs = Array.from(document.querySelectorAll('[href]'))
-    .map((element) => element.getAttribute('href') ?? '')
-    .join('|')
-  return {
-    'serialized HTML': document.body.innerHTML,
-    'rendered text': document.body.textContent ?? '',
-    'every href': hrefs,
-    'every request URL': calls.map((call) => call.url).join('|'),
-  }
-}
-
-/** No four-character fragment of the token in any of them. */
-function sweep(): void {
-  const found = surfaces()
-  for (const fragment of fragments(FAKE_TOKEN)) {
-    for (const [where, text] of Object.entries(found)) {
-      if (text.includes(fragment)) {
-        // Thrown by hand so the failure names the surface and the fragment length rather than
-        // dumping a page of HTML with an unexplained `false`.
-        throw new Error(
-          `${where} leaked a ${fragment.length}-character fragment of the credential: ${fragment}`,
-        )
-      }
-    }
-  }
-}
-
 describe('the landing state', () => {
   it('says what kaya is, and that it mints its own credentials (ADR 0012, KAN-1740)', async () => {
     render(Landing, { rejected: null, onaccept: () => {} })
@@ -217,9 +141,7 @@ describe('the landing state', () => {
     render(Landing, { rejected: null, onaccept: () => {} })
     await settle()
 
-    // Unlike the pre-KAN-1740 pandan-origin link, this one needs no `GET /api/v1/meta` round trip
-    // — it's a same-origin SPA route, known at compile time — so the link is present immediately.
-    expect(calls.map((call) => call.url)).not.toContain('/api/v1/meta')
+    // A same-origin SPA route, known at compile time — no round trip needed to build it.
     const links = Array.from(host.querySelectorAll('a')).map((a) => a.getAttribute('href'))
     expect(links).toContain('/tokens')
   })
@@ -229,9 +151,19 @@ describe('the landing state', () => {
     await settle()
 
     // `simple-kanban-jian` was the string a hard-coded pandan-origin fallback would be spelled
-    // with, before KAN-1740; `PANDAN` (this file's own fake origin) covers the general case.
+    // with, before KAN-1740; `PANDAN` (this file's own fake origin, used by the App-level test
+    // below) covers the general case.
     expect(document.body.innerHTML).not.toContain('simple-kanban-jian')
     expect(document.body.innerHTML).not.toContain(PANDAN)
+  })
+
+  it('has no paste form and no way to type a credential in — KAN-1791', async () => {
+    render(Landing, { rejected: null, onaccept: () => {} })
+    await settle()
+
+    expect(host.querySelector('input[type="password"]')).toBeNull()
+    expect(host.querySelector('[data-testid="paste-form"]')).toBeNull()
+    expect(host.querySelector('[data-testid="github-signin"]')).not.toBeNull()
   })
 })
 
@@ -272,158 +204,26 @@ describe('returning from a declined or failed GitHub consent screen', () => {
   })
 })
 
-describe('the paste form', () => {
-  it('is never a GET, and its field cannot be serialized into a URL', () => {
-    render(Landing, { rejected: null, onaccept: () => {} })
-
-    const form = host.querySelector<HTMLFormElement>('[data-testid="paste-form"]')!
-    // A form with no method submits as GET, which puts the credential in the address bar, in
-    // history and in the backend's request line.
-    expect(form.getAttribute('method')).toBe('post')
-    expect(form.method).not.toBe('get')
-
-    const input = field()
-    // No `name` — an unnamed field is not serialized at all, so even a submission that escaped
-    // `preventDefault()` would carry nothing. This is the guard that does not depend on a handler.
-    expect(input.getAttribute('name')).toBeNull()
-    expect(input.type).toBe('password')
-    expect(input.getAttribute('autocomplete')).toBe('off')
-    expect(input.getAttribute('spellcheck')).toBe('false')
-  })
-
-  it('holds the token only as a value property, never in the serialized HTML', () => {
-    render(Landing, { rejected: null, onaccept: () => {} })
-    type(FAKE_TOKEN)
-
-    // Both halves on purpose. The first says the field really does hold the credential mid-paste —
-    // without it this test would pass against a form that dropped the input. The second is the
-    // property that matters: `bind:value` writes the property, so the credential is absent from the
-    // HTML a devtools copy, a snapshot or a bug report would carry.
-    expect(field().value).toBe(FAKE_TOKEN)
-    sweep()
-  })
-
-  it('stores a usable paste and clears the field', () => {
-    const onaccept = vi.fn()
-    render(Landing, { rejected: null, onaccept })
-
-    type(FAKE_TOKEN)
-    submitForm()
-
-    expect(auth.credentialState()).toBe('set')
-    expect(onaccept).toHaveBeenCalledTimes(1)
-    expect(field().value).toBe('')
-    sweep()
-  })
-
-  it('does not store an unusable paste, and says nothing about what was pasted', () => {
-    const onaccept = vi.fn()
-    render(Landing, { rejected: null, onaccept })
-
-    // A **tab**, not the `\r\n` the seam's own test uses, and the difference is a finding rather
-    // than a preference: HTML's value sanitization algorithm strips CR and LF from a single-line
-    // input, so `${FAKE_TOKEN}\r\nX-Injected: 1` arrives at the handler as one usable line and
-    // gets stored. Header injection is therefore not reachable *through this field* — see the test
-    // below, which pins that so nobody "fixes" this by pasting a newline and finding it works. A
-    // tab survives sanitization and is refused by `isUsableToken` like any other C0 character.
-    for (const unusable of ['   ', `${FAKE_TOKEN}\tX-Injected: 1`]) {
-      type(unusable)
-      submitForm()
-
-      expect(auth.credentialState()).toBe('not set')
-      expect(onaccept).not.toHaveBeenCalled()
-      expect(host.querySelector('[data-testid="problem"]')?.textContent).toContain(
-        'cannot be used as a credential',
-      )
-      // The field is cleared even on the failure path: a rejected credential left in a text box is
-      // the same screen-share exposure as an accepted one.
-      expect(field().value).toBe('')
-      sweep()
-    }
-  })
-
-  it('cannot carry a newline into a header, because the field itself strips one', () => {
-    // The credential seam refuses a control character so a `\r\n` cannot reach `fetch` and split a
-    // request (`tests/auth.test.ts`). This asserts the *other* layer, one nobody wrote: a
-    // single-line `<input>` runs HTML's value sanitization algorithm, which deletes CR and LF
-    // before any handler sees the value. So the seam's refusal is a backstop here rather than the
-    // guard, and a reader who tries to demonstrate the injection through this form will find the
-    // newline already gone. Written down because "I pasted a newline and it worked" is otherwise a
-    // confusing five minutes.
-    render(Landing, { rejected: null, onaccept: () => {} })
-
-    type('one\r\ntwo\tthree')
-
-    expect(field().value).toBe('onetwo\tthree')
-  })
-})
-
-describe('pasting a token, end to end through the shell', () => {
-  it('reaches the note list without a reload', async () => {
-    render(App, {})
-    await settle()
-
-    expect(host.querySelector('nav')).toBeNull()
-    expect(auth.credentialState()).toBe('not set')
-
-    type(FAKE_TOKEN)
-    submitForm()
-    await until(() => (host.textContent ?? '').includes('Weekly review'), 'the note list')
-
-    // The same mounted App instance now shows the list: no reload, no remount.
-    expect(host.querySelector('nav')).not.toBeNull()
-    expect(host.textContent).toContain('Weekly review')
-    expect(host.querySelector('[data-testid="paste-form"]')).toBeNull()
-    expect(auth.credentialState()).toBe('set')
-
-    // The credential went out as a header on the list request, and nowhere else.
-    const list = calls.find((call) => call.url === '/api/v1/notes')!
-    expect((list.init?.headers as Record<string, string>).Authorization).toBe(
-      `Bearer ${FAKE_TOKEN}`,
-    )
-    sweep()
-  })
-
-  it('recovers from a 401 instead of stranding the visitor', async () => {
-    notesAnswer = () => refusal(401, 'invalid_token', 'pandan did not accept this token')
+describe('a real 401, end to end through the shell', () => {
+  it('returns to the landing state with the API\'s own message, beside the sign-in button rather than a paste form', async () => {
+    // KAN-1791: there is no more paste-and-retry loop to assert here — the way out of a real `401`
+    // is GitHub sign-in (or `Tokens.svelte`'s own named-token flow), and the `rejected` message this
+    // file used to find beside a re-paste form now sits beside that button instead.
+    auth.setToken(FAKE_TOKEN)
+    notesAnswer = () => refusal(401, 'invalid_token', 'That token is not valid.')
 
     render(App, {})
-    await settle()
-    type(FAKE_TOKEN)
-    submitForm()
     await until(
       () => host.querySelector('[data-testid="rejected"]') !== null,
       'the landing state to come back with the refusal',
     )
 
-    // Back on the landing state, with the credential gone from the tab rather than left there to
-    // fail on every subsequent request.
     expect(auth.credentialState()).toBe('not set')
     expect(host.querySelector('[data-testid="rejected"]')?.textContent).toContain(
-      'pandan did not accept this token',
+      'That token is not valid.',
     )
+    expect(host.querySelector('[data-testid="github-signin"]')).not.toBeNull()
+    expect(host.querySelector('[data-testid="paste-form"]')).toBeNull()
     expect(host.querySelector('nav')).toBeNull()
-    sweep()
-
-    // And the way out is *usable*: a second paste, with the API answering properly this time,
-    // reaches the list. A `401` state that needs devtools to leave is the bug this asserts against.
-    const form = host.querySelector<HTMLFormElement>('[data-testid="paste-form"]')
-    expect(form).not.toBeNull()
-    expect(field().value).toBe('')
-
-    notesAnswer = () => jsonResponse(200, { notes: [NOTE] })
-    type(FAKE_TOKEN)
-    submitForm()
-    await until(() => (host.textContent ?? '').includes('Weekly review'), 'the note list')
-
-    expect(host.textContent).toContain('Weekly review')
-    sweep()
   })
-
-  // KAN-1791 removed "Clear token" (formerly asserted here): it only ever cleared the
-  // `sessionStorage` mirror while leaving a real `kayaauth` cookie session alive server-side, so it
-  // looked like a sign-out without being one. A `503` from a sleeping pandan, or a valid token for
-  // the wrong account, no longer has a header button to route around it — `Tokens.svelte`'s
-  // `POST /auth/logout` (already end-to-end tested in `tests/tokens-page.test.ts`) is the one real
-  // way to end a session now, and this file no longer has a "held but stuck" state to assert over.
 })

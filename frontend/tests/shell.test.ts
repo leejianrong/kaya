@@ -256,11 +256,12 @@ describe('the shell', () => {
   it('shows the landing state instead of the note list when there is no credential', () => {
     // KAN-555 replaced the one honest paragraph this used to assert with the real landing state.
     // What is asserted here is the *shell's* half only — no sidebar, and a landing region present —
-    // because everything about the paste form, the pandan link and the `401` recovery lives in
-    // `tests/landing.test.ts`, which is also where the fragment sweep over those surfaces lives.
+    // because everything about the GitHub sign-in button, the pandan link and the `401` recovery
+    // lives in `tests/landing.test.ts`. KAN-1791 removed the paste form this used to also check for;
+    // there is no credential-typing surface left in the shell at all.
     const target = render(App, {})
     expect(target.querySelector('.landing')).not.toBeNull()
-    expect(target.querySelector('[data-testid="paste-form"]')).not.toBeNull()
+    expect(target.querySelector('[data-testid="github-signin"]')).not.toBeNull()
     expect(target.querySelector('nav')).toBeNull()
   })
 

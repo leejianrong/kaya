@@ -29,6 +29,12 @@ CONFIGURED = Settings(  # type: ignore[call-arg]
     KAYA_AUTH_SECRET="test-auth-secret",
 )
 
+E2E_BYPASS = Settings(  # type: ignore[call-arg]
+    _env_file=None,
+    KAYA_E2E_AUTH_BYPASS="1",
+    KAYA_AUTH_SECRET="test-auth-secret",
+)
+
 
 def _app(settings: Settings) -> FastAPI:
     app = FastAPI()
@@ -121,6 +127,32 @@ def test_a_missing_secret_half_of_the_credential_also_disables_oauth() -> None:
     client = TestClient(_app(half_configured))
 
     assert client.get("/auth/github/authorize").status_code == 404
+
+
+def test_test_login_route_is_absent_without_the_bypass_flag() -> None:
+    """KAN-1791: `POST /auth/test-login` (the e2e-only session seam, mirroring pandan's own shipped
+    `E2E_AUTH_BYPASS`/`_register_test_login`) only exists when `KAYA_E2E_AUTH_BYPASS` is set —
+    absent from both `UNCONFIGURED` and `CONFIGURED` above, neither of which sets it. A `404` here
+    the same way a genuinely unknown path answers, never an auth-required `401` or `403`, is the
+    property that matters: a prod deployment that never sets the flag has no bypass surface at all
+    for anything to probe."""
+    client = TestClient(_app(UNCONFIGURED))
+
+    response = client.post("/auth/test-login", json={"email": "nobody@example.test"})
+
+    assert response.status_code == 404
+
+
+def test_test_login_route_registers_once_the_bypass_flag_is_set() -> None:
+    """A structural check only, mirroring `test_every_identity_route_falls_under_a_reserved_spa_
+    prefix` below — a real login (creating a `KayaAccount`, setting the `kayaauth` cookie) needs the
+    async engine's real Postgres and belongs in `tests/integration/`, the same split
+    `test_identity_manager.py`'s own module docstring already draws for every other login path."""
+    app = _app(E2E_BYPASS)
+
+    paths = {route.path for route in app.routes if hasattr(route, "path")}
+
+    assert "/auth/test-login" in paths
 
 
 def test_every_identity_route_falls_under_a_reserved_spa_prefix() -> None:

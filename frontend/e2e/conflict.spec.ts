@@ -11,14 +11,14 @@
  * with `git apply -R` on a tree with no other pending changes; see the PR description for the full
  * transcript and the `git status --short` check that confirmed a clean restore.
  *
- * Two tabs means two independent, separately-authenticated pages: real browser tabs opened by hand
- * do not share `sessionStorage` unless one opened the other via `window.open` (the HTML living
- * standard scopes it to a browsing-context group), and `lib/auth.ts` is built on exactly that
- * assumption — a pasted PAT is per-tab. So both `pageA` and `pageB` below run the real paste flow
- * independently, against the *same* fake bearer (this suite's one principal), which is enough:
- * ADR 0009's precondition is keyed on `updated_at`, not on who the two writers are.
+ * Two tabs means two independent, separately-authenticated pages: `lib/auth.ts`'s bearer is
+ * `sessionStorage`-scoped per tab, and each tab's `kayaauth` cookie session is minted independently
+ * too (KAN-1791 — `login()` makes one `POST /auth/test-login` call per page, no `window.open`
+ * cookie sharing involved). Both calls resolve to the *same* `KayaAccount` (`login()`'s own default
+ * email), which is enough: ADR 0009's precondition is keyed on `updated_at`, not on who the two
+ * writers are.
  */
-import { apiCreateNote, expect, pasteToken, prefixedTitle, test } from './fixtures'
+import { apiCreateNote, expect, login, prefixedTitle, test } from './fixtures'
 
 test('two tabs editing one note: the second save shows the conflict banner with both versions', async ({
   context,
@@ -30,8 +30,8 @@ test('two tabs editing one note: the second save shows the conflict banner with 
   const pageA = await context.newPage()
   const pageB = await context.newPage()
 
-  await pasteToken(pageA)
-  await pasteToken(pageB)
+  await login(pageA)
+  await login(pageB)
 
   // Both tabs open the note **before either edits it**, so both hold the same original
   // `updated_at` as their save precondition — the property the rest of this test depends on.
