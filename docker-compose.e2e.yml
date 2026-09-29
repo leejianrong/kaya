@@ -28,3 +28,10 @@ services:
   app:
     environment:
       KAYA_PANDAN_URL: http://127.0.0.1:1
+      # KAN-1791: the paste-a-token landing form is gone, and GitHub OAuth is kaya's only login
+      # path — there is no scripted way through a real GitHub consent screen in CI. This mounts
+      # `POST /auth/test-login` (see `Settings.kaya_e2e_auth_bypass`'s own docstring), which
+      # `frontend/e2e/fixtures.ts`'s `login()` calls to mint a real cookie session directly. Set
+      # only here and nowhere else — never in `docker-compose.yml`'s own `app.environment` block,
+      # which is what a developer's `make up`/`make dev` actually runs.
+      KAYA_E2E_AUTH_BYPASS: "1"

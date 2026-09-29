@@ -23,8 +23,9 @@ test('the sidebar tree follows a path change without reloading the page', async 
 
   await apiCreateNote(request, { title, path: `${before}/note.md` })
 
-  // A fresh landing → paste → home reaches the note list *after* the note above exists, so the
-  // first tree render already contains it — nothing here waits on a second fetch.
+  // `authedPage`'s own navigation to `/` happened before the note above existed, so a second,
+  // explicit one here reaches the note list *after* it exists — the first tree render already
+  // contains it, and nothing here waits on a second fetch.
   await page.goto('/')
 
   const tree = page.getByTestId('note-tree')

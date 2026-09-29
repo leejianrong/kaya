@@ -36,8 +36,12 @@
    * KAN-555 kept to that with one exception it had to make here: the *credential lifecycle*. The
    * landing state cannot own it, because acquiring a credential changes which region renders, and
    * losing one is discovered by a `401` on a request the landing state never made. So `authed`,
-   * `accept()` and `discard()` live in this file, and `Landing.svelte` is still the only thing that
-   * ever holds a token — it calls `setToken` and then a callback, and hands nothing back.
+   * `accept()` and `discard()` live in this file. **KAN-1791 removed the one thing `Landing.svelte`
+   * used to do with a credential** — the paste form that called `setToken` and then `accept()` — so
+   * `Landing.svelte` now holds no token at all; GitHub sign-in is a full-page redirect, and `authed`
+   * flips because the mount-time session check below finds the fresh cookie, never because
+   * `Landing.svelte` told it to. `Tokens.svelte`'s "Use this token now" is the one place left that
+   * still calls `setToken` and then this file's `accept()`.
    *
    * KAN-568 added the **fourth** region, and it is a deliberate exception to the sentence above
    * rather than a drift past it. `BacklinksPanel` could have been a third column of `.split`, and
@@ -58,7 +62,7 @@
    * credential" that `authed` otherwise enforces. `Tokens.svelte` reaches kaya's own cookie-session
    * identity (`lib/identity.ts`, ADR 0012), which is a wholly different credential from the one
    * `authed` tracks, and minting your first `kaya_pat_…` cannot itself require a credential already
-   * being pasted into the tab. It owns its own session check entirely; this file only routes to it
+   * present in the tab. It owns its own session check entirely; this file only routes to it
    * and hands it the same `accept` callback `Landing` gets, so a freshly minted token can flip
    * `authed` and leave `/tokens` without a second credential ever passing through this file.
    *
@@ -163,10 +167,12 @@
    * Whether this tab has a credential — **reactive**, and KAN-555 is why.
    *
    * It was a `const` read once at mount, which was honest while there was no way to acquire a
-   * credential without reloading. Now there is: the paste form calls `accept()` below and the
-   * effects re-run off this rune, so a paste reaches the note list without a reload. It also runs
-   * backwards, which is the half that matters more — `discard()` puts the app back in the landing
-   * state the moment the API says the credential is no good.
+   * credential without reloading. Now there is: `Tokens.svelte`'s "Use this token now" calls
+   * `accept()` below and the effects re-run off this rune, so a freshly minted bearer reaches the
+   * note list without a reload — and GitHub sign-in reaches it too, through the mount-time session
+   * check just below rather than through `accept()` at all. It also runs backwards, which is the
+   * half that matters more — `discard()` puts the app back in the landing state the moment the API
+   * says the credential is no good.
    */
   let authed = $state(credentialState() === 'set')
 
@@ -176,7 +182,7 @@
    *
    * `apiRequest` (`lib/api.ts`) now trusts a live cookie session for every note-API call directly, so
    * a tab that has no bearer at all is no longer necessarily a logged-out tab — it might be a reload
-   * of a browser that signed in with GitHub and never pasted anything. `authed`'s own initializer
+   * of a browser that signed in with GitHub and never minted a bearer at all. `authed`'s own initializer
    * above already covers the *other* case for free: a bearer already in `sessionStorage` is a
    * known-good signal, so `authed` starts `true` synchronously and this effect's body below never
    * needs to run for that tab. What is left is the cookie-only tab, and `fetchCurrentUser()` (`lib/
@@ -334,7 +340,7 @@
    *
    * Fetched once per mount rather than gated on `authed`: this file is mounted for the app's whole
    * lifetime (see the docstring at the top), so there is no re-mount for a toggle of `authed` to
-   * trigger, and re-asking `/api/v1/meta` every time a credential is pasted or cleared would just
+   * trigger, and re-asking `/api/v1/meta` every time a credential is acquired or cleared would just
    * repeat a request whose answer cannot have changed. The link itself only *renders* while
    * `authed`, in the template below.
    */
@@ -567,8 +573,8 @@
       <RightRail {note} onexpired={discard} onrestored={noteRestored} />
     {/if}
   {:else}
-    <!-- KAN-555's landing state, which owns everything about the paste including the credential
-         itself: this file hands it `rejected` and gets back a callback, and never sees a token. -->
+    <!-- KAN-555's landing state. KAN-1791 removed its paste form — GitHub sign-in is a full-page
+         redirect now, so this file hands it `rejected` and never sees a token at all. -->
     <Landing {rejected} onaccept={accept} />
   {/if}
 </div>

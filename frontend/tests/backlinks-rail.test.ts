@@ -225,7 +225,7 @@ describe('the rail is absent where it would have nothing to say', () => {
     renderApp()
     flushSync()
 
-    expect(host.querySelector('[data-testid="paste-form"]')).not.toBeNull()
+    expect(host.querySelector('[data-testid="github-signin"]')).not.toBeNull()
     expect(host.querySelector('aside.rail')).toBeNull()
     expect(host.querySelector('.shell')!.classList.contains('railed')).toBe(false)
   })
@@ -255,7 +255,7 @@ describe('a 401 from the rail reaches the shell’s credential lifecycle', () =>
     renderApp()
     await vi.waitFor(() => {
       flushSync()
-      expect(host.querySelector('[data-testid="paste-form"]')).not.toBeNull()
+      expect(host.querySelector('[data-testid="github-signin"]')).not.toBeNull()
     })
 
     expect(host.querySelector('aside.rail')).toBeNull()

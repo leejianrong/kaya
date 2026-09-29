@@ -16,20 +16,26 @@ package's `__init__.py`), specifically so a test can build two different `FastAP
 with OAuth configured and one without, in the same process.
 """
 
-from fastapi import FastAPI, Request
-from fastapi_users import FastAPIUsers
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, Request
+from fastapi_users import FastAPIUsers, exceptions
+from fastapi_users.authentication import AuthenticationBackend
+from fastapi_users.authentication.strategy.db import DatabaseStrategy
 from httpx_oauth.integrations.fastapi import OAuth2AuthorizeCallbackError
-from starlette.responses import RedirectResponse
+from pydantic import BaseModel
+from starlette.responses import RedirectResponse, Response
 
 from app.config import Settings, get_settings
 from app.identity.backend import (
     POST_LOGIN_REDIRECT,
     build_auth_backend,
     build_github_oauth_client,
+    get_database_strategy,
     oauth_configured,
 )
-from app.identity.manager import get_user_manager
-from app.identity.schemas import UserRead, UserUpdate
+from app.identity.manager import UserManager, get_user_manager
+from app.identity.schemas import UserCreate, UserRead, UserUpdate
 
 # The one code GitHub itself hands back when a person clicks "Cancel" on the consent screen
 # (https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps —
@@ -88,3 +94,53 @@ def install_identity_routes(app: FastAPI, settings: Settings | None = None) -> N
         # specific handler, and so this browser-redirect carve-out stays visible beside the one
         # route it exists for rather than buried in the general error-handling module.
         app.add_exception_handler(OAuth2AuthorizeCallbackError, _redirect_declined_oauth)
+
+    if settings.kaya_e2e_auth_bypass:
+        _register_test_login(app, backend)
+
+
+class _TestLoginBody(BaseModel):
+    """Body for the e2e-only `/auth/test-login` seam — just the email to get-or-create a
+    `KayaAccount` for, mirroring pandan's own `_TestLoginBody`."""
+
+    email: str
+
+
+# `Annotated[..., Depends(...)]` aliases, matching this codebase's own convention
+# (`app/api/tokens.py`'s `CurrentUser`/`DbSession`) rather than `= Depends(...)` inline in the
+# signature — ruff's `B008` (a mutable/call default) flags the inline form, and FastAPI's own
+# examples use the `Annotated` form for exactly this reason.
+_UserManagerDep = Annotated[UserManager, Depends(get_user_manager)]
+_DatabaseStrategyDep = Annotated[DatabaseStrategy, Depends(get_database_strategy)]
+
+
+def _register_test_login(app: FastAPI, backend: AuthenticationBackend) -> None:
+    """Mount `POST /auth/test-login` — an **e2e-only** session seam, gated on
+    `settings.kaya_e2e_auth_bypass` (see that field's own docstring). Gets-or-creates a
+    `KayaAccount` by email and issues the same revocable cookie session the GitHub flow does, so
+    Playwright can exercise the app exactly as a signed-in browser without a real GitHub consent
+    screen — mirrors pandan's own `E2E_AUTH_BYPASS`/`_register_test_login`
+    (`pandan/backend/app/users.py`) line for line, since the two apps hit the identical problem for
+    the identical reason (no scripted path through a third-party OAuth consent screen in CI).
+
+    Takes `backend` rather than rebuilding one, so this route logs in through the exact
+    `AuthenticationBackend` (cookie name, `Secure` flag, DB-backed strategy) every other login path
+    in this process uses — a second, differently-configured backend here would mint a cookie the
+    rest of the app might not recognise.
+    """
+
+    @app.post("/auth/test-login", tags=["identity"], include_in_schema=False)
+    async def test_login(
+        payload: _TestLoginBody,
+        user_manager: _UserManagerDep,
+        strategy: _DatabaseStrategyDep,
+    ) -> Response:
+        try:
+            user = await user_manager.get_by_email(payload.email)
+        except exceptions.UserNotExists:
+            user = await user_manager.create(
+                UserCreate(email=payload.email, password="e2e-not-a-real-secret")
+            )
+        response = await backend.login(strategy, user)
+        await user_manager.on_after_login(user)
+        return response

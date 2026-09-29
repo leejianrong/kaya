@@ -67,7 +67,12 @@ from app.identity.models import KayaAccount
 from app.identity.pat import PersonalAccessToken, generate_token
 
 ACCOUNT_ID = uuid.UUID("e2e0e2e0-e2e0-4e2e-8e2e-e2e0e2e0e2e0")
-EMAIL = "e2e@kaya.test"
+# Not `.test` (RFC 2606's reserved-for-testing TLD): KAN-1791's `/auth/test-login` (`frontend/e2e/
+# fixtures.ts`'s `login()`) validates its email through fastapi-users' `UserCreate` schema, whose
+# `EmailStr` rejects a `.test`/`.invalid`/`.localhost` domain as a "special-use or reserved name" —
+# this script's own direct-DB insert bypasses that validation and would not have caught the
+# mismatch. `example.com` is what pandan's own e2e seam already uses for the identical reason.
+EMAIL = "e2e@example.com"
 
 with get_sessionmaker()() as session:
     account = session.get(KayaAccount, ACCOUNT_ID)
