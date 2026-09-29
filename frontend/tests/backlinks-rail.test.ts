@@ -259,7 +259,7 @@ describe('a 401 from the rail reaches the shell’s credential lifecycle', () =>
     })
 
     expect(host.querySelector('aside.rail')).toBeNull()
-    expect(host.querySelector('[data-testid="credential-state"]')!.textContent).toBe('token not set')
+    expect(auth.credentialState()).toBe('not set')
     // The API's own words, on the landing state, and never a fragment of the credential.
     expect(host.textContent).toContain('That token is not valid.')
     for (let start = 0; start + 4 <= FAKE_TOKEN.length; start += 1) {
