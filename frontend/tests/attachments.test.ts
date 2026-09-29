@@ -114,14 +114,33 @@ describe('uploadAttachment', () => {
     ).rejects.toBeInstanceOf(NetworkError)
   })
 
-  it('throws before any request when there is no credential in the tab', async () => {
+  it('still makes the request with no Authorization header when there is no bearer', async () => {
+    // KAN-1791: a same-origin cookie session can authenticate this upload just as well with no
+    // bearer at all, so there is nothing left to gate the fetch itself on.
     auth.clearToken()
-    const fetchImpl = vi.fn() as unknown as typeof fetch
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(
+        { id: 1, content_type: 'image/png', size_bytes: 3, created_at: 'x', markdown: 'x' },
+        201,
+      ),
+    ) as unknown as typeof fetch
+
+    await uploadAttachment('NOTE-1', new File(['x'], 'f.png'), { fetchImpl })
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const [, init] = vi.mocked(fetchImpl).mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined()
+  })
+
+  it('throws a real ApiError on a 401 when neither bearer nor cookie authenticates', async () => {
+    auth.clearToken()
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({ error: { code: 'unauthorized', message: 'not signed in' } }, 401),
+    ) as unknown as typeof fetch
 
     await expect(
       uploadAttachment('NOTE-1', new File(['x'], 'f.png'), { fetchImpl }),
-    ).rejects.toMatchObject({ status: 401, code: 'no_credential' })
-    expect(fetchImpl).not.toHaveBeenCalled()
+    ).rejects.toMatchObject({ status: 401, code: 'unauthorized' })
   })
 
   it('throws ApiError for an unparsable non-JSON refusal rather than crashing', async () => {
@@ -174,11 +193,20 @@ describe('fetchAttachmentBlobUrl: never rejects, whatever went wrong', () => {
     await expect(fetchAttachmentBlobUrl('NOTE-1', 1, { fetchImpl })).resolves.toBeNull()
   })
 
-  it('returns null when there is no credential in the tab at all', async () => {
+  it('still makes the request with no Authorization header when there is no bearer', async () => {
+    // KAN-1791: mirrors `uploadAttachment`'s own version of this test — a cookie-only session can
+    // authenticate this fetch too, so there is nothing to gate on locally, and a 200 with no bearer
+    // present still resolves to a real blob URL.
     auth.clearToken()
-    const fetchImpl = vi.fn() as unknown as typeof fetch
+    const fetchImpl = vi.fn(
+      async () => new Response(new Blob(['bytes']), { status: 200 }),
+    ) as unknown as typeof fetch
 
-    await expect(fetchAttachmentBlobUrl('NOTE-1', 1, { fetchImpl })).resolves.toBeNull()
-    expect(fetchImpl).not.toHaveBeenCalled()
+    const url = await fetchAttachmentBlobUrl('NOTE-1', 1, { fetchImpl })
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    const [, init] = vi.mocked(fetchImpl).mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined()
+    expect(url).toMatch(/^blob:/)
   })
 })

@@ -238,11 +238,16 @@ describe("PLAN §S9's editor container", () => {
 })
 
 describe('the shell', () => {
-  it('says whether a credential is set, and never a fragment of one', () => {
+  it('never leaks a fragment of a set credential into the rendered shell', () => {
+    // KAN-1791 deleted the header's own `token set`/`token not set` readout along with "Clear
+    // token" — `lib/auth.ts`'s `credentialState()` is still the only thing allowed to describe a
+    // credential to a person, and `tests/auth.test.ts` already sweeps everything *it* exposes. What
+    // is still this file's job is the same sweep run over the shell's own rendered output, so a
+    // future surface that renders the token into a `<p>` (the trap KAN-555 met once already) is
+    // still caught here rather than only at the seam.
     auth.setToken(FAKE_TOKEN)
-    const target = render(App, {})
+    render(App, {})
 
-    expect(target.querySelector('[data-testid="credential-state"]')?.textContent).toBe('token set')
     for (let start = 0; start + 4 <= FAKE_TOKEN.length; start += 1) {
       expect(document.body.innerHTML).not.toContain(FAKE_TOKEN.slice(start, start + 4))
     }
@@ -583,7 +588,12 @@ describe('the nav column', () => {
   })
 })
 
-describe('the silent cookie-to-bearer bootstrap', () => {
+describe('the mount-time session check (KAN-1791)', () => {
+  // Replaces the silent cookie-to-bearer bootstrap PR #178 (`86e6e1a`) added: `apiRequest` now
+  // trusts a live `kayaauth` cookie directly for every note-API call (ADR 0012), so there is no
+  // longer any need to mint and stash a `kaya_pat_…` bearer just to satisfy a precheck that no
+  // longer exists. What is still needed is a way to tell "cookie-only session, reached by reload"
+  // apart from "genuinely logged out" — that's `fetchCurrentUser()` (`lib/identity.ts`), asked once.
   const realFetch = globalThis.fetch
 
   function jsonResponse(status: number, body: unknown): Response {
@@ -591,19 +601,6 @@ describe('the silent cookie-to-bearer bootstrap', () => {
       status,
       headers: { 'Content-Type': 'application/json' },
     })
-  }
-
-  function createdToken(): unknown {
-    return {
-      id: 1,
-      name: 'browser',
-      scope: 'write',
-      token_prefix: 'kaya_pat_ab12',
-      created_at: '2026-09-28T00:00:00Z',
-      last_used_at: null,
-      expires_at: null,
-      token: FAKE_TOKEN,
-    }
   }
 
   afterEach(() => {
@@ -628,12 +625,18 @@ describe('the silent cookie-to-bearer bootstrap', () => {
     }
   }
 
-  it('mints and uses a bearer silently from a live cookie session, with no button click', async () => {
+  it('reaches the note list from a live cookie session alone, with no bearer ever minted', async () => {
+    let tokenPosts = 0
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = init?.method ?? 'GET'
       if (url === '/api/v1/tokens' && method === 'POST') {
-        return jsonResponse(201, createdToken())
+        // Must never be reached: minting a bearer is exactly what this fix removes.
+        tokenPosts += 1
+        return jsonResponse(201, { error: { code: 'should_not_happen', message: 'unexpected' } })
+      }
+      if (url === '/users/me' && method === 'GET') {
+        return jsonResponse(200, { id: 'u1', email: 'jian@example.test' })
       }
       if (url === '/api/v1/notes') {
         return jsonResponse(200, { notes: [note()] })
@@ -649,15 +652,46 @@ describe('the silent cookie-to-bearer bootstrap', () => {
 
     await until(() => (target.textContent ?? '').includes('Weekly review'), 'the note list')
 
-    expect(auth.credentialState()).toBe('set')
+    // The whole point: the note list is reachable and `sessionStorage` was never touched to get
+    // there — a cookie-only session stays cookie-only.
+    expect(auth.credentialState()).toBe('not set')
+    expect(tokenPosts).toBe(0)
     expect(target.querySelector('.landing')).toBeNull()
     expect(target.querySelector('[data-testid="nav-column"]')).not.toBeNull()
+  })
+
+  it('renders directly from an existing bearer, with no /users/me round trip at all', async () => {
+    let usersMeCalls = 0
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/users/me') {
+        usersMeCalls += 1
+        return jsonResponse(200, { id: 'u1', email: 'jian@example.test' })
+      }
+      if (url === '/api/v1/notes') {
+        return jsonResponse(200, { notes: [note()] })
+      }
+      if (url === '/api/v1/meta') {
+        return jsonResponse(200, { pandan_url: null })
+      }
+      return jsonResponse(404, { error: { code: 'not_found', message: `nothing fake at ${url}` } })
+    }) as unknown as typeof fetch
+
+    auth.setToken(FAKE_TOKEN)
+    const target = render(App, {})
+
+    await until(() => (target.textContent ?? '').includes('Weekly review'), 'the note list')
+    await settle()
+
+    // A bearer already in the tab is a known-good signal on its own — asking `/users/me` about it
+    // too would be a redundant round trip on every single page load.
+    expect(usersMeCalls).toBe(0)
   })
 
   it('stays on the landing state when there is no live cookie session either', async () => {
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      if (url === '/api/v1/tokens') {
+      if (url === '/users/me') {
         return jsonResponse(401, { error: { code: 'unauthorized', message: 'not signed in' } })
       }
       return jsonResponse(404, { error: { code: 'not_found', message: `nothing fake at ${url}` } })
@@ -670,17 +704,19 @@ describe('the silent cookie-to-bearer bootstrap', () => {
     expect(target.querySelector('.landing')).not.toBeNull()
   })
 
-  it('does not re-provision after "Clear token" — a deliberate clear must actually leave the note view', async () => {
-    let tokenPosts = 0
-    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  it('asks /users/me exactly once per mount, even once a later 401 flips `authed` back', async () => {
+    // The guard this test pins: an effect keyed on `authed` alone would refire the moment a real
+    // `401` (`discard()`, `App.svelte`) flips it back to `false`, and a rerun at that exact moment
+    // would re-ask a session check that has nothing to do with the request that just failed.
+    let usersMeCalls = 0
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
-      const method = init?.method ?? 'GET'
-      if (url === '/api/v1/tokens' && method === 'POST') {
-        tokenPosts += 1
-        return jsonResponse(201, createdToken())
+      if (url === '/users/me') {
+        usersMeCalls += 1
+        return jsonResponse(200, { id: 'u1', email: 'jian@example.test' })
       }
       if (url === '/api/v1/notes') {
-        return jsonResponse(200, { notes: [note()] })
+        return jsonResponse(401, { error: { code: 'invalid_token', message: 'no longer valid' } })
       }
       if (url === '/api/v1/meta') {
         return jsonResponse(200, { pandan_url: null })
@@ -689,19 +725,12 @@ describe('the silent cookie-to-bearer bootstrap', () => {
     }) as unknown as typeof fetch
 
     const target = render(App, {})
-    await until(() => (target.textContent ?? '').includes('Weekly review'), 'the note list')
-    expect(tokenPosts).toBe(1)
+    // The cookie session check succeeds (authed flips true), then the note list's own request comes
+    // back 401 and `discard()` flips it straight back to false.
+    await until(() => target.querySelector('.landing') !== null, 'the landing state to return')
 
-    target.querySelector<HTMLButtonElement>('[data-testid="clear-token"]')!.click()
-    flushSync()
-    expect(auth.credentialState()).toBe('not set')
-    expect(target.querySelector('.landing')).not.toBeNull()
-
-    // The one thing a `$effect` keyed on `authed` alone would get wrong: minting a second bearer the
-    // instant it saw `authed` flip back to `false`, making "Clear token" look like it did nothing.
+    expect(usersMeCalls).toBe(1)
     await settle()
-    expect(tokenPosts).toBe(1)
-    expect(auth.credentialState()).toBe('not set')
-    expect(target.querySelector('.landing')).not.toBeNull()
+    expect(usersMeCalls).toBe(1)
   })
 })

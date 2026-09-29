@@ -109,11 +109,12 @@ describe('never rejects, whatever went wrong', () => {
     await expect(fetchBoardEmbed({ board: 18, column: 'todo', fetchImpl })).resolves.toBeNull()
   })
 
-  it('returns null when there is no credential in the tab at all', async () => {
-    // No `fetchImpl` call happens here — `apiRequest` throws `MissingCredential` before ever
-    // reaching `fetch` — so there is nothing to inject; the assertion is just that this doesn't
-    // reject either.
+  it('returns null when there is no bearer and the cookie does not authenticate either', async () => {
+    // KAN-1791: `apiRequest` now always reaches the network, so the case worth naming here is the
+    // real `401` that comes back when neither the bearer nor a cookie session answers — still
+    // swallowed into `null` the same as every other failure (see `fetchBoardEmbed`'s own docstring).
     auth.clearToken()
-    await expect(fetchBoardEmbed({ board: 18, column: 'todo' })).resolves.toBeNull()
+    const fetchImpl = recorder({ error: { code: 'unauthorized', message: 'no' } }, 401)
+    await expect(fetchBoardEmbed({ board: 18, column: 'todo', fetchImpl })).resolves.toBeNull()
   })
 })

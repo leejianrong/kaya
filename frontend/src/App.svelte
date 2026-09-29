@@ -10,8 +10,8 @@
   import Sidebar from './components/Sidebar.svelte'
   import Tokens from './components/Tokens.svelte'
   import { ApiError } from './lib/api'
-  import { clearToken, credentialState, setToken } from './lib/auth'
-  import { createToken } from './lib/identity'
+  import { clearToken, credentialState } from './lib/auth'
+  import { fetchCurrentUser } from './lib/identity'
   import { resolvePandanHref } from './lib/meta'
   import { createNote, getNote, listNotes } from './lib/notes'
   import {
@@ -171,48 +171,49 @@
   let authed = $state(credentialState() === 'set')
 
   /**
-   * Silent cookie-to-bearer bootstrap (ADR 0012's two credential types, bridged exactly once).
+   * The one-time mount check for a cookie-only session (ADR 0012's two credential types — a bearer
+   * and a `kayaauth` cookie — this file only ever needs to ask about the second one, and only once).
    *
-   * `get_principal` (`backend/app/auth/kaya_principal.py`) already accepts a live `kaya_session`
-   * cookie for every note-API call — kaya has never actually needed a pasted `kaya_pat_…` to reach
-   * the note list, only `apiRequest`'s own bearer-or-refuse precheck (`lib/api.ts`) never learned
-   * that. Reworking every `apiRequest` caller to try a bearer-less request and fall back to the
-   * cookie would touch `attachments.ts`/`embeds.ts`/`graph.ts` and their pinned
-   * `MissingCredential`-before-the-fetch tests for a much smaller win: this tab still needs its own
-   * `kaya_pat_…` in `sessionStorage` regardless, because that is the one thing every other API call
-   * in the app already assumes exists. So instead of teaching the whole API layer a second
-   * credential shape, a `kaya_pat_…` is minted here, silently, the moment a live cookie session is
-   * found and no bearer is already set — closing the loop `Tokens.svelte`'s "Use this token now"
-   * button closes by hand, automatically, which is what actually answers "why can't I just sign in
-   * with GitHub".
+   * `apiRequest` (`lib/api.ts`) now trusts a live cookie session for every note-API call directly, so
+   * a tab that has no bearer at all is no longer necessarily a logged-out tab — it might be a reload
+   * of a browser that signed in with GitHub and never pasted anything. `authed`'s own initializer
+   * above already covers the *other* case for free: a bearer already in `sessionStorage` is a
+   * known-good signal, so `authed` starts `true` synchronously and this effect's body below never
+   * needs to run for that tab. What is left is the cookie-only tab, and `fetchCurrentUser()` (`lib/
+   * identity.ts`) is the one call that can tell it apart from a genuinely logged-out one — it hits
+   * the cookie-authenticated `GET /users/me` and resolves to a `CurrentUser` or `null`, never
+   * throwing for the logged-out case, the same shape `Tokens.svelte`'s own mount check already uses.
    *
-   * `attempted`, not a re-run on every `authed` flip, is what keeps this from fighting **Clear
-   * token**: that button sets `authed = false` on a live cookie session on purpose, and a `$effect`
-   * keyed on `authed` alone would silently re-mint a bearer the instant it saw that flip, making
-   * "Clear token" appear to do nothing. Tried once per page load, succeeds or fails once, and never
-   * fires again for the rest of this tab's lifetime either way.
+   * **Never mints or stores anything.** The bootstrap this replaced (KAN-1739/PR #178) had to call
+   * `POST /api/v1/tokens` and stash the result in `sessionStorage`, because `apiRequest` back then
+   * could not yet trust the cookie on its own — that call site was the actual bug this rewrite fixes:
+   * it manufactured a second, forgotten credential every time this effect ran, and "Clear token" only
+   * ever cleared *that* one. This effect only ever reads; a cookie-only session stays cookie-only for
+   * the rest of the tab's life, and every later note-API call keeps authenticating off the cookie.
    *
-   * **Initialized from `authed`'s own starting value, not a bare `false`.** A tab that arrives with
-   * a bearer already has no reason to ever try this, including later — if that bearer is discarded
-   * by a `401` or a deliberate **Clear token** ten minutes into the session, `authed` flips to
-   * `false` and this effect reads that, but it must not treat a *later* discard the same as never
-   * having tried at all. Starting `true` whenever `credentialState()` already reads `set` is what
-   * keeps a `401` from silently re-authenticating a tab that just had its credential refused.
+   * **Guarded to run exactly once per mount, for the same reason the bootstrap it replaced guarded
+   * itself.** An effect that reads `authed` and sometimes writes it back would refire the instant
+   * `authed` changes for *any* reason — including a later `401` (`discard()`, below) — and a rerun at
+   * that moment would be exactly backwards: it would immediately re-ask `/users/me` about a session
+   * that request just said doesn't work. `checkedSessionOnMount` starting `true` whenever a bearer is
+   * already present (mirroring `authed`'s own initializer) is what keeps that first fast-path tab from
+   * ever running this effect's body at all, now or after a later discard.
    */
-  let attemptedCookieBootstrap = credentialState() === 'set'
+  let checkedSessionOnMount = credentialState() === 'set'
 
   $effect(() => {
-    if (authed || attemptedCookieBootstrap) {
+    if (authed || checkedSessionOnMount) {
       return
     }
-    attemptedCookieBootstrap = true
-    createToken({ name: 'browser', scope: 'write' })
-      .then((created) => {
-        setToken(created.token)
-        authed = true
+    checkedSessionOnMount = true
+    fetchCurrentUser()
+      .then((user) => {
+        if (user !== null) {
+          authed = true
+        }
       })
       .catch(() => {
-        // No live cookie session — genuinely logged out. Landing is already what renders for
+        // No live cookie session either — genuinely logged out. Landing is already what renders for
         // `!authed`; there is nothing further to do or report.
       })
   })
@@ -326,20 +327,6 @@
   const railed = $derived(authed && route.name === 'note')
 
   /**
-   * `set` or `not set`, and this file does not get to spell either word.
-   *
-   * The value comes from the seam, which is the only thing allowed to describe a credential to a
-   * person — never a prefix, a suffix, a length or a mask (`lib/auth.ts`, and pandan's
-   * `set (…c_DE)`). The `void authed` is what makes it re-read: the credential lives in
-   * `sessionStorage`, which is not reactive, so a header derived from the seam alone would still
-   * say `not set` after a successful paste.
-   */
-  const credential = $derived.by(() => {
-    void authed
-    return credentialState()
-  })
-
-  /**
    * The pandan origin for the topbar's nav link (KAN-1157), resolved the same way `Landing`
    * resolves it for the sign-in copy (KAN-1156) — `resolvePandanHref` already swallows a failed
    * fetch and an unset/unsafe origin into `null`, so there is nothing to branch on here beyond
@@ -432,14 +419,17 @@
   /**
    * Forget the credential and go back to the landing state.
    *
-   * Reached two ways, and both are required: the API refusing it with a `401`, and the person
-   * clicking **Clear token**. The second exists because the first only covers one shape of being
-   * stuck — a valid token for the wrong account, or a `503` from a sleeping pandan, leaves a user
-   * looking at a failure with no way to change credentials. A state you can only leave through
-   * devtools is a bug, so the way out is a button rather than an instruction.
+   * Reached exactly one way now: the API refusing a request with a `401`. **Clear token** used to be
+   * the other way in, and KAN-1791 removed it — it only ever cleared the `sessionStorage` mirror, so
+   * clicking it flipped this file to the landing state while the real `kayaauth` cookie session
+   * underneath stayed alive server-side; it looked like a sign-out and was not one. Kaya's own
+   * sign-out (`Tokens.svelte`, `POST /auth/logout`) is the real way to end a session now, and it ends
+   * the thing that actually authenticates this tab rather than a mirror of it.
    *
-   * `reason` is the API's message or `null` for a deliberate clear; there is nothing to explain
-   * when the user did it on purpose.
+   * `reason` is the API's message — every remaining caller (`absorb()` below, and the `onexpired`
+   * callbacks `GraphView`/`RightRail`/`BacklinksPanel` hand this file) passes one. The parameter stays
+   * typed `string | null` regardless, because narrowing it is unrelated churn for a type this function
+   * costs nothing to keep general.
    */
   function discard(reason: string | null): void {
     clearToken()
@@ -509,18 +499,6 @@
         data-testid="toggle-preview"
       >
         Preview
-      </button>
-    {/if}
-    <!--
-      `set` or `not set`, and never a fragment. `kaya config show` is the reference: pandan printed
-      `set (…c_DE)` and those four characters are a contiguous piece of a live credential in a
-      surface documented as safe to share. A browser is worse — a screenshot is one keystroke away.
-    -->
-    <span class="credential" data-testid="credential-state">token {credential}</span>
-    {#if authed}
-      <!-- The way out, always available while a credential is held. See `discard()`. -->
-      <button class="clear" onclick={() => discard(null)} data-testid="clear-token">
-        Clear token
       </button>
     {/if}
   </header>
@@ -664,13 +642,6 @@
     text-decoration: underline;
   }
 
-  .credential {
-    margin-left: auto;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 0.75rem;
-  }
-
   .shell > :global(.sidebar) {
     grid-area: sidebar;
   }
@@ -753,17 +724,6 @@
     border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     color: var(--accent);
-  }
-
-  .clear {
-    padding: 0.2rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
-    background: transparent;
-    color: var(--muted);
-    cursor: pointer;
-    font: inherit;
-    font-size: 0.75rem;
   }
 
   .notice {

@@ -17,7 +17,7 @@
  * cached HTML response, or a `<img src>` a browser could request without a credential attached.
  */
 
-import { ApiError, apiPath, MissingCredential, NetworkError } from './api'
+import { ApiError, apiPath, NetworkError } from './api'
 import { authorization } from './auth'
 import { isApiErrorBody } from './types'
 
@@ -44,10 +44,14 @@ export interface UploadAttachmentOptions {
  * Upload `file`, attached to the note addressed by `noteRef`, and return the markdown reference to
  * insert into the note body.
  *
- * Throws `MissingCredential` (no bearer in the seam — the same refusal `apiRequest` gives, before
- * any request is made) or `ApiError`/`NetworkError` for a refused or unreachable request, so a
- * caller's `.catch()` handles every failure the same way it already does for `notes.ts`'s calls.
- * `lib/codemirror.ts`'s drop/paste handler is the one caller today.
+ * Attempts the request unconditionally, the same reasoning `apiRequest` (`lib/api.ts`) gives for
+ * doing the same: a bearer in the seam goes into the header when there is one, but a same-origin
+ * `kayaauth` cookie authenticates a note-API call just as well with none, and this module has no way
+ * to know from the tab alone which credential, if either, will actually answer. A genuine
+ * unauthenticated response comes back as an `ApiError` (401) — the same shape `apiRequest` gives —
+ * or `NetworkError` for an unreachable request, so a caller's `.catch()` handles every failure the
+ * same way it already does for `notes.ts`'s calls. `lib/codemirror.ts`'s drop/paste handler is the
+ * one caller today.
  */
 export async function uploadAttachment(
   noteRef: string,
@@ -55,9 +59,6 @@ export async function uploadAttachment(
   options: UploadAttachmentOptions = {},
 ): Promise<AttachmentRead> {
   const bearer = authorization()
-  if (bearer === null) {
-    throw new MissingCredential()
-  }
 
   const body = new FormData()
   body.append('file', file)
@@ -70,7 +71,10 @@ export async function uploadAttachment(
       method: 'POST',
       // No `Content-Type` here — the browser sets `multipart/form-data; boundary=...` for a
       // `FormData` body, and overriding it drops the boundary the server needs to parse the part.
-      headers: { Authorization: bearer, Accept: 'application/json' },
+      headers: {
+        Accept: 'application/json',
+        ...(bearer === null ? {} : { Authorization: bearer }),
+      },
       body,
       signal: options.signal,
       credentials: 'same-origin',
@@ -101,8 +105,12 @@ export interface FetchAttachmentOptions {
 
 /**
  * The bytes at `GET /api/v1/notes/{noteRef}/attachments/{attachmentId}`, as a `blob:` URL — or
- * `null` for any failure at all (no credential, the note or attachment refused, a transport
- * failure, an abort).
+ * `null` for any failure at all (an unauthenticated response, the note or attachment refused, a
+ * transport failure, an abort).
+ *
+ * Attempts the request unconditionally, same reasoning as {@link uploadAttachment}: a bearer goes
+ * into the header when the seam has one, but a same-origin cookie session can authenticate this call
+ * just as well with none, so there is nothing to gate the fetch on.
  *
  * **Never throws**, the same contract `lib/embeds.ts`'s `fetchBoardEmbed` keeps and for the
  * identical reason stated there: an attachment image is a decoration inside a note preview, not
@@ -118,15 +126,12 @@ export async function fetchAttachmentBlobUrl(
   options: FetchAttachmentOptions = {},
 ): Promise<string | null> {
   const bearer = authorization()
-  if (bearer === null) {
-    return null
-  }
 
   const doFetch = options.fetchImpl ?? globalThis.fetch
   const path = `notes/${encodeURIComponent(noteRef)}/attachments/${attachmentId}`
   try {
     const response = await doFetch(apiPath(path), {
-      headers: { Authorization: bearer },
+      headers: bearer === null ? {} : { Authorization: bearer },
       signal: options.signal,
       credentials: 'same-origin',
     })

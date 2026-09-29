@@ -23,7 +23,6 @@ test('an unauthenticated visitor sees the landing state with a working kaya-toke
   // The authenticated regions must be absent, not merely hidden — no sidebar, no note list, no
   // credential to have leaked into this tab before a token was ever pasted.
   await expect(page.locator('.sidebar')).toHaveCount(0)
-  await expect(page.getByTestId('credential-state')).toHaveText('token not set')
 
   // `Landing.svelte`'s "Get a kaya token" section: a same-origin link to kaya's own Tokens page,
   // not an external `target="_blank"` link the way the old pandan link was — minting a token is

@@ -33,8 +33,8 @@ export interface BoardEmbedQuery {
  * cards: [] }` — both are "could not show this", and there is no reason for its hydration code to
  * carry two branches for one outcome.
  *
- * A **caller-visible** `ApiError` still surfaces here in one case worth naming: a missing bearer
- * (`MissingCredential`, itself an `ApiError`) is swallowed the same as everything else, because an
+ * A **caller-visible** `ApiError` still surfaces here in one case worth naming: a real `401` — no
+ * bearer, no valid cookie session, or both — is swallowed the same as everything else, because an
  * unauthenticated tab has no business retrying a board fetch either — the preview already shows
  * nothing useful without a session, and a board embed failing quietly is consistent with every
  * other decoration in that state.

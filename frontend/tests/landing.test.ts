@@ -364,9 +364,7 @@ describe('pasting a token, end to end through the shell', () => {
     await settle()
 
     expect(host.querySelector('nav')).toBeNull()
-    expect(host.querySelector('[data-testid="credential-state"]')?.textContent).toBe(
-      'token not set',
-    )
+    expect(auth.credentialState()).toBe('not set')
 
     type(FAKE_TOKEN)
     submitForm()
@@ -376,7 +374,7 @@ describe('pasting a token, end to end through the shell', () => {
     expect(host.querySelector('nav')).not.toBeNull()
     expect(host.textContent).toContain('Weekly review')
     expect(host.querySelector('[data-testid="paste-form"]')).toBeNull()
-    expect(host.querySelector('[data-testid="credential-state"]')?.textContent).toBe('token set')
+    expect(auth.credentialState()).toBe('set')
 
     // The credential went out as a header on the list request, and nowhere else.
     const list = calls.find((call) => call.url === '/api/v1/notes')!
@@ -401,9 +399,6 @@ describe('pasting a token, end to end through the shell', () => {
     // Back on the landing state, with the credential gone from the tab rather than left there to
     // fail on every subsequent request.
     expect(auth.credentialState()).toBe('not set')
-    expect(host.querySelector('[data-testid="credential-state"]')?.textContent).toBe(
-      'token not set',
-    )
     expect(host.querySelector('[data-testid="rejected"]')?.textContent).toContain(
       'pandan did not accept this token',
     )
@@ -425,27 +420,10 @@ describe('pasting a token, end to end through the shell', () => {
     sweep()
   })
 
-  it('offers a way out while a credential is held, for the failures a 401 does not cover', async () => {
-    // A `503` from a sleeping pandan, or a valid token for the wrong account, leaves a visitor
-    // looking at a failure with a credential the app still believes in. The header's button is the
-    // only thing between that and devtools.
-    notesAnswer = () => refusal(503, 'upstream_unavailable', 'pandan is unreachable')
-    auth.setToken(FAKE_TOKEN)
-
-    render(App, {})
-    await settle()
-
-    expect(host.querySelector('nav')).not.toBeNull()
-    const clear = host.querySelector<HTMLButtonElement>('[data-testid="clear-token"]')
-    expect(clear).not.toBeNull()
-
-    clear!.click()
-    flushSync()
-
-    expect(auth.credentialState()).toBe('not set')
-    expect(host.querySelector('[data-testid="paste-form"]')).not.toBeNull()
-    // A deliberate clear explains nothing: there is no refusal to report.
-    expect(host.querySelector('[data-testid="rejected"]')).toBeNull()
-    sweep()
-  })
+  // KAN-1791 removed "Clear token" (formerly asserted here): it only ever cleared the
+  // `sessionStorage` mirror while leaving a real `kayaauth` cookie session alive server-side, so it
+  // looked like a sign-out without being one. A `503` from a sleeping pandan, or a valid token for
+  // the wrong account, no longer has a header button to route around it — `Tokens.svelte`'s
+  // `POST /auth/logout` (already end-to-end tested in `tests/tokens-page.test.ts`) is the one real
+  // way to end a session now, and this file no longer has a "held but stuck" state to assert over.
 })

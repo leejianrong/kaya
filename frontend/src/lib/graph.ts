@@ -4,10 +4,10 @@
  * One function, following `lib/notes.ts`'s own convention rather than the `Promise<T | null>`
  * shape the card sketched: every existing note-fetch function here (`listNotes`, `getNote`,
  * `listBacklinks`, `listLinks`) returns the payload verbatim and **rejects** on failure —
- * `MissingCredential`, `ApiError` or `NetworkError`, from `lib/api.ts`. A component decides what a
- * failure means (`BacklinksPanel.svelte`'s `absorb`); this module does not swallow one into `null`,
- * which would erase the distinction between "no notes yet" and "the request failed" that the
- * caller needs to render two different states.
+ * `ApiError` or `NetworkError`, from `lib/api.ts`. A component decides what a failure means
+ * (`BacklinksPanel.svelte`'s `absorb`); this module does not swallow one into `null`, which would
+ * erase the distinction between "no notes yet" and "the request failed" that the caller needs to
+ * render two different states.
  */
 
 import { apiRequest, type RequestOptions } from './api'

@@ -13,7 +13,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiError, apiRequest, MissingCredential, NetworkError } from '../src/lib/api'
+import { ApiError, apiRequest, NetworkError } from '../src/lib/api'
 import * as auth from '../src/lib/auth'
 import { FAKE_TOKEN } from './token'
 
@@ -72,14 +72,30 @@ describe('apiRequest', () => {
     expect(init.credentials).toBe('same-origin')
   })
 
-  it('refuses before the request when there is no credential', async () => {
+  it('still makes the request with no Authorization header when there is no bearer', async () => {
+    // KAN-1791: a same-origin `kayaauth` cookie (ADR 0012) can authenticate this exact request with
+    // no bearer at all, and this module has no way to know from the tab alone whether one is riding
+    // along — so it no longer refuses before asking. `sends the bearer from the credential seam`
+    // above is this test's mirror image.
     auth.clearToken()
-    const fetchImpl = fakeFetch(jsonResponse(200, {}))
+    const fetchImpl = fakeFetch(jsonResponse(200, { notes: [] }))
 
-    await expect(apiRequest('notes', { fetchImpl })).rejects.toBeInstanceOf(MissingCredential)
-    // Not a 401 after a round trip: an unauthenticated app must not hammer the backend, and the
-    // landing state (KAN-555) is reachable without one.
-    expect(vi.mocked(fetchImpl)).not.toHaveBeenCalled()
+    await apiRequest('notes', { fetchImpl })
+
+    expect(vi.mocked(fetchImpl)).toHaveBeenCalledTimes(1)
+    const [, init] = vi.mocked(fetchImpl).mock.calls[0] as [string, RequestInit]
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined()
+  })
+
+  it('surfaces a real 401 as ApiError.isUnauthenticated when neither bearer nor cookie authenticates', async () => {
+    auth.clearToken()
+    const fetchImpl = fakeFetch(
+      jsonResponse(401, { error: { code: 'unauthorized', message: 'no credential answered' } }),
+    )
+
+    const failure = (await apiRequest('notes', { fetchImpl }).catch((e: unknown) => e)) as ApiError
+    expect(failure).toBeInstanceOf(ApiError)
+    expect(failure.isUnauthenticated).toBe(true)
   })
 
   it('sends a JSON body with a content type, and no body without one', async () => {

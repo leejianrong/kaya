@@ -90,14 +90,6 @@ export class NetworkError extends Error {
   }
 }
 
-/** No credential in the seam, so no request was made. Same shape as the API's own 401. */
-export class MissingCredential extends ApiError {
-  constructor() {
-    super(401, 'no_credential', 'No pandan token in this tab. Paste one to continue.')
-    this.name = 'MissingCredential'
-  }
-}
-
 export interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
   /** Serialized as JSON. Absent means no body and no `Content-Type`. */
@@ -111,28 +103,29 @@ export interface RequestOptions {
 export type PublicOptions = Pick<RequestOptions, 'signal' | 'fetchImpl'>
 
 /**
- * One request against `/api/v1`, authenticated from the credential seam.
+ * One request against `/api/v1`, authenticated from whatever this tab has.
  *
- * The bearer comes from `auth.authorization()` and goes into a **header** — never a query
+ * The bearer, when `auth.authorization()` returns one, goes into a **header** — never a query
  * parameter, never a path segment. That is not a style preference: a URL reaches the browser
  * history, the referrer, a proxy access log and the backend's own request line, and kaya's
  * observability rules (Q41/Q42) exist because a log line is the cheapest way to give a credential
  * away. `tests/api.test.ts` asserts the token appears in no URL this module builds.
  *
+ * **Always reaches the network, even with no bearer in `sessionStorage`.** `send()` already passes
+ * `credentials: 'same-origin'` on every call, which attaches a live `kayaauth` cookie (ADR 0012)
+ * automatically whenever the browser is carrying one — this function has no way to know from the
+ * tab alone whether that's the case, so refusing pre-emptively the way an earlier version did (a
+ * `MissingCredential` thrown before the fetch) meant guessing at a state only the server can
+ * actually see. Every unauthenticated response, bearer-less or cookie-less or both, now comes back
+ * the same way: an `ApiError` with `.isUnauthenticated` true, which `App.svelte`'s `absorb()` keys
+ * on. This is the same contract pandan's own SPA has always used — it never guesses, it always
+ * asks, and a `401` is a `401`.
+ *
  * Returns `null` for a `204`, which is what `DELETE /notes/{ref}` answers.
  */
-// `async` rather than a plain function returning `send(…)`, and the keyword is load-bearing: the
-// `MissingCredential` below must arrive as a **rejection**. `notes.ts` has non-async callers that
-// return this promise straight through, so a synchronous throw would escape their `.catch()` and
-// land in a `$effect` as an uncaught error.
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const bearer = authorization()
-  if (bearer === null) {
-    // Refused before the request rather than after a 401, so an unauthenticated app does not
-    // hammer the backend — and so the landing state is reached without a round trip.
-    throw new MissingCredential()
-  }
-  return send<T>(path, options, { Authorization: bearer })
+  return send<T>(path, options, bearer === null ? {} : { Authorization: bearer })
 }
 
 /**
@@ -140,8 +133,9 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
  *
  * That route is `/api/v1/meta` and its caller is KAN-555's landing state: a visitor with no token
  * needs to be told where to mint one, and the answer lives in the backend's `KAYA_PANDAN_URL`.
- * `apiRequest` cannot serve it — it throws `MissingCredential` before the fetch, which is correct
- * for every *other* path and exactly wrong for this one.
+ * `apiRequest` cannot serve it — it always attaches whatever bearer this tab happens to have (see
+ * its own docstring), which is correct for every *other* path and exactly wrong for this one, a
+ * route that must carry no credential at all, not even a stale one.
  *
  * It does not read the credential seam **at all**, and that is the property rather than an
  * accident of there being nothing to read: the landing state is also reached with a *stale* token
