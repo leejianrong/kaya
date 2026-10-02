@@ -12,8 +12,12 @@ import { type Page } from '@playwright/test'
 import { fakeToken } from './env'
 import { expect, prefixedTitle, test } from './fixtures'
 
-/** Markdown the formatter visibly changes: heading spacing, list markers, a missing blank line. */
-const UNFORMATTED = ['#   Title', '*  one', '*  two'].join('\n')
+/**
+ * Markdown the formatter visibly changes (the heading's padding, and a trailing newline). Deliberately
+ * **no list**: CM6's markdown keymap continues a list marker on Enter, so typing `*  one⏎` would put a
+ * second `*  ` on the next line and the "typed" text would no longer be what this constant says.
+ */
+const UNFORMATTED = ['#   Title', '', 'plain paragraph'].join('\n')
 
 async function setPreference(page: Page, value: boolean): Promise<void> {
   const response = await page.request.patch('/api/v1/preferences', {
@@ -87,8 +91,11 @@ test('ON: saving an unformatted note stores the formatted body, in place', async
   expect(stored).not.toBe(UNFORMATTED)
   expect(stored).toContain('# Title')
   // The editor shows what was stored, without a reload and without a second save.
-  await expect(editor).toContainText('# Title')
-  await expect(editor).not.toContainText('#   Title')
+  // `toContainText` collapses whitespace, so `#   Title` would match `# Title` and prove nothing:
+  // compare each line's exact text with the stored body's lines instead.
+  await expect
+    .poll(() => editor.locator('.cm-line').allTextContents())
+    .toEqual(stored.split('\n'))
   await expect(page.getByTestId('save-state')).toHaveText(/^saved · now at /)
 })
 

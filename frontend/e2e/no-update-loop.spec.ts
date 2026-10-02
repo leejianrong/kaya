@@ -70,5 +70,7 @@ test('20 keystrokes cause no PATCH, and one Save causes exactly one', async ({
   })
   expect(fetched.ok()).toBeTruthy()
   const stored = (await fetched.json()) as { body: string }
-  expect(stored.body).toBe(KEYSTROKES)
+  // Format on save is ON by default (KAN-1815), so the server stores the formatted body — here just
+  // the trailing newline mdformat adds. Still exactly one PATCH, still exactly one final state.
+  expect(stored.body).toBe(`${KEYSTROKES}\n`)
 })
