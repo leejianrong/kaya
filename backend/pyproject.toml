@@ -42,6 +42,9 @@ dependencies = [
     # narrow exception to "nothing depends on an adapter", argued in ADR 0014's own "necessary,
     # narrow exception" section. `kaya-client` itself gains no new dependency either way.
     "kaya-mcp",
+    "mdformat>=1.0.0",
+    "mdformat-gfm>=1.0.0",
+    "mdformat-frontmatter>=2.1.2",
 ]
 
 [project.optional-dependencies]
