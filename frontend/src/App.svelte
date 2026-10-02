@@ -8,6 +8,7 @@
   import PreviewPane from './components/PreviewPane.svelte'
   import RightRail from './components/RightRail.svelte'
   import Sidebar from './components/Sidebar.svelte'
+  import Settings from './components/Settings.svelte'
   import Tokens from './components/Tokens.svelte'
   import { ApiError } from './lib/api'
   import { clearToken, credentialState } from './lib/auth'
@@ -532,6 +533,10 @@
         <!-- KAN-1050: read-only, so it takes no note-lifecycle callbacks — `onexpired` is the one
              failure it cannot absorb itself, for the same reason `BacklinksPanel`'s cannot. -->
         <GraphView onexpired={discard} />
+      {:else if route.name === 'settings'}
+        <!-- KAN-1815: reads and writes one resource (`/api/v1/preferences`), no note-lifecycle
+             callbacks, for the same reason `PandanConnect` below has none. -->
+        <Settings />
       {:else if route.name === 'pandan'}
         <!-- ADR 0012's amendment (KAN-1741): connecting a pandan account has no note-lifecycle
              callbacks of its own either, for the same reason `GraphView` above has none — it reads

@@ -32,6 +32,7 @@ src/
   lib/codemirror.ts          every runtime CodeMirror value, behind one import() (KAN-767)
   lib/markdown.ts            markdown -> DOM nodes, behind one import() (KAN-554, KAN-836)
   lib/notes.ts               the five note calls
+  lib/preferences.ts         `/api/v1/preferences` + the cached "format on save" answer (KAN-1815)
   lib/router.ts              / and /notes/:ref, hand-written, no dependency
   lib/types.ts               the wire shapes, mirroring backend/app/api/schemas.py
   lib/conflict.ts            ADR 0009's resolution rule + the side-by-side comparison (KAN-556)
@@ -42,6 +43,7 @@ src/
   components/Landing.svelte    the no-credential state and the one-time PAT paste (KAN-555)
   components/Sidebar.svelte    the folder tree over `path`, the flat list, the search box (KAN-554/559/962)
   components/PreviewPane.svelte live preview, a sibling of the editor (KAN-554, KAN-836)
+  components/Settings.svelte   `/settings`: the "Format on save" toggle (KAN-1815)
   components/BacklinksPanel.svelte what links to the open note — the fourth region (KAN-568)
 ```
 
@@ -159,6 +161,18 @@ on — ADR 0009's precondition, carried as an **opaque string** and never near a
 backend's comparison is exact to the microsecond. The precondition is never *fetched*: it comes from
 the note that was opened and then from each save's own response. Fetching it would look safer and
 would disable the guarantee.
+
+**Format on save (KAN-1815), a per-account setting, default ON.** It lives server-side
+(`user_preference`, `/api/v1/preferences`, edited on `/settings`), so it follows the account across
+browsers; an account that never chose has no row and reads ON. The editor reads it **once, at mount**
+(`primePreferences`), never as part of a save, so a save is still exactly one request. While ON the
+`PATCH` also carries `format: true` and the server (KAN-1814) formats and stores once, under the same
+`if_updated_at`. The response's body is applied through the echo guard as one minimal CM6 transaction
+(`syncFormatted` in `lib/editor.ts`): never a remount, never a second save, one undo step back to the
+text as typed, the caret left alone when it sits outside what changed, and **not applied at all** if
+the user typed while the save was in flight (their keystrokes win and the pane stays unsaved). It
+governs browser saves only; the CLI and MCP never format implicitly. There is no JS formatter in the
+bundle; the engine is server-side.
 
 A `409` is shown with both timestamps and both whole notes held in state; `conflictVersions()` reads
 `attempted` / `stored` out of `ApiError.details`.

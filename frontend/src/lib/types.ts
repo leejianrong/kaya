@@ -118,6 +118,11 @@ export interface NoteUpdate {
   path?: string
   /** The `updated_at` you read, echoed back verbatim. Omitting it is a plain overwrite. */
   if_updated_at?: string
+  /**
+   * Ask the server to format the body before saving (KAN-1814). The response is the stored,
+   * formatted note. Sent only by the browser save path, and only while the Settings toggle is ON.
+   */
+  format?: boolean
 }
 
 /**

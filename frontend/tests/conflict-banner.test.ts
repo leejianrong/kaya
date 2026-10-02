@@ -275,7 +275,8 @@ describe('keep mine', () => {
 
     expect(calls[1].url).toBe('/api/v1/notes/NOTE-11')
     expect(calls[1].method).toBe('PATCH')
-    expect(calls[1].body).toEqual({ body: MINE, if_updated_at: THEIRS_AT })
+    // `format: true`: the browser's default-ON "format on save" (KAN-1815) rides a keep-mine too.
+    expect(calls[1].body).toEqual({ body: MINE, if_updated_at: THEIRS_AT, format: true })
     expect(calls[1].body.if_updated_at).toBe(THEIRS_AT)
     expect(calls[1].body.if_updated_at).not.toBe(new Date(THEIRS_AT).toISOString())
   })
