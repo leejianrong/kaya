@@ -191,8 +191,11 @@ def edit_note(
     body: str | None = None,
     path: str | None = None,
     if_updated_at: str | None = None,
+    format: bool = False,  # noqa: A002 - the wire field's own name (KAN-1814)
 ) -> dict[str, Any]:
     """Change a note; fields not named are left alone.
+
+    `format=True` also formats the body in the same save; alone it is a format-only call.
 
     `if_updated_at` is ADR 0009's precondition, opt-in exactly as `kaya note edit
     --if-updated-at` is: omit it for a plain overwrite, or echo back the `updated_at` an earlier
@@ -201,7 +204,7 @@ def edit_note(
     """
     try:
         payload = tools.edit_note(
-            ref, title=title, body=body, path=path, if_updated_at=if_updated_at
+            ref, title=title, body=body, path=path, if_updated_at=if_updated_at, format=format
         )
         return render(payload, text_limit=_text_limit(), fmt="data")
     except KayaError as failure:

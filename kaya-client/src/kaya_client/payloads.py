@@ -79,6 +79,18 @@ class Payload:
     the projected set would be correct today by accident and wrong the moment KAN-550 reads it for
     something other than truncating a column that is currently on screen."""
 
+    format_changed_lines: int | None = None
+    """KAN-1816: how many lines `note format` would change in the body just written, or ``None``
+    when nobody asked / nothing would change. A fact about *this* result (the saved body), which is
+    why it travels on the payload and why `hints` and `Shaped.as_dict` read it rather than a verb
+    name (ADR 0005 §contract 8). Only `KayaClient.create_note`/`update_note` set it, and only when
+    the probe found a non-zero count; it survives `narrowed_to`/`with_records`/`limited_to`
+    because they all use `dataclasses.replace`."""
+
+    def with_format_hint(self, changed_lines: int) -> "Payload":
+        """The same payload, flagged as one whose saved body ``format`` would change."""
+        return replace(self, format_changed_lines=changed_lines)
+
     @classmethod
     def collection(
         cls,
@@ -259,4 +271,13 @@ class Shaped:
 
         if self.summary is not None:
             shaped["summary"] = dict(self.summary)
+        # Lazy: `hints` imports this module for `Payload`/`Kind`.
+        from kaya_client.hints import format_help_lines
+
+        lines = format_help_lines(self.payload)
+        if lines:
+            # KAN-1816: in-band, unlike the static templates, because the line count is a fact
+            # about this result (hints.py's in-band/human-only rule) and an MCP caller only ever
+            # sees the structured form. Absent for a formatted body, so it costs nothing there.
+            shaped["help"] = list(lines)
         return shaped

@@ -325,7 +325,7 @@ wheels = [
 
 [[package]]
 name = "kaya-client"
-version = "0.17.0"
+version = "0.18.0"
 source = { editable = "../kaya-client" }
 dependencies = [
     { name = "httpx" },
@@ -341,7 +341,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "kaya-mcp"
-version = "0.5.0"
+version = "0.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "kaya-client" },

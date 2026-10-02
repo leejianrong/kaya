@@ -74,6 +74,21 @@ different requests.
     ([ADR 0008](https://github.com/leejianrong/kaya/blob/main/docs/adr/0008-note-identity.md): a
     note's identity is its ref, never its path).
 
+### Formatting is a second pass: `note format`
+
+A write is stored exactly as sent; nothing formats a body implicitly. When the body you just saved
+*would* change under the formatter, `note create` and `note edit` add one line saying so and by how
+many lines (and a structured result carries it as a `help` key). A formatted body gets no hint.
+
+```bash
+kaya note format NOTE-12 --check     # {changed, changed_lines}; writes nothing
+kaya note format NOTE-12             # format and save once
+kaya note format NOTE-12 --if-updated-at 2026-08-09T11:02:33.123456+00:00   # guarded, 409 if stale
+```
+
+`--check` takes no precondition, because a read has nothing to guard. Like `note move`, `format` has
+no endpoint of its own: it is the same `PATCH` as `note edit` with the server's formatter switched on.
+
 ### Optimistic concurrency: `--if-updated-at`
 
 A note body is long-form prose, and two writers editing the same one under plain

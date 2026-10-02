@@ -313,4 +313,10 @@ def test_a_write_makes_exactly_one_request(answering) -> None:
     seen = answering(200, GROCERIES)
     main(["note", "edit", "NOTE-12", "--body", "new"])
 
-    assert len(seen) == 1
+    # KAN-1816: one WRITE, and it is the first request. The one read that may follow it is the
+    # format-hint probe (`GET .../format-check`) — after the save, never a precondition fetch.
+    writes = [r for r in seen if r.method != "GET"]
+    assert len(writes) == 1
+    assert seen[0] is writes[0]
+    assert all(r.url.path.endswith("/format-check") for r in seen[1:])
+    assert len(seen) <= 2

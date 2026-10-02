@@ -238,6 +238,16 @@ CONTENT_FIELDS = (TITLE_FIELD, BODY_FIELD, PATH_FIELD)
 """The three columns a `PATCH` may write, in the order a refusal lists them."""
 
 TEAM_ID_FIELD = "team_id"
+
+FORMAT_FIELD = "format"
+"""KAN-1816 (contract of KAN-1814): the optional boolean on `PATCH /notes/{ref}`. True makes the
+server format the body (the supplied one, else the stored one) and save once, under the same
+`if_updated_at` guard. Omitted rather than sent as ``false`` when not asked for, so every existing
+request is byte-identical."""
+FORMAT_CHECK_SEGMENT = "/format-check"
+FORMAT_CHECK_NOUN = "format check"
+FORMAT_CHECK_ENVELOPE = "format_checks"
+FORMAT_CHECK_COLUMNS = ("changed", "changed_lines")
 """ADR 0011/R16.6's one new request field, on `create_note` alone — `NoteUpdate` gains no way to
 move a note into or out of a team after the fact, because nothing has asked for that yet and
 `NoteCreate`'s own field is the only one `backend/app/api/schemas.py` defines."""
@@ -373,6 +383,7 @@ class KayaClient:
         body: str | None = None,
         path: str | None = None,
         team_id: int | None = None,
+        format_hint: bool = False,
     ) -> Payload:
         """``POST /api/v1/notes``. The note comes back whole, with the ref Postgres allocated.
 
@@ -397,7 +408,8 @@ class KayaClient:
         content = self._content(title, body, path)
         if team_id is not None:
             content[TEAM_ID_FIELD] = team_id
-        return self._note(self._request("POST", NOTES_PATH, content))
+        saved = self._note(self._request("POST", NOTES_PATH, content))
+        return self._with_format_hint(saved, enabled=format_hint and bool(body))
 
     def update_note(
         self,
@@ -407,8 +419,17 @@ class KayaClient:
         body: str | None = None,
         path: str | None = None,
         if_updated_at: str | None = None,
+        format: bool = False,  # noqa: A002 - the wire field's own name (KAN-1814)
+        format_hint: bool = False,
     ) -> Payload:
         """``PATCH /api/v1/notes/{ref}``. Omitted fields are left alone; the note comes back whole.
+
+        **``format=True`` (KAN-1816) is explicit and never implied.** The server formats the body
+        (the one supplied, or the stored one) and saves once under the same guard. Without it a
+        write is stored exactly as sent. With ``format_hint=True`` (the adapters pass it; a bare
+        client call and `import` do not, so they stay one request) a body-carrying write is followed
+        by one read-only probe, and when the saved body *would* change under format the returned
+        payload carries a hint (`Payload.format_changed_lines`).
 
         **``if_updated_at`` is ADR 0009's precondition and it is opt-in, by specification.** Omit it
         and the write is a plain last-write-wins overwrite — that is the route's documented
@@ -431,14 +452,77 @@ class KayaClient:
         ADR 0009 exists for — a human or an agent editing a note somebody else changed an hour ago.
         """
         changes = self._content(title, body, path, required=False)
-        if not changes:
+        if not changes and not format:
             raise UsageError(
                 f"nothing to change — name at least one of {', '.join(CONTENT_FIELDS)}",
                 arg=NOTE_NOUN,
             )
+        if format:
+            changes[FORMAT_FIELD] = True
         if if_updated_at is not None:
             changes[PRECONDITION_FIELD] = if_updated_at
-        return self._note(self._request("PATCH", self._note_path(ref), changes))
+        saved = self._note(self._request("PATCH", self._note_path(ref), changes))
+        if format:
+            return saved  # just formatted: nothing left to suggest
+        return self._with_format_hint(saved, enabled=format_hint and bool(body), ref=ref)
+
+    def format_note(
+        self, ref: str, *, check: bool = False, if_updated_at: str | None = None
+    ) -> Payload:
+        """``kaya note format``: format a note's body, or with ``check`` only say what would change.
+
+        **No endpoint of its own** (ADR 0008's `move` pattern): the write is `update_note` with
+        ``format=True`` — the same `PATCH`, the same guard, one save — so there is nothing for a
+        second route to "back". ``check`` is the read-only twin: `GET .../format-check`, which
+        answers ``{"changed", "changed_lines"}`` and writes nothing, so it takes no precondition
+        (offering one would promise a guarantee a read cannot give) and passing both is a usage
+        error rather than a silently ignored flag.
+        """
+        if check:
+            if if_updated_at is not None:
+                raise UsageError(
+                    "--check writes nothing, so it takes no precondition", arg=PRECONDITION_FIELD
+                )
+            return self._format_check_payload(self._request("GET", self._format_check_path(ref)))
+        return self.update_note(ref, if_updated_at=if_updated_at, format=True)
+
+    def _format_check_path(self, ref: str) -> str:
+        return f"{self._note_path(ref)}{FORMAT_CHECK_SEGMENT}"
+
+    @staticmethod
+    def _format_check_payload(record: Any) -> Payload:
+        return Payload.entity(
+            noun=FORMAT_CHECK_NOUN,
+            envelope_key=FORMAT_CHECK_ENVELOPE,
+            record=record,
+            columns=FORMAT_CHECK_COLUMNS,
+        )
+
+    def _with_format_hint(
+        self, saved: Payload, *, enabled: bool, ref: str | None = None
+    ) -> Payload:
+        """Flag ``saved`` when its stored body would change under format (KAN-1816).
+
+        Probes only when this write carried a non-empty body — a title/path-only edit has not
+        authored anything new, and an empty body has nothing to format — so the common write pays
+        no extra request. **A failed probe is silence, never an error** (ADR 0003's soft-failure
+        spirit): the note is already saved, an older server with no `format-check` route answers
+        404, and a hint is advice. The probe goes to the ref the server returned, so it names the
+        note just written whichever spelling the caller used.
+        """
+        if not enabled:
+            return saved
+        try:
+            target = str(saved.record.get("ref") or ref)
+            verdict = self._request("GET", self._format_check_path(target))
+        except (ApiError, TransportError):
+            return saved
+        if not isinstance(verdict, dict) or not verdict.get("changed"):
+            return saved
+        lines = verdict.get("changed_lines")
+        if not isinstance(lines, int) or isinstance(lines, bool) or lines < 1:
+            return saved
+        return saved.with_format_hint(lines)
 
     def move_note(self, ref: str, path: str) -> Payload:
         """Move a note to ``path``. **The same request ``update_note`` makes**, deliberately.
