@@ -144,6 +144,14 @@ class NoteUpdate(BaseModel):
     body: str | None = None
     path: str | None = Field(default=None, max_length=PATH_MAX)
 
+    format: bool = False
+    """KAN-1814: run the markdown formatter over the body before saving. ``body`` may be omitted,
+    which formats the *stored* body — the agent's "second pass" and the editor's save are the same
+    call. Not a content field: it is an instruction, so it is not in ``CONTENT_FIELDS`` and
+    ``changes()`` never ``setattr``'s it onto the note. The formatter may decline (``X-Kaya-Format:
+    skipped``) and the body is then saved exactly as sent, because refusing a save over a cosmetic
+    pass is the wrong trade."""
+
     if_updated_at: AwareDatetime | None = None
     """The ``updated_at`` this caller read, echoed back. ADR 0009's optimistic-concurrency token.
 
@@ -208,8 +216,11 @@ class NoteUpdate(BaseModel):
         dismiss the banner that matters. A write touching ``title`` **and** ``body`` is guarded, and
         is rejected whole: applying the metadata half of a refused write would be a second silent
         edit, in the opposite direction.
+
+        ``format: true`` counts as touching the body even when none is sent (KAN-1814): it rewrites
+        the stored body, which is exactly the prose this guard exists to protect.
         """
-        return self.if_updated_at is not None and "body" in self.model_fields_set
+        return self.if_updated_at is not None and ("body" in self.model_fields_set or self.format)
 
 
 class LinkRead(BaseModel):
@@ -465,3 +476,16 @@ class NoteVersionList(BaseModel):
     reason (PLAN §Implementation decisions: a list verb returns `{"noun": [...]}`)."""
 
     versions: list[NoteVersionRead]
+
+
+class FormatCheck(BaseModel):
+    """``GET /api/v1/notes/{ref}/format-check`` (KAN-1814): would formatting change this note?
+
+    Writes nothing. ``changed_lines`` is lines added plus lines removed — a size for a hint, not an
+    edit distance. ``reason`` is set only when the formatter declined, in which case ``changed`` is
+    ``false`` because a skipped format changes nothing.
+    """
+
+    changed: bool
+    changed_lines: int
+    reason: str | None = None
