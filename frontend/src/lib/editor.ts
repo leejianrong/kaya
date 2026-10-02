@@ -106,6 +106,63 @@ export function syncDocument(
 }
 
 /**
+ * The smallest single change that turns `before` into `after`: the text between their common
+ * prefix and common suffix. Pure, for {@link syncFormatted}.
+ *
+ * A formatter touches little of a document, so a minimal change lets CM6 map the caret through it
+ * and leave it where it was whenever it sits outside what changed — which `syncDocument`'s
+ * whole-document replace cannot do (every position inside a replaced range maps to its edge).
+ */
+export function minimalChange(
+  before: string,
+  after: string,
+): { from: number; to: number; insert: string } {
+  const shortest = Math.min(before.length, after.length)
+  let prefix = 0
+  while (prefix < shortest && before.charCodeAt(prefix) === after.charCodeAt(prefix)) {
+    prefix += 1
+  }
+  let suffix = 0
+  while (
+    suffix < shortest - prefix &&
+    before.charCodeAt(before.length - 1 - suffix) === after.charCodeAt(after.length - 1 - suffix)
+  ) {
+    suffix += 1
+  }
+  return { from: prefix, to: before.length - suffix, insert: after.slice(prefix, after.length - suffix) }
+}
+
+/**
+ * Apply the **formatted body a save returned** to the view that sent it (KAN-1815).
+ *
+ * Same contract as {@link syncDocument} — a transaction, never a remount, gated by
+ * {@link needsDispatch} so a body the editor already holds dispatches nothing (which is also what
+ * stops a loop: the formatted text is stored, so formatting it again is a no-op) — with two
+ * differences. It dispatches {@link minimalChange} rather than a replace-all, to keep the caret; and
+ * it **refuses to touch a document the user has typed into since the save was sent**: `sent` is the
+ * body that went over the wire, and if the editor no longer holds exactly that, the response is
+ * not applied (the keystrokes win, and the pane stays unsaved for them).
+ *
+ * Returns whether a transaction was dispatched.
+ */
+export function syncFormatted(
+  view: EditorView,
+  sent: string,
+  stored: string,
+  annotations: readonly Annotation<unknown>[] = [],
+): boolean {
+  const current = view.state.doc.toString()
+  if (current !== sent || !needsDispatch(stored, current)) {
+    return false
+  }
+  view.dispatch({
+    changes: minimalChange(current, stored),
+    ...(annotations.length === 0 ? {} : { annotations: [...annotations] }),
+  })
+  return true
+}
+
+/**
  * ADR 0009's two versions, out of an `ApiError`'s extras, or `null` if they are not both there.
  *
  * `backend/app/api/concurrency.py` puts `attempted` and `stored` on the `409` body as two **whole**

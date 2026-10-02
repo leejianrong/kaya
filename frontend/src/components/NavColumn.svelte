@@ -37,6 +37,7 @@
     { label: 'Notes', href: '/', isActive: (r) => r.name === 'home' || r.name === 'note' },
     { label: 'Graph', href: '/graph', isActive: (r) => r.name === 'graph' },
     { label: 'Tokens', href: '/tokens', isActive: (r) => r.name === 'tokens' },
+    { label: 'Settings', href: '/settings', isActive: (r) => r.name === 'settings' },
   ]
 </script>
 

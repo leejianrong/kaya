@@ -44,6 +44,12 @@ describe('parseRoute', () => {
     expect(parseRoute('/tokens/extra')).toEqual({ name: 'unknown', path: '/tokens/extra' })
   })
 
+  it('reads /settings as the settings route (KAN-1815), and a note ref cannot shadow it', () => {
+    expect(parseRoute('/settings')).toEqual({ name: 'settings' })
+    expect(parseRoute('/notes/settings')).toEqual({ name: 'note', ref: 'settings' })
+    expect(parseRoute('/settings/extra')).toEqual({ name: 'unknown', path: '/settings/extra' })
+  })
+
   it('reads /pandan as the pandan-link route (ADR 0012, KAN-1741)', () => {
     expect(parseRoute('/pandan')).toEqual({ name: 'pandan' })
     expect(parseRoute('/pandan/')).toEqual({ name: 'pandan' })
@@ -122,6 +128,7 @@ describe('routeHref', () => {
       '/graph',
       '/tokens',
       '/pandan',
+      '/settings',
       '/device',
     ]) {
       expect(routeHref(parseRoute(path))).toBe(path)

@@ -31,6 +31,7 @@ export type Route =
   | { name: 'graph' }
   | { name: 'tokens' }
   | { name: 'pandan' }
+  | { name: 'settings' }
   | { name: 'device' }
   | { name: 'unknown'; path: string }
 
@@ -71,6 +72,10 @@ export function parseRoute(pathname: string): Route {
     return { name: 'pandan' }
   }
 
+  if (path === '/settings') {
+    return { name: 'settings' }
+  }
+
   if (path === '/device') {
     return { name: 'device' }
   }
@@ -91,6 +96,8 @@ export function routeHref(route: Route): string {
       return '/tokens'
     case 'pandan':
       return '/pandan'
+    case 'settings':
+      return '/settings'
     case 'device':
       return '/device'
     case 'unknown':

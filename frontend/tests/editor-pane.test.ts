@@ -428,7 +428,13 @@ describe("saving, and ADR 0009's precondition", () => {
 
     expect(calls[0].url).toBe('/api/v1/notes/NOTE-6')
     expect(calls[0].method).toBe('PATCH')
-    expect(calls[0].body).toEqual({ body: '# Week of 2026-08-03\nX', if_updated_at: READ_AT })
+    // `format: true` is the browser's default-ON "format on save" (KAN-1815) — the preference read
+    // fails in this stub, which answers the default.
+    expect(calls[0].body).toEqual({
+      body: '# Week of 2026-08-03\nX',
+      if_updated_at: READ_AT,
+      format: true,
+    })
     // Verbatim, not merely equal after parsing. `.123456` survives or every correct write is refused.
     expect(calls[0].body.if_updated_at).toBe(READ_AT)
   })
