@@ -6,8 +6,9 @@
   import { ApiError } from '../lib/api'
   import { needsFetch } from '../lib/backlinks'
   import { type ConflictVersions, keepMinePatch } from '../lib/conflict'
-  import { conflictVersions, needsRemount, syncDocument } from '../lib/editor'
+  import { conflictVersions, needsRemount, syncDocument, syncFormatted } from '../lib/editor'
   import { deleteNote, listLinks, updateNote } from '../lib/notes'
+  import { formatOnSave, primePreferences } from '../lib/preferences'
   import type { Link, Note, NoteUpdate } from '../lib/types'
   import ConflictBanner from './ConflictBanner.svelte'
 
@@ -340,6 +341,15 @@
       },
     )
   }
+
+  /**
+   * KAN-1815: read the "format on save" choice once, at mount, so a save never has to (see
+   * `lib/preferences.ts`). Reads nothing reactive, so it runs exactly once; the shared promise
+   * means a remount or a second pane joins the same request rather than repeating it.
+   */
+  $effect(() => {
+    void primePreferences()
+  })
 
   /**
    * Fetch `/links` when the **note** changes, and never when its content does — `BacklinksPanel`'s
@@ -700,15 +710,29 @@
     saved = null
     resolution = null
     try {
-      const stored = await updateNote(opened.ref, update)
+      // KAN-1815: "format on save", a per-account preference (`lib/preferences.ts`), asked of the
+      // server in the *same* `PATCH` — one save, one `if_updated_at`, the server formats and stores
+      // once. Only a write that carries a body is formattable, and a path- or title-only `PATCH`
+      // never reaches this function.
+      const format = update.body !== undefined && (await formatOnSave())
+      const stored = await updateNote(opened.ref, format ? { ...update, format: true } : update)
       // The next edit is based on the version the server just wrote. Straight off the response, still
       // an opaque string.
       basedOn = stored.updated_at
-      // Against the body that was **sent**, not a flat `false`. A save is a round trip and you can
+      // The server may have stored a *different* body than the one sent (it formatted it). Apply it
+      // through the echo guard as a transaction — never a remount — and only if the editor still
+      // holds exactly what was sent (`syncFormatted`). One undo step, so ⌘/Ctrl-Z gives back the
+      // text as typed. No loop: this dispatch re-enters `onChange` once and sends nothing.
+      if (update.body !== undefined && kit !== null) {
+        syncFormatted(current, update.body, stored.body, kit.HISTORY_ISOLATION)
+      }
+      // Against the body that was **stored**, not a flat `false`. A save is a round trip and you can
       // type during it; clearing the flag unconditionally would mark those keystrokes saved when the
       // request that finished had never seen them, and the next `409` would be a mystery. It is also
-      // what leaves the pane honest after a "keep mine" the user typed past.
-      dirty = current.state.doc.toString() !== update.body
+      // what leaves the pane honest after a "keep mine" the user typed past. Stored rather than sent
+      // because the two differ exactly when the server formatted: after `syncFormatted` the document
+      // *is* the stored body (clean), and if the user typed past the save it is not (still dirty).
+      dirty = current.state.doc.toString() !== stored.body
       saved = `saved · now at ${stored.updated_at}`
       conflict = null
       movedAgain = false

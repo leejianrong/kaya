@@ -31,6 +31,7 @@ over ordinary objects, and only the route modules know FastAPI's routing machine
 - ``tokens.py`` — ADR 0012's ``/tokens`` CRUD (KAN-1739): the one route group in this package
   gated on kaya's own **cookie-session** identity (``app/identity/``) rather than the pandan
   bearer every other route here still resolves through. See its module docstring for why.
+- ``preferences.py`` — KAN-1815: ``/preferences``, per-account settings (format on save).
 - ``pandan_link.py`` — ADR 0012's amendment (KAN-1741): ``/pandan-link``, connecting a kaya account
   to a pandan PAT so ``embeds.py``'s board preview has something of pandan's own to forward, now
   that the caller's own kaya-side bearer no longer is one. Gated on ``get_principal``, same as
@@ -47,6 +48,7 @@ from app.api.meta import router as meta_router
 from app.api.note_claim import router as note_claim_router
 from app.api.notes import router
 from app.api.pandan_link import router as pandan_link_router
+from app.api.preferences import router as preferences_router
 from app.api.refs import NoteRef, invalid_note_ref, parse_note_ref, resolve_note
 from app.api.tokens import router as tokens_router
 
@@ -62,6 +64,7 @@ __all__ = [
     "note_claim_router",
     "pandan_link_router",
     "parse_note_ref",
+    "preferences_router",
     "resolve_note",
     "router",
     "tokens_router",

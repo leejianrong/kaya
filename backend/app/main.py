@@ -27,6 +27,7 @@ from app.api import (
     meta_router,
     note_claim_router,
     pandan_link_router,
+    preferences_router,
     tokens_router,
 )
 from app.api import router as api_router
@@ -178,6 +179,9 @@ app.include_router(tokens_router)
 # argument. Registration order is immaterial against every other router — no other route matches
 # `/pandan-link`.
 app.include_router(pandan_link_router)
+
+# KAN-1815: `/api/v1/preferences` — per-account settings. No other route matches `/preferences`.
+app.include_router(preferences_router)
 
 # ADR 0014 (KAN-1744): RFC 7591 DCR (`/auth/register`) and the authorization_code+PKCE grant
 # (`/auth/authorize*`) — the browser-redirect flow a hosted MCP client completes, sharing
