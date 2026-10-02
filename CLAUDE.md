@@ -99,6 +99,12 @@ for each is in [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md).
   `NoteRead`; a pinned key-list test fails if it ever reaches the wire. Alembic autogenerate does
   *not* diff a generated column's expression — deleting just the `Computed(...)` wrapper produces a
   silent `pass`, not a caught drop.
+- **The formatter protects every `[[…]]` span and declines rather than change a note's link edges**
+  (`app/markdown_format.py`, KAN-1814) — bare `mdformat` rewrites `[[KAN-12]]` to `\[[KAN-12]\]`, which
+  `find_wikilinks` no longer sees, so one save would silently delete a graph edge. Placeholders are the
+  link's own width (table padding), and the result's edges are compared with the input's. The corpus test
+  runs it over every `*.md` in the repo; `format: true` is a body write, so it is guarded by
+  `if_updated_at` even with no `body` sent.
 - **Search order is `ts_rank DESC, note.id DESC`** — the `id` tie-break is load-bearing; equal ranks
   are common, not exotic, and `updated_at` can't substitute (`now()` is transaction start time).
 - **A backlink is found by `resolved_id`, never by title** — keying on the string breaks the moment
