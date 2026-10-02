@@ -30,6 +30,7 @@ from app.identity import models as identity_models  # noqa: F401
 from app.identity import oauth_client as identity_oauth_client  # noqa: F401
 from app.identity import pandan_link as identity_pandan_link  # noqa: F401
 from app.identity import pat as identity_pat  # noqa: F401
+from app.identity import preferences as identity_preferences  # noqa: F401
 from app.models import Base
 
 config = context.config
