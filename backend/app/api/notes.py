@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session
 from app.api.concurrency import enforce_precondition
 from app.api.refs import NoteFromRef
 from app.api.schemas import (
+    FormatCheck,
     NoteCreate,
     NoteList,
     NoteRead,
@@ -62,6 +63,7 @@ from app.auth import (
 )
 from app.db import get_session
 from app.integrations.dependencies import CallerBearer
+from app.markdown_format import format_markdown
 from app.models import Note
 from app.note_links import reconcile_note_links, resolve_pending_note_links
 from app.note_versions import cut_version, note_versions
@@ -237,7 +239,9 @@ def list_note_versions(note: NoteFromRef, session: DbSession) -> NoteVersionList
 
 
 @router.patch("/notes/{ref}", summary="Edit a note, or move it")
-def update_note(note: NoteFromRef, payload: NoteUpdate, session: DbSession) -> NoteRead:
+def update_note(
+    note: NoteFromRef, payload: NoteUpdate, session: DbSession, response: Response
+) -> NoteRead:
     """Change ``title``, ``body`` and/or ``path``. Omitted fields are left alone.
 
     Moving a note between folders is this route with ``{"path": "…"}`` and nothing else — one
@@ -279,6 +283,17 @@ def update_note(note: NoteFromRef, payload: NoteUpdate, session: DbSession) -> N
     enforce_precondition(session, note, payload)
 
     changes = payload.changes()
+    if payload.format:
+        # KAN-1814. After the guard, before anything is applied: a refused write formats nothing,
+        # and a formatted one is still ONE write — the same transaction, version and link
+        # reconcile as any other body change. With no body sent, the *stored* one is formatted, and
+        # a result identical to what is stored is no change at all (no restamp, no version cut).
+        formatted = format_markdown(changes.get("body", note.body))
+        response.headers["X-Kaya-Format"] = (
+            f"skipped; {formatted.reason}" if formatted.outcome == "skipped" else formatted.outcome
+        )
+        if "body" in changes or formatted.text != note.body:
+            changes["body"] = formatted.text
     for field, value in changes.items():
         setattr(note, field, value)
 
@@ -296,6 +311,21 @@ def update_note(note: NoteFromRef, payload: NoteUpdate, session: DbSession) -> N
         session.refresh(note)
 
     return NoteRead.of(note)
+
+
+@router.get("/notes/{ref}/format-check", summary="Would formatting change this note?")
+def check_format(note: NoteFromRef) -> FormatCheck:
+    """KAN-1814: report whether ``PATCH`` with ``format: true`` would change the stored body.
+
+    Read-only — nothing is written, ``updated_at`` does not move. The agent hint ("run `kaya note
+    format`") and ``--check`` are both this call.
+    """
+    result = format_markdown(note.body)
+    return FormatCheck(
+        changed=result.outcome == "formatted",
+        changed_lines=result.changed_lines,
+        reason=result.reason,
+    )
 
 
 @router.delete(
