@@ -128,6 +128,7 @@ GET = "get"
 CREATE = "create"
 EDIT = "edit"
 MOVE = "move"
+FORMAT = "format"
 DELETE = "delete"
 EXPORT = "export"
 IMPORT = "import"
@@ -242,7 +243,11 @@ def _note_get(client: KayaClient, args: Namespace) -> Payload:
 
 def _note_create(client: KayaClient, args: Namespace) -> Payload:
     return client.create_note(
-        args.title, body=resolve_body(args), path=args.path, team_id=args.team
+        args.title,
+        body=resolve_body(args),
+        path=args.path,
+        team_id=args.team,
+        format_hint=True,
     )
 
 
@@ -253,11 +258,18 @@ def _note_edit(client: KayaClient, args: Namespace) -> Payload:
         body=resolve_body(args),
         path=args.path,
         if_updated_at=args.if_updated_at,
+        format_hint=True,
     )
 
 
 def _note_move(client: KayaClient, args: Namespace) -> Payload:
     return client.move_note(args.ref, args.path)
+
+
+def _note_format(client: KayaClient, args: Namespace) -> Payload:
+    """`note format <ref> [--check]` (KAN-1816): one client call, like `move` — no endpoint of its
+    own. The client refuses `--check` with a precondition."""
+    return client.format_note(args.ref, check=args.check, if_updated_at=args.if_updated_at)
 
 
 def _note_delete(client: KayaClient, args: Namespace) -> Payload:
@@ -392,6 +404,7 @@ VERBS: Mapping[tuple[str | None, str | None], Verb] = {
     (NOTE, CREATE): _note_create,
     (NOTE, EDIT): _note_edit,
     (NOTE, MOVE): _note_move,
+    (NOTE, FORMAT): _note_format,
     (NOTE, DELETE): _note_delete,
     (NOTE, EXPORT): _note_export,
     (NOTE, IMPORT): _note_import,

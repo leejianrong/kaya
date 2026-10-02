@@ -1,6 +1,8 @@
 [project]
 name = "kaya-mcp"
-version = "0.5.0"
+# 0.6.0 — KAN-1816: `edit_note` gains a `format` boolean (ADR 0015 amendment; no 16th tool), and a
+# write that would change under format carries a `help` hint. Behavioural, so a minor bump.
+version = "0.6.0"
 description = "kaya's MCP server — a thin adapter over kaya-client"
 readme = "README.md"
 license = "Apache-2.0"

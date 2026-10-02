@@ -61,7 +61,7 @@ def get_note(ref: str) -> Payload:
 def create_note(title: str, *, body: str | None, path: str | None) -> Payload:
     """`create_note`. A write — no `fields` here or on the tool above it (ADR 0006 §1)."""
     with _client() as client:
-        return client.create_note(title, body=body, path=path)
+        return client.create_note(title, body=body, path=path, format_hint=True)
 
 
 def edit_note(
@@ -71,11 +71,21 @@ def edit_note(
     body: str | None,
     path: str | None,
     if_updated_at: str | None,
+    format: bool = False,  # noqa: A002 - the wire field's own name, same as the client's
 ) -> Payload:
-    """`edit_note`: a `PATCH`, guarded only when `if_updated_at` is given (ADR 0009)."""
+    """`edit_note`: a `PATCH`, guarded only when `if_updated_at` is given (ADR 0009).
+
+    `format` (KAN-1816) is the same `PATCH` with the server's formatter on — `kaya note format`'s
+    request. A format-only call is `ref` + `format=True` (+ the precondition)."""
     with _client() as client:
         return client.update_note(
-            ref, title=title, body=body, path=path, if_updated_at=if_updated_at
+            ref,
+            title=title,
+            body=body,
+            path=path,
+            if_updated_at=if_updated_at,
+            format=format,
+            format_hint=True,
         )
 
 

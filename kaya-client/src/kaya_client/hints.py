@@ -176,6 +176,24 @@ reader can check exhaustively, and so `kaya-cli`'s parse test can iterate every 
 exists rather than only the ones some fixture happens to reach."""
 
 
+FORMAT_COMMAND = f"{PROG} note format <ref>"
+"""KAN-1816: the one conditional hint. Unlike every row in `HINTS` it is offered only when the body
+just saved would change under `note format` (`Payload.format_changed_lines`, set by
+`KayaClient.create_note`/`update_note` after a read-only probe), so a formatted note gets no hint at
+all — a hint on every write is noise and teaches agents to ignore it. The placeholder stays a
+placeholder like every other template; the count is the only value from the payload, and it is a
+number, never text from the note. `kaya-cli/tests/test_help_templates.py` parses this command."""
+
+
+def format_help_lines(payload: Payload) -> tuple[str, ...]:
+    """The format hint for a just-written note, or ``()``. Names the command and the line count."""
+    lines = payload.format_changed_lines
+    if payload.noun != NOTE_NOUN or payload.kind is not Kind.ENTITY or not lines:
+        return ()
+    unit = "line" if lines == 1 else "lines"
+    return (f"{FORMAT_COMMAND}  # {lines} {unit} would change",)
+
+
 def help_lines(payload: Payload) -> tuple[str, ...]:
     """The commands this payload suggests next, unprefixed, placeholders unfilled.
 
@@ -194,7 +212,8 @@ def help_lines(payload: Payload) -> tuple[str, ...]:
             "never from a verb name passed in (ADR 0005 §contract 8)"
         )
     hints = HINTS.get((payload.kind, payload.noun), ())
-    return tuple(hint.template for hint in hints if payload.records or not hint.addresses_a_row)
+    static = tuple(hint.template for hint in hints if payload.records or not hint.addresses_a_row)
+    return (*static, *format_help_lines(payload))
 
 
 def help_block(payload: Payload) -> str | None:

@@ -82,3 +82,24 @@ Outline's patch tool and breadcrumbs, Notion's markdown-first agent API.
 - **One `exec kaya` tool.** Rejected for the same reason as in pandan ADR 0019: the hosted server has no
   binary to exec.
 - **A tool per edit operation.** Larger resident schema for no gain in expressiveness.
+
+## Amendment (2026-10-02, KAN-1816): the format operation, before the operation list exists
+
+Decision 2 (a list-of-operations `edit_note`) is accepted on paper only. Checked against
+`mcp/src/kaya_mcp/` on this date: `edit_note` is still the single-operation tool ADR 0006 froze
+(`ref`, `title`, `body`, `path`, `if_updated_at`), there is no operation list, no `note_outline`, and
+the server still registers six tools.
+
+The explicit markdown format pass (KAN-1813, server engine KAN-1814) needed an MCP spelling now. The
+smallest compatible one is a `format` boolean on the existing `edit_note`: the same `PATCH` the CLI's
+`kaya note format` makes, with the formatter on. `edit_note(ref, format=True)` is a format-only call.
+It is not a 16th tool, and `mcp/tests/test_cli_parity.py` pins it as a subset of the CLI.
+
+- **When the operation list lands, `format` folds into it** as one more operation beside
+  `replace_section` and the rest, and the boolean is removed in the same change.
+- Writes are never formatted implicitly. A create or edit whose saved body would change under format
+  carries a `help` hint naming `kaya note format <ref>` and the changed line count; a formatted body
+  carries nothing.
+- **Resident schema, re-measured** with `mcp/scripts/measure_schema_compaction.py` (`o200k_base`):
+  the whole `tools/list` reply goes 785 to 819 tokens (+34), input schemas alone 265 to 275. 819 is
+  the ceiling for precondition 5 until the next tool or argument lands.

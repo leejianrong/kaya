@@ -84,6 +84,7 @@ from kaya_cli.parsing import (
     API_URL_FLAG,
     BODY_FILE_FLAG,
     BODY_FLAG,
+    CHECK_FLAG,
     NO_TEXT_LIMIT,
     OUT_FLAG,
     PATH_FLAG,
@@ -112,8 +113,9 @@ typed a command — the worst way for a product description to be inconsistent."
 EPILOGUE = (
     "Bare `kaya` prints this build, where it is installed, and your five most recently updated\n"
     "notes. Notes: `note list`, `note get <ref>`, `note create <title>`, `note edit <ref>`,\n"
-    "`note move <ref> <path>`, `note delete <ref>`. Links: `links <ref>` for what a note points\n"
-    "at, `backlinks <ref>` for what points at it. Export/import (R12): `note export <ref>`,\n"
+    "`note move <ref> <path>`, `note format <ref> [--check]`, `note delete <ref>`. Links:\n"
+    "`links <ref>` for what a note points at, `backlinks <ref>` for what points at it.\n"
+    "Export/import (R12): `note export <ref>`,\n"
     "`note import <file>`, `export-all <dir>`, `import-all <dir>`. Configuration:\n"
     "`config show`, `config set`, `config path`. Sign in (R20): `auth login` (device flow),\n"
     "`auth logout`, `auth check`. Ambient session context (R18): `context install`\n"
@@ -238,9 +240,7 @@ def build_parser() -> StructuredParser:
     auth = commands.add_parser(verbs.AUTH, help=AUTH_HELP, description=AUTH_HELP)
     _add_auth_verbs(auth.add_subparsers(dest="subcommand", required=True), flags)
 
-    context_group = commands.add_parser(
-        verbs.CONTEXT, help=CONTEXT_HELP, description=CONTEXT_HELP
-    )
+    context_group = commands.add_parser(verbs.CONTEXT, help=CONTEXT_HELP, description=CONTEXT_HELP)
     _add_context_verbs(context_group.add_subparsers(dest="subcommand", required=True), flags)
 
     _add_link_verbs(commands, flags)
@@ -250,7 +250,7 @@ def build_parser() -> StructuredParser:
 
 
 def _add_note_verbs(note_commands, flags: argparse.ArgumentParser) -> None:
-    """`note {list,get,create,edit,move,delete}`: one subparser each, all with the output flags.
+    """`note {list,get,create,edit,move,format,delete}`: one subparser each, all with output flags.
 
     ``dest="subcommand"`` is shared with the `config` group so `verbs.run` dispatches on one pair
     of attributes rather than on a per-group name it would have to know in advance.
@@ -335,6 +335,33 @@ def _add_note_verbs(note_commands, flags: argparse.ArgumentParser) -> None:
     )
     move.add_argument("ref", help=REF_HELP)
     move.add_argument("path", help="where to file it, e.g. archive/2026/groceries.md")
+
+    format_ = note_commands.add_parser(
+        verbs.FORMAT,
+        parents=[flags],
+        help="format a note's body (explicit; no write is ever formatted implicitly)",
+        description=(
+            "Format a note's markdown body. The same PATCH as `note edit`, with the server's "
+            "formatter switched on (KAN-1816); no endpoint of its own, like `note move`. "
+            "--check reports whether the body would change and by how many lines, and writes "
+            "nothing."
+        ),
+    )
+    format_.add_argument("ref", help=REF_HELP)
+    format_.add_argument(
+        CHECK_FLAG,
+        action="store_true",
+        help="report {changed, changed_lines} and write nothing",
+    )
+    format_.add_argument(
+        PRECONDITION_FLAG,
+        default=None,
+        metavar="TIMESTAMP",
+        help=(
+            "the updated_at you read, echoed back: the write is refused with a 409 if the note "
+            "has changed since (ADR 0009). Not valid with --check"
+        ),
+    )
 
     delete = note_commands.add_parser(
         verbs.DELETE,

@@ -73,9 +73,13 @@ marked ¹ for why that is not a shortcut:
 | `list_notes` | `list_notes()` | `kaya note list` |
 | `get_note` | `get_note(ref)` | `kaya note get <ref>` |
 | `create_note` | `create_note(...)` | `kaya note create <title>` |
-| `edit_note` | `update_note(...)` | `kaya note edit <ref>` |
+| `edit_note` | `update_note(...)` | `kaya note edit <ref>`² |
 | `search_notes` | `list_notes(q)` | `kaya note list --q <term>`¹ |
 | `get_backlinks` | `backlinks(ref)` | `kaya backlinks <ref>` |
+
+² `edit_note(format=True)` is `kaya note format <ref>` (KAN-1816): the same `PATCH` with the server's
+formatter on, never implicit. `tests/test_cli_parity.py` pins that the argument exists and the verb
+does. The format operation folds into ADR 0015's operation list when that lands (see its amendment).
 
 ¹ The only row where the tool name and the CLI word differ, and the only one where two tools share a
 client method: there is no separate search call, because `GET /api/v1/notes?q=` answers with the same
@@ -146,6 +150,10 @@ Measured on these six tools, `o200k_base`, re-runnable with
 |---|---|---|
 | input schemas only | 1,633 → 1,022 (−37.4%) | 428 → 265 (−38.1%) |
 | whole `tools/list` reply | 3,701 → 3,090 (−16.5%) | 948 → 785 (−17.2%) |
+
+KAN-1816 added one boolean (`edit_note.format`) and one docstring line, still six tools. Same script,
+`o200k_base`: input schemas 428 → 275 (−35.7%), whole reply 4,037 → 3,227 bytes, **948 → 819
+tokens (−13.6%)**, i.e. **+34 resident tokens** over the 785 above, which is the new ceiling.
 
 **Read the second row, and read it beside the other number.** The first row is the biggest honest
 percentage and the narrower thing — it is what changed, not what a host holds. The second is the

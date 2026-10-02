@@ -366,6 +366,7 @@ def test_the_advertised_schema_is_pinned_byte_for_byte(fake_api) -> None:
                 "body": {"default": None, "type": ["string", "null"]},
                 "path": {"default": None, "type": ["string", "null"]},
                 "if_updated_at": {"default": None, "type": ["string", "null"]},
+                "format": {"default": False, "type": "boolean"},
             },
             "required": ["ref"],
             "type": "object",

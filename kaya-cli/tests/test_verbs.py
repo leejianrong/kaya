@@ -20,8 +20,7 @@ from kaya_cli import verbs
 from kaya_cli.__main__ import build_parser, main
 
 LIST_ROWS = (
-    "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list\n\n2 notes\n\n"
-    + LIST_HELP
+    "NOTE-12  Groceries       home/groceries.md\nNOTE-3   A reading list\n\n2 notes\n\n" + LIST_HELP
 )
 """`kaya-client/tests/test_human_row_is_pinned.py`'s literal, character for character.
 
@@ -274,6 +273,7 @@ def test_the_published_verb_set_is_pinned() -> None:
         ("note", "create"),
         ("note", "edit"),
         ("note", "move"),
+        ("note", "format"),
         ("note", "delete"),
         ("note", "export"),
         ("note", "import"),
