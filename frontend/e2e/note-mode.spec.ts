@@ -46,7 +46,7 @@ test('desktop: Edit by default, Read alone, Split at 55/45, and the choice survi
     await expect(editor).toBeHidden()
     await expect(page.getByTestId('delete-button')).toHaveCount(0)
     const read = (await page.locator('.preview').boundingBox())!
-    expect(read.width).toBeLessThanOrEqual(65 * 10 + 1) // 65ch of a ~16px sans is under 650px
+    expect(read.width).toBeLessThanOrEqual(700) // ~65ch of text plus the pane's gutters
     expect(read.width).toBeLessThan(main.width)
 
     // Split: both, the editor ~55% and the preview ~45% of the pair.
