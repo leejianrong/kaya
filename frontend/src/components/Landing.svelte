@@ -14,6 +14,7 @@
 -->
 <script lang="ts">
   import { githubLoginUrl, IdentityError } from '../lib/identity'
+  import Logo from './Logo.svelte'
   import { interceptClick } from '../lib/router'
 
   const {
@@ -79,6 +80,7 @@
 
 <main class="landing">
   <section class="hero">
+    <div class="hero-mark"><Logo size={72} /></div>
     <h1>The same note, on every surface.</h1>
     <p class="subhead">
       Cloud-hosted markdown notes, wikilinks and backlinks built in. Every action here is a plain
@@ -184,6 +186,12 @@ Blocked on <span class="demo-wikilink">[[Board embed follow-ups]]</span> until t
 
   .hero {
     text-align: center;
+  }
+
+  .hero-mark {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 1.25rem;
   }
 
   h1 {

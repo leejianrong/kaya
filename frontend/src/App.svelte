@@ -5,6 +5,7 @@
   import EditorPane from './components/EditorPane.svelte'
   import GraphView from './components/GraphView.svelte'
   import Landing from './components/Landing.svelte'
+  import Logo from './components/Logo.svelte'
   import ModeSwitch from './components/ModeSwitch.svelte'
   import NavColumn from './components/NavColumn.svelte'
   import PandanConnect from './components/PandanConnect.svelte'
@@ -555,7 +556,10 @@
         <span aria-hidden="true">&larr;</span> Notes
       </a>
     {:else}
-      <a class="brand" href="/" onclick={(event) => interceptClick(event, '/')}>kaya</a>
+      <a class="brand" href="/" onclick={(event) => interceptClick(event, '/')}>
+        <Logo size={26} />
+        <span>kaya</span>
+      </a>
     {/if}
     <span class="tagline">markdown notes, API-first</span>
     {#if regions.detail === 'on-demand'}
@@ -735,7 +739,7 @@
 
   .topbar {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 0.75rem;
     grid-area: topbar;
     min-width: 0;
@@ -747,6 +751,12 @@
   /* The toggles sit at the right edge of the bar. */
   .topbar > .toggle:first-of-type {
     margin-left: auto;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
   }
 
   .brand,
