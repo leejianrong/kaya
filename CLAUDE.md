@@ -2,178 +2,157 @@
 
 ## What this is
 
-A cloud-hosted markdown notes app, API-first and agent-drivable — the docs half of the `kayatoast`
+A cloud-hosted markdown notes app, API-first and agent-drivable: the docs half of the `kayatoast`
 suite, sibling to [pandan](https://github.com/leejianrong/pandan) (the kanban board). Where pandan
 tracks *work*, kaya holds the *knowledge*.
 
 Five packages, one dependency arrow (ADR 0001): `kaya-cli` and `mcp/` are thin adapters over
-`kaya-client` (all payload shaping — projection, truncation, aggregates, serialization — lives there,
-never in an adapter); `frontend/` is a browsable SPA that calls `backend/` directly; nothing depends
-on an adapter — **with one narrow, deliberate exception since KAN-1744**: `backend/app/identity/
-mcp_host.py` imports `kaya_mcp.server.server` to host its Streamable HTTP transport on the same
-origin (ADR 0014's own section argues why; `kaya-client` itself gains no new dependency either way).
+`kaya-client` (all payload shaping, meaning projection, truncation, aggregates and serialization,
+lives there, never in an adapter); `frontend/` is a SPA that calls `backend/` directly; nothing
+depends on an adapter, **with one narrow, deliberate exception since KAN-1744**:
+`backend/app/identity/mcp_host.py` imports `kaya_mcp.server.server` to host the Streamable HTTP
+transport on the same origin (ADR 0014 argues why).
 
-**Status: the MVP is done, and kaya is past it.** All six planned slices shipped (V1 backend, V2a/V2b
-CLI, V3 SPA editor, V4 search, V5 cross-linking including wikilink autocomplete, V6 MCP — all six MCP
-tools work); `docs/PLAN.md`'s R0–R9 are a closed, frozen record. Work now underway is **post-MVP**,
-tracked as R10 onward in `docs/PLAN.md` §Beyond the MVP and shaped in
-[`docs/roadmap/BREADBOARD.md`](docs/roadmap/BREADBOARD.md): a graph view, an embedded board view,
-export/import, version history, attachments, and an independent Fly.io deploy have all shipped
-(EPIC-135's own DNS/TLS finishing touch is the one piece still open, needs-human on a domain the
-maintainer chose to defer). An org/team model (R16, ADR 0011) is now under active build, unblocked once
-pandan shipped its own Teams milestone. Pandan board 18 ("kaya — Notes") is the day-to-day source of
-truth for what's in flight; read it before trusting this paragraph's snapshot.
-**The published binary lags `main`** — check `gh release list --repo leejianrong/kaya` and each
-package's `pyproject.toml` version before trusting a specific number quoted in any doc, this file
-included. Full slice-by-slice history, every measured number, and the KAN-card provenance behind each
-rule below live in [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md) — read it when you need the
-*why* in full, not for day-to-day work.
+**Status: past the MVP.** `docs/PLAN.md`'s R0-R9 are a closed, frozen record. Post-MVP work (R10
+onward, `docs/PLAN.md` §Beyond the MVP, shaped in
+[`docs/roadmap/BREADBOARD.md`](docs/roadmap/BREADBOARD.md)) has shipped a graph view, board embeds,
+export/import, version history, attachments, a Fly.io deploy, a Settings page with format-on-save,
+standalone identity (EPIC-283), device-flow login and a hosted remote MCP endpoint (EPIC-284, docs
+pass pending), and a mobile-first shell with a Read/Edit/Split mode switch (EPIC-305). Open: the
+org/team model (R16, ADR 0011), brand and landing page (EPIC-306), and Fly DNS/TLS (needs-human).
+Pandan board 18 ("kaya - Notes") is the source of truth for what is in flight; read it before
+trusting this paragraph.
+**The published binary lags `main`**: check `gh release list --repo leejianrong/kaya` and each
+package's `pyproject.toml` before trusting a version number quoted in any doc, this file included.
+The full history, every measured number and the KAN-card provenance behind each rule below live in
+[`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md); read it for the *why*, not for day-to-day work.
 
 **Trust the code over the docs.** When this file and the repository disagree, the repository is
 right and this file is stale. Fix it in the same PR.
 
 ## How the docs relate
 
-[`docs/kaya-vision.md`](docs/kaya-vision.md) (settled intent) → [`docs/PLAN.md`](docs/PLAN.md) +
-[`docs/adr/`](docs/adr/) (the *why*, thirteen ADRs — amend, don't re-litigate) →
-[`docs/SLICES.md`](docs/SLICES.md) (the seven **MVP** build slices, matching board 18's original seven
-epics) → [`docs/roadmap/BREADBOARD.md`](docs/roadmap/BREADBOARD.md) (everything after — board 18 has
-grown four more epics since), with [`docs/QUESTIONS.md`](docs/QUESTIONS.md) as the decision register (a
-row marked `ASSUMED` was taken on the maintainer's behalf — correct it if wrong). "pandan ADR NNNN" means
-an ADR in the pandan repo; bare "ADR NNNN" means this repo's. Read `PLAN.md` before anything substantial.
+[`docs/kaya-vision.md`](docs/kaya-vision.md) (intent) → [`docs/PLAN.md`](docs/PLAN.md) +
+[`docs/adr/`](docs/adr/) (the *why*; amend, don't re-litigate) →
+[`docs/SLICES.md`](docs/SLICES.md) (the seven MVP slices) →
+[`docs/roadmap/BREADBOARD.md`](docs/roadmap/BREADBOARD.md) (everything after), with
+[`docs/QUESTIONS.md`](docs/QUESTIONS.md) as the decision register (a row marked `ASSUMED` was taken
+on the maintainer's behalf; correct it if wrong). "pandan ADR NNNN" is an ADR in the pandan repo;
+bare "ADR NNNN" is this repo's. `docs/guide/` is the published user site (Zensical) and is separate
+from the planning docs. Read `PLAN.md` before anything substantial.
 
-## The five decisions you will trip over if you don't know them
+## The decisions you will trip over
 
 1. **Payload shaping lives in `kaya-client`, never in an adapter** ([ADR 0004](docs/adr/0004-shaping-lives-in-the-shared-client.md)).
    `kaya_cli.verbs` opens a session, calls one client method, returns a `Payload`; `__main__.main`
-   calls `render()` on exactly one line. Pandan put shaping in its CLI instead, so its MCP adapter
-   inherited none of it (44,902 tokens vs 2,689 for the same read).
-2. **Kaya mints and verifies its own credentials now** ([ADR 0012](docs/adr/0012-standalone-identity.md),
-   **supersedes [ADR 0002](docs/adr/0002-identity-pandan-as-provider.md)**, cut over KAN-1740).
-   `get_principal` resolves a cookie session or a `kaya_pat_…` bearer against kaya's own
-   `kaya_account`/`kaya_session`/`personal_access_token` tables (`app/identity/`,
-   `app/auth/kaya_principal.py`) — a local, indexed lookup, never a call to pandan. **Existing
-   notes' `owner_id` still points at the retired pandan-mirror `user` table** and is not reachable
-   under a new `KayaAccount` id; that is a deliberate, accepted cutover cost
-   (`docs/roadmap/BREADBOARD.md`'s R19 section), not a bug. **The board-embed preview needs its own,
-   explicitly-connected pandan credential now** (KAN-1741) — `/api/v1/pandan-link` stores one PAT
-   per kaya account, encrypted (`app/identity/pandan_link.py`), and `app/api/embeds.py` forwards
-   *that*, never the caller's own kaya-side bearer, which stopped being a pandan credential the same
-   cutover made. EPIC-283 is closed as of KAN-1741. **EPIC-284's first two cards are done.**
-   KAN-1743: `kaya auth login/logout/check` (ADR 0013) — RFC 8628 device-flow login against kaya's
-   own authorization server, a new `device_authorization` table, and a `/device` consent screen
-   (`DeviceApproval.svelte`). The CLI's third verb is spelled `check`, not pandan's `auth status` —
-   `context` already owns that bare word (`mcp/tests/test_cli_parity.py`'s reader refuses two verbs
-   sharing one). KAN-1744: a hosted remote MCP endpoint (ADR 0014) — Streamable HTTP mounted on the
-   same backend (`app/identity/mcp_host.py`), RFC 9728/8414 discovery, RFC 7591 DCR + CIMD client
-   registration, and RFC 8707 resource binding via a **new authorization_code+PKCE grant** ADR 0013
-   hadn't specified — the identical gap pandan hit building its own EPIC-282 (ADR 0026), fixed the
-   same way except kaya mints an ordinary, long-lived `kaya_pat_…` rather than adding refresh-token
-   rotation (ADR 0014's own "deliberate simplification" section). Its docs pass (KAN-1745) is next
-   — check the board before assuming this paragraph is the final word.
+   calls `render()` on exactly one line.
+2. **Kaya mints and verifies its own credentials** ([ADR 0012](docs/adr/0012-standalone-identity.md),
+   supersedes ADR 0002). `get_principal` resolves a cookie session or a `kaya_pat_…` bearer against
+   kaya's own tables (`app/identity/`, `app/auth/kaya_principal.py`), a local lookup that never calls
+   pandan. Sign-in is GitHub OAuth; the CLI uses device flow (`kaya auth login/logout/check`, ADR 0013;
+   the verb is `check`, not `status`, because `context` already owns that word); the hosted MCP endpoint
+   is Streamable HTTP at `/mcp` (ADR 0014, authorization_code+PKCE, long-lived `kaya_pat_…`, no refresh
+   rotation). Existing notes' `owner_id` still points at the retired pandan-mirror `user` table and is
+   unreachable under a new `KayaAccount` id: an accepted cutover cost (BREADBOARD R19), not a bug. The
+   board-embed preview uses its own explicitly linked pandan credential (`/api/v1/pandan-link`,
+   `app/api/embeds.py`), never the caller's kaya bearer. Card-by-card detail is in ENGINEERING_NOTES.
 3. **`render()`'s signature is frozen** ([ADR 0005](docs/adr/0005-born-agent-conformant.md)). If a
-   change needs to alter it, stop — that's the sequencing violated, not a reason to push through.
-   Six shipped features found another answer (e.g. `Payload.limited_to()` applied at the call site).
+   change needs to alter it, stop: that is the sequencing violated. Six shipped features found
+   another answer (e.g. `Payload.limited_to()` applied at the call site).
 4. **Nothing in kaya may block on pandan** ([ADR 0003](docs/adr/0003-cross-linking-one-way-soft.md)).
-   A note saves, renders and appears in search with pandan down. Wikilink resolution degrades to
-   unresolved. Team-default access (ADR 0011) still calls pandan and still soft-fails the same way.
-   Authentication used to be the one *hard* exception ADR 0002 accepted knowingly — ADR 0012 removed
-   it (KAN-1740): kaya no longer calls pandan to authenticate anyone, ever.
+   A note saves, renders and appears in search with pandan down; wikilink resolution degrades to
+   unresolved; team-default access (ADR 0011) soft-fails the same way. Kaya never calls pandan to
+   authenticate anyone.
 5. **A note's identity is its `NOTE-n` ref, never its path or title** ([ADR 0008](docs/adr/0008-note-identity.md)).
    `path` is mutable metadata; moving a note is a `PATCH` to one column, no link rewriting.
 
+## The frontend shell (KAN-1818/1819)
+
+New UI work starts at `frontend/src/lib/windowClass.ts`: the window class (`compact` < 600 <=
+`medium` < 840 <= `expanded`) is the one structural signal for what renders. Three pure modules, each
+unit-tested without a browser, decide everything; components only consume them.
+
+- **`lib/windowClass.ts`** owns the 600/840 breakpoints. CSS cannot import them, so stylesheets
+  mirror the numbers, and `tests/window-class.test.ts` fails if a shell stylesheet uses any other
+  width (the one allowance is the 60rem split stack). Do not invent a third breakpoint.
+- **`lib/shell.ts`** (`shellRegions`) says which regions render: compact is a bottom nav with the
+  list and the note as separate screens and the backlinks/history rail behind a control; medium puts
+  the rail below the note; expanded has it beside.
+- **`lib/noteMode.ts`** owns Read | Edit | Split (`ModeSwitch.svelte`). It replaced the Preview
+  toggle, which is gone. Split exists only at `expanded` and is *hidden*, never disabled, below 840;
+  expanded opens in Edit, narrower opens a saved note in Read and a just-created one in Edit. The mode
+  changes the layout around `EditorPane`, never its mount.
+- Tokens, the pandan link and format-on-save live under **Settings** now (routes `/tokens`,
+  `/pandan` unchanged); `tokens` and `device` render in `main` alone and are reachable with no
+  credential.
+
 ## Rules that aren't visible in any one file
 
-These have tests; you'll meet them as a failing build otherwise. Full incident/measurement account
-for each is in [`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md).
+These have tests; you will meet them as a failing build otherwise. Full accounts are in
+[`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md).
 
-- **Every note identifier resolves through `backend/app/api/refs.py`** — a route never parses one
+- **Every note identifier resolves through `backend/app/api/refs.py`**: a route never parses one
   itself; it depends on `NoteFromRef` and gets a `Note`.
-- **A note *list* query is scoped in SQL inside `app/auth/authorization.py`, and nowhere else** —
-  `tests/unit/test_no_unscoped_note_query.py` checks this at the AST/statement level, not by
-  convention. A *single*-note fetch is deliberately unscoped (so `authorize_note` can distinguish
-  404 from 403). `note_link` queries are checked separately (rule 3): that table has no owner
-  column, so anything touching it must constrain `source_note_id`.
+- **A note *list* query is scoped in SQL inside `app/auth/authorization.py`, and nowhere else**;
+  `tests/unit/test_no_unscoped_note_query.py` checks it at the AST/statement level. A *single*-note
+  fetch is deliberately unscoped (so `authorize_note` can tell 404 from 403). `note_link` has no
+  owner column, so any query touching it must constrain `source_note_id`.
 - **`note.search_vector` is Postgres-generated (`Computed(..., persisted=True)`) and nothing else may
-  write it** — assigning it raises `psycopg.errors.GeneratedAlways`. It's `deferred` and absent from
-  `NoteRead`; a pinned key-list test fails if it ever reaches the wire. Alembic autogenerate does
-  *not* diff a generated column's expression — deleting just the `Computed(...)` wrapper produces a
-  silent `pass`, not a caught drop.
+  write it.** It is `deferred` and absent from `NoteRead` (a pinned key-list test). Alembic
+  autogenerate does *not* diff a generated column's expression: deleting just the `Computed(...)`
+  wrapper is a silent `pass`.
 - **The formatter protects every `[[…]]` span and declines rather than change a note's link edges**
-  (`app/markdown_format.py`, KAN-1814) — bare `mdformat` rewrites `[[KAN-12]]` to `\[[KAN-12]\]`, which
-  `find_wikilinks` no longer sees, so one save would silently delete a graph edge. Placeholders are the
-  link's own width (table padding), and the result's edges are compared with the input's. The corpus test
-  runs it over every `*.md` in the repo; `format: true` is a body write, so it is guarded by
-  `if_updated_at` even with no `body` sent.
-- **Search order is `ts_rank DESC, note.id DESC`** — the `id` tie-break is load-bearing; equal ranks
-  are common, not exotic, and `updated_at` can't substitute (`now()` is transaction start time).
-- **A backlink is found by `resolved_id`, never by title** — keying on the string breaks the moment
-  the target is renamed. An edge with `resolved_id IS NULL` is a link to a title, not yet a note.
-- **`/links` may call pandan; it may never hold a Postgres connection while doing it** — the route
-  releases its connection (`_release_the_connection`, a commit) before resolving, because sync
-  handlers share a 40-thread pool with note *saves*.
-- **Never log a header, a request object, or anything built from a bearer** — redaction happens at
-  serialization (`app/observability/`), so every call site is covered regardless of the author.
-- **The SPA fallback (`app/spa.py`) refuses a fixed list of reserved namespaces** rather than
-  matching-all-then-excepting — `/api/v1/notes/NOTE-9999` must stay a `404`, not become `200
-  text/html`.
-- **Svelte owns the editor's `<div>` container and never its children** (`EditorPane.svelte`, PLAN
-  §S9) — zero template children, everything inside built imperatively by CM6. The identity guard
-  (`needsRemount`) and the echo guard (`needsDispatch`/`syncDocument`) in `lib/editor.ts` are pure
-  predicates and are not interchangeable; `view.destroy()` lives in a *second* effect that reads
-  nothing, never in the mount effect's cleanup (Svelte cleans up before every re-run).
-- **CodeMirror and the markdown-preview parser are both behind a lazy `import()`, and only inside the
-  effect that reads nothing** (`lib/codemirror.ts`, `lib/markdown.ts`) — an `await` in the mount
-  effect itself risks two views in one host. `tests/module-graph.ts`'s AST scanner is the guard that
-  nothing else in `src/` value- or static-imports `@codemirror/*` except that one file.
-- **A search is never rendered by the folder tree** (`Sidebar.svelte`) — grouping by `path` destroys
-  `ts_rank` order, so a search forces the flat list and hides (not disables) the view toggle while
-  active.
-- **One module owns "the bearer for a request"** (`lib/auth.ts`) — token lives in `sessionStorage`,
-  never `localStorage` or a cookie (it's a live `kaya_pat_…` credential since KAN-1740's cutover,
-  and the live preview renders arbitrary markdown to HTML in the same origin).
-  `credentialState()` returns `set`/`not set` only — never a length or a masked fragment. Separate
-  from `lib/identity.ts`'s cookie-session seam (the Tokens page, KAN-1739) on purpose — two
-  different credential types serving two different purposes, never merged into one module.
-- **A linked pandan PAT is encrypted at rest, never hashed** (`app/identity/pandan_link.py`, ADR
-  0012's amendment, KAN-1741) — kaya's own PATs are hashed because kaya only ever verifies one was
-  presented; a linked pandan PAT must be handed back to pandan raw on every board-embed render, so a
-  one-way hash cannot work here. `Fernet`, keyed from `KAYA_AUTH_SECRET` — rotating that secret
-  invalidates every stored link the same way it already invalidates every cookie session and kaya
-  PAT hash. **`app/integrations/card_resolution.py` (wikilink resolution) has the identical
-  now-broken-bearer problem KAN-1741 fixed for board embeds** (both used to forward the caller's own
-  kaya-side bearer, which stopped being a pandan credential at `KAN-1740`) **and is not yet fixed** —
-  a known, explicitly-tracked gap, not something papered over; it degrades to "unresolved" rather
-  than failing loudly (ADR 0003), which is why it was sequenced after the board-embed preview rather
-  than blocking it.
-- **A `PATCH` is guarded only if `if_updated_at` is sent, and only over `body`** (ADR 0009) — a
-  title/path-only write is unguarded even with a stale precondition. The CLI's only guard flag is
-  `--if-updated-at`; there is no `--force`, and the client never fetches the precondition itself
-  (that would narrow the guarantee to a race inside the read window).
-- **`kaya note move` delegates to `update_note`, never its own endpoint** (ADR 0008) — pinned
+  (`app/markdown_format.py`): bare `mdformat` turns `[[KAN-12]]` into `\[[KAN-12]\]` and one save
+  would delete a graph edge. `format: true` is a body write, so `if_updated_at` guards it.
+- **Search order is `ts_rank DESC, note.id DESC`**; the `id` tie-break is load-bearing (equal ranks
+  are common, and `updated_at` can't substitute: `now()` is transaction start).
+- **A backlink is found by `resolved_id`, never by title.** An edge with `resolved_id IS NULL` is a
+  link to a title, not yet a note.
+- **`/links` may call pandan; it may never hold a Postgres connection while doing it**
+  (`_release_the_connection`): sync handlers share a 40-thread pool with note saves.
+- **Never log a header, a request object, or anything built from a bearer.** Redaction happens at
+  serialization (`app/observability/`).
+- **The SPA fallback (`app/spa.py`) refuses a fixed list of reserved namespaces**, so
+  `/api/v1/notes/NOTE-9999` stays a `404`, not `200 text/html`.
+- **Svelte owns the editor's `<div>` container and never its children** (`EditorPane.svelte`): CM6
+  builds everything inside. The identity guard (`needsRemount`) and echo guard
+  (`needsDispatch`/`syncDocument`) in `lib/editor.ts` are pure predicates and not interchangeable;
+  `view.destroy()` lives in a *second* effect that reads nothing.
+- **CodeMirror and the markdown parser sit behind a lazy `import()`, only inside the effect that
+  reads nothing** (`lib/codemirror.ts`, `lib/markdown.ts`). `tests/module-graph.ts` guards that
+  nothing else in `src/` imports `@codemirror/*`.
+- **A search is never rendered by the folder tree** (`Sidebar.svelte`): grouping by `path` destroys
+  `ts_rank` order, so a search forces the flat list and hides the view toggle.
+- **One module owns "the bearer for a request"** (`lib/auth.ts`): the token lives in
+  `sessionStorage`, never `localStorage` or a cookie, and `credentialState()` returns `set`/`not set`
+  only. It is separate from `lib/identity.ts`'s cookie-session seam on purpose.
+- **A linked pandan PAT is encrypted at rest, never hashed** (`app/identity/pandan_link.py`, Fernet
+  keyed from `KAYA_AUTH_SECRET`): it must be handed back to pandan raw. Known, tracked gap:
+  `app/integrations/card_resolution.py` (wikilink resolution) still forwards the caller's kaya bearer,
+  which is no longer a pandan credential, so it degrades to "unresolved" (ADR 0003).
+- **A `PATCH` is guarded only if `if_updated_at` is sent, and only over `body`** (ADR 0009). The CLI's
+  only guard flag is `--if-updated-at`; there is no `--force`, and the client never fetches the
+  precondition itself.
+- **`kaya note move` delegates to `update_note`, never its own endpoint** (ADR 0008), pinned
   byte-identical on the wire against `edit --path`.
-- **A config write is read-modify-write** (`kaya_client/config.py`) — JSON, not TOML, because a
-  naive writer serializing only its own flags would silently drop a hand-set key like
-  `max_text_chars`. `config show` prints `set`/`not set`, never a fragment.
-- **No verb prompts, and `note delete` has no `--yes`** (ADR 0005 §contract 9) — asserted
-  structurally over the CLI's AST; a flag that must always be passed isn't a confirmation.
-- **A build states its own provenance or says it can't** (ADR 0007) — `--version` is `kaya X.Y.Z
-  (sha)` or `kaya X.Y.Z (source checkout, not a released build)`, never a bare number.
-- **Base images are pinned by digest, never by tag** — `scripts/check-image-pins.sh` in the pre-push
-  hook and CI.
-- **The API error shape is `{"error": {"code","message",…}}` everywhere**, including Starlette's own
-  404/405. The client mirrors it (`error_payload`/`render_error`) and owns the *only* CLI-local
-  translation: exit codes in `kaya_cli/failures.py` (`0` ok · `1` runtime · `2` usage/400/422 · `3`
-  401 · `4` 403 · `5` 404 · `6` 409), add-only, pinned by literal-value tests.
+- **A config write is read-modify-write** (`kaya_client/config.py`): JSON, so a hand-set key like
+  `max_text_chars` survives. `config show` prints `set`/`not set`, never a fragment.
+- **No verb prompts, and `note delete` has no `--yes`** (ADR 0005 §contract 9), asserted over the
+  CLI's AST.
+- **A build states its own provenance or says it can't** (ADR 0007): `--version` is `kaya X.Y.Z (sha)`
+  or `kaya X.Y.Z (source checkout, not a released build)`.
+- **Base images are pinned by digest, never by tag** (`scripts/check-image-pins.sh`).
+- **The API error shape is `{"error": {"code","message",…}}` everywhere**, Starlette's own 404/405
+  included. The client mirrors it and owns the only CLI-local translation: exit codes in
+  `kaya_cli/failures.py` (`0` ok · `1` runtime · `2` usage/400/422 · `3` 401 · `4` 403 · `5` 404 ·
+  `6` 409), add-only, pinned by literal-value tests.
 
 ## Two inherited traps
 
 - **Keep every `import app.*` inside a test/fixture body in the integration layer, never at module
-  top.** A top-level import runs at collection, before the DB fixture sets `DATABASE_URL` — passes
-  locally, fails in CI.
-- **Alembic autogenerate needs models imported in `env.py`**, or it will cheerfully drop your
-  tables. It's also narrower than it looks — see `search_vector` above: it diffs columns/types/
-  nullability/indexes, never a generated column's expression.
+  top.** A top-level import runs at collection, before the DB fixture sets `DATABASE_URL`.
+- **Alembic autogenerate needs models imported in `env.py`**, or it will drop your tables, and it
+  never diffs a generated column's expression (see `search_vector`).
 
 ## Commands
 
@@ -187,25 +166,17 @@ make up                # db + migrate + the app image, one origin on :8000
 make k3d               # deploy/k8s to a local cluster, then prove the pod serves
 make test              # the fast, no-infra layer (what pre-push runs)
 make test-integration  # real Postgres via testcontainers (needs Docker)
-make check             # docs-links + secret-scan + image-pins + lint + test
+make check             # docs-links + secret-scan + image-pins + version-bump + lint + test
 make audit             # npm audit + pip-audit (network; NOT in `check`)
 ```
 
-**`make up` forwards only two env vars into the app container** — `DATABASE_URL` and
-`KAYA_PANDAN_URL`, per `docker-compose.yml`'s `app.environment:` block. Every other `Settings` field
-(timeouts, cache TTLs, `log_level`, `spa_dist`) silently takes its default, however you've exported
-it in your shell. To exercise a non-default value (e.g. starving card resolution for an R5.1-style
-measurement), run the backend directly instead:
+**`make up` forwards only `DATABASE_URL` and `KAYA_PANDAN_URL`** into the app container
+(`docker-compose.yml`'s `app.environment:`); every other `Settings` field silently takes its default.
+To use a non-default value, or to sign in (GitHub OAuth variables), run the backend directly:
 
 ```bash
-cd backend && KAYA_CARD_RESOLUTION_CONNECT_TIMEOUT_SECONDS=1 KAYA_CARD_RESOLUTION_READ_TIMEOUT_SECONDS=1 \
-  uv run uvicorn app.main:app --port 8000
+cd backend && KAYA_CARD_RESOLUTION_CONNECT_TIMEOUT_SECONDS=1 uv run uvicorn app.main:app --port 8000
 ```
-
-The app logs which settings differ from their declared default at boot, so a value that *did* take
-effect is visible in `docker compose logs app` — but a value that never reached the process can't be
-named that way. `DATABASE_URL` is deliberately excluded from that log (it embeds a plaintext
-password).
 
 Fastest frontend loop, against a stack you already have up:
 
@@ -213,90 +184,66 @@ Fastest frontend loop, against a stack you already have up:
 cd frontend && KAYA_BACKEND_ORIGIN=http://localhost:8010 KAYA_SPA_PORT=5180 npm run dev
 ```
 
-Set a credential from the browser console into `sessionStorage['kaya.token']` — never from a shell
-command that would echo it.
-
-Bundle-size and `toon`-delta re-measurement commands (re-run whenever a CodeMirror/Lezer package or a
-serializer changes) are documented in `frontend/README.md` and
-[`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md); quote a `gzip -9` number and say which
-chunk/page it's for.
+The dev proxy covers `/api` only. Set a credential from the browser console into
+`sessionStorage['kaya.token']`, never from a shell command that would echo it. Re-measure bundle size
+and the `toon` delta (commands in `frontend/README.md`) whenever a CodeMirror/Lezer package or a
+serializer changes; quote a `gzip -9` number and say which chunk it is for.
 
 ## Conventions
 
 **Branching.** One branch per slice off fresh `main`. PR-only; `main` is protected and requires
 branches to be up to date, so `gh pr update-branch` after each merge.
 
-**Worktrees.** [treehouse](https://github.com/kunchenguid/treehouse) (`treehouse.toml`) —
+**Worktrees.** [treehouse](https://github.com/kunchenguid/treehouse) (`treehouse.toml`):
 `treehouse get --lease` / `treehouse return <path>`. A fresh tree needs `make install` before
 `make lint` works. Only `make dev`/`make db` need a per-tree database
-(`COMPOSE_PROJECT_NAME=kaya-x KAYA_DB_PORT=5433 make db`) — the integration layer provisions its own
-via testcontainers.
+(`COMPOSE_PROJECT_NAME=kaya-x KAYA_DB_PORT=5433 make db`).
 
 **Tests.** Layered by cost (`docs/PLAN.md` §Testing approach): fast/no-infra, real-Postgres, e2e. A
 slow check never gates a local push. Every bug and flake becomes a test, written failing first.
 
 **Orchestrating sub-agents.** Hard limit: **at most 2 concurrent sub-agents** (Agent-tool /
-worktree-isolated) driving this repo at once, maintainer's explicit cap. This machine is shared with
-unrelated work; each agent's checks (`uv sync` + `npm ci` + pytest + vitest, run in parallel across
-several worktrees) contend for the same CPU/network and reliably flake an otherwise-passing pre-push
-run past 2 concurrent. Pipeline additional cards — start the next one once a running agent's PR is up,
-not by fanning out wider.
+worktree-isolated) driving this repo at once, the maintainer's explicit cap. The machine is shared,
+and parallel `uv sync` + `npm ci` + pytest + vitest runs flake an otherwise-passing pre-push past 2.
+Start the next card once a running agent's PR is up, not by fanning out wider.
 
 **Mutating a guard to prove it fires** (anything marked `[mutate]` in `SLICES.md`): break the
-protected thing, confirm the failure names the right thing, restore. **Commit the card's work
-before you mutate anything, and restore with `git apply -R` or `git stash` — never `git checkout --`
-or `git restore`.** On a dirty tree, `git diff` before the mutation captures uncommitted work too,
-and reversing it deletes that work (this has happened — see
-[`docs/ENGINEERING_NOTES.md`](docs/ENGINEERING_NOTES.md)). Check `git status --short` is clean
-before trusting the result.
-
-**A structural guard does not cover a behavioural claim, even when it reads as though it does.**
-Before citing an existing guard as covering new behaviour, mutate the new behaviour and watch that
-specific guard — this is the rule above turned around, and it catches the reviewer rather than the
-author.
+protected thing, confirm the failure names the right thing, restore. **Commit the card's work before
+you mutate anything, and restore with `git apply -R` or `git stash`, never `git checkout --` or
+`git restore`** (reversing a diff on a dirty tree deletes uncommitted work; this has happened).
+Check `git status --short` is clean before trusting the result. And a structural guard does not
+cover a behavioural claim: before citing a guard as covering new behaviour, mutate that behaviour and
+watch that guard fail.
 
 **Versioning.** A behavioural change to a shipped package (`kaya-cli`, `kaya-client`, `mcp`) bumps
-its version in the same PR (ADR 0007), enforced by `scripts/check-version-bump.sh`
-(`scripts/lib/pyproject_diff.py` classifies a `pyproject.toml` change by *which table* moved, not by
-filename — a `uv.lock`-only or `dev`-extra change isn't behavioural; `[project.dependencies]` is).
-Diffs against the merge-base with `main`, never the remote tip.
+its version in the same PR (ADR 0007), enforced by `scripts/check-version-bump.sh` (it classifies a
+`pyproject.toml` change by *which table* moved; `uv.lock`-only and `dev`-extra changes don't count,
+`[project.dependencies]` does). Docs-only and image-only PRs need no bump.
 
 **Cutting a release.** Land the version bump, then `git tag v0.X.0 <merged-sha> && git push origin
-v0.X.0` — the tag must equal `v` + `kaya-cli`'s `[project].version` or the workflow fails. Never push
-a tag from a branch. `contents: write` lives only on the `publish` job, gated on
-`github.event_name == 'push'` so a `workflow_dispatch` can rehearse the build without publishing.
-`build` runs inside `quay.io/pypa/manylinux_2_28_x86_64` (glibc floor `2.28`, not `ubuntu-latest`'s
-`2.38`) — see `docs/ENGINEERING_NOTES.md` for why `strings | grep GLIBC_` can't catch a regression
-here and `scripts/check-release-artifact.sh` can.
+v0.X.0`. The tag must equal `v` + `kaya-cli`'s `[project].version`. Never push a tag from a branch.
+`build` runs in `quay.io/pypa/manylinux_2_28_x86_64` (glibc floor 2.28);
+`scripts/check-release-artifact.sh` is the guard, and ENGINEERING_NOTES explains why.
 
-**Dependencies.** Lockfiles committed, installs frozen, updates by Dependabot (not renovate). Don't
-move `make audit` into the pre-push hook or `make check` — transitive dev advisories nobody can fix
-would teach `--no-verify`. No `docker` ecosystem on the bot — base images are digest-pinned and
-`check-image-pins.sh` would reject a tag bump. Frontend TypeScript is pinned `^6.0.3`; the ceiling is
-upstream (`svelte-check`/`typescript-eslint` refusing newer majors), not this repo's taste — see
-`docs/ENGINEERING_NOTES.md` before trying to force it past a red Dependabot PR.
+**Dependencies.** Lockfiles committed, installs frozen, updates by Dependabot. Don't move `make
+audit` into the pre-push hook or `make check` (unfixable transitive advisories teach `--no-verify`).
+No `docker` ecosystem on the bot (digest pins). Frontend TypeScript is pinned `^6.0.3`; see
+ENGINEERING_NOTES before forcing it past a red Dependabot PR.
 
-**Docs.** Ban the phrase "full parity". State the direction (`MCP ⊆ CLI`) and cite the test that
-proves it — [`mcp/README.md`](mcp/README.md) is the one canonical place for that; link to it rather
-than restating it.
+**Docs.** Ban the phrase "full parity". State the direction (`MCP ⊆ CLI`) and link
+[`mcp/README.md`](mcp/README.md), the one canonical place for it, rather than restating it. A README
+or screenshot changes in the same PR as the UI it shows; screenshots live in `docs/images/`.
 
-**Adding a package directory turns on its CI jobs**, gated on the directory existing. A new package
-needs from its first commit: a committed lockfile, lint passing, at least one real test.
+**Adding a package directory turns on its CI jobs.** A new package needs, from its first commit, a
+committed lockfile, lint passing and at least one real test.
 
-**Sprint retros.** Retro notes live in kaya itself, not a pandan card field — the maintainer's
-2026-09-04 call, mirrored from the same decision for pandan's own retros, so kaya dogfoods itself for
-its own project's retros. Shape: a running index note at `meta/retros` links out to one dated note per
-sprint (`retros/sprint-N`, `N` matching the pandan cycle number). Whoever closes out a sprint on board
-18 — its cycle's last card done, or its `ends_on` passed — writes that sprint's note before opening the
-next sprint's planning; there's no automation for this yet, it's a human/PM-agent habit. This closes
-the retro leg of the loop epic 165 (`KAY-E15`, "Adopt real Scrum cadence") asks for, on top of the
-2-week/6-sprint-per-PI cadence KAN-1160 recorded (comments 624/625 on that epic). First sprint this
-applies to is Sprint 3 (cycle 11, the live one) — Sprints 1–2 were backdated (KAN-1159) and get no
-retroactive note.
+**Sprint retros** live in kaya itself: a running index note `meta/retros` links to one note per
+sprint, `retros/sprint-N` (N is the pandan cycle number), written by whoever closes the sprint on
+board 18 before the next sprint's planning. Convention history is in ENGINEERING_NOTES.
 
 ## Board access
 
-The `pandan` CLI drives board 18 ("kaya — Notes"). **Never print or paste the PAT** — it lives in
+The `pandan` CLI drives board 18 ("kaya - Notes"). **Never print or paste the PAT**: it lives in
 `~/.config/pandan/config.toml` and `pandan` finds it on its own; `pandan config show` redacts it.
 
 ```bash

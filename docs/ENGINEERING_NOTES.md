@@ -415,6 +415,91 @@ leader's failure (not its `None`), keeping an outage a `503` for all of them rat
 its AST and compares it against the live `Settings` defaults, cross-package, because ADR 0004's arrow
 means neither package may import the other.
 
+### Moved out of CLAUDE.md (KAN-1820)
+
+The verbatim account of what the brief used to carry in full, kept here so the brief can stay a map.
+
+
+**Standalone identity, card-by-card status (was decision 2).**
+
+2. **Kaya mints and verifies its own credentials now** ([ADR 0012](adr/0012-standalone-identity.md),
+   **supersedes [ADR 0002](adr/0002-identity-pandan-as-provider.md)**, cut over KAN-1740).
+   `get_principal` resolves a cookie session or a `kaya_pat_…` bearer against kaya's own
+   `kaya_account`/`kaya_session`/`personal_access_token` tables (`app/identity/`,
+   `app/auth/kaya_principal.py`) — a local, indexed lookup, never a call to pandan. **Existing
+   notes' `owner_id` still points at the retired pandan-mirror `user` table** and is not reachable
+   under a new `KayaAccount` id; that is a deliberate, accepted cutover cost
+   (`docs/roadmap/BREADBOARD.md`'s R19 section), not a bug. **The board-embed preview needs its own,
+   explicitly-connected pandan credential now** (KAN-1741) — `/api/v1/pandan-link` stores one PAT
+   per kaya account, encrypted (`app/identity/pandan_link.py`), and `app/api/embeds.py` forwards
+   *that*, never the caller's own kaya-side bearer, which stopped being a pandan credential the same
+   cutover made. EPIC-283 is closed as of KAN-1741. **EPIC-284's first two cards are done.**
+   KAN-1743: `kaya auth login/logout/check` (ADR 0013) — RFC 8628 device-flow login against kaya's
+   own authorization server, a new `device_authorization` table, and a `/device` consent screen
+   (`DeviceApproval.svelte`). The CLI's third verb is spelled `check`, not pandan's `auth status` —
+   `context` already owns that bare word (`mcp/tests/test_cli_parity.py`'s reader refuses two verbs
+   sharing one). KAN-1744: a hosted remote MCP endpoint (ADR 0014) — Streamable HTTP mounted on the
+   same backend (`app/identity/mcp_host.py`), RFC 9728/8414 discovery, RFC 7591 DCR + CIMD client
+   registration, and RFC 8707 resource binding via a **new authorization_code+PKCE grant** ADR 0013
+   hadn't specified — the identical gap pandan hit building its own EPIC-282 (ADR 0026), fixed the
+   same way except kaya mints an ordinary, long-lived `kaya_pat_…` rather than adding refresh-token
+   rotation (ADR 0014's own "deliberate simplification" section). Its docs pass (KAN-1745) is next
+   — check the board before assuming this paragraph is the final word.
+
+**The pandan-PAT encryption rule's full text, including the known card_resolution gap.**
+
+- **A linked pandan PAT is encrypted at rest, never hashed** (`app/identity/pandan_link.py`, ADR
+  0012's amendment, KAN-1741) — kaya's own PATs are hashed because kaya only ever verifies one was
+  presented; a linked pandan PAT must be handed back to pandan raw on every board-embed render, so a
+  one-way hash cannot work here. `Fernet`, keyed from `KAYA_AUTH_SECRET` — rotating that secret
+  invalidates every stored link the same way it already invalidates every cookie session and kaya
+  PAT hash. **`app/integrations/card_resolution.py` (wikilink resolution) has the identical
+  now-broken-bearer problem KAN-1741 fixed for board embeds** (both used to forward the caller's own
+  kaya-side bearer, which stopped being a pandan credential at `KAN-1740`) **and is not yet fixed** —
+  a known, explicitly-tracked gap, not something papered over; it degrades to "unresolved" rather
+  than failing loudly (ADR 0003), which is why it was sequenced after the board-embed preview rather
+  than blocking it.
+
+**The formatter rule's full text.**
+
+- **The formatter protects every `[[…]]` span and declines rather than change a note's link edges**
+  (`app/markdown_format.py`, KAN-1814) — bare `mdformat` rewrites `[[KAN-12]]` to `\[[KAN-12]\]`, which
+  `find_wikilinks` no longer sees, so one save would silently delete a graph edge. Placeholders are the
+  link's own width (table padding), and the result's edges are compared with the input's. The corpus test
+  runs it over every `*.md` in the repo; `format: true` is a body write, so it is guarded by
+  `if_updated_at` even with no `body` sent.
+
+**Sprint retros, the full convention.**
+
+**Sprint retros.** Retro notes live in kaya itself, not a pandan card field — the maintainer's
+2026-09-04 call, mirrored from the same decision for pandan's own retros, so kaya dogfoods itself for
+its own project's retros. Shape: a running index note at `meta/retros` links out to one dated note per
+sprint (`retros/sprint-N`, `N` matching the pandan cycle number). Whoever closes out a sprint on board
+18 — its cycle's last card done, or its `ends_on` passed — writes that sprint's note before opening the
+next sprint's planning; there's no automation for this yet, it's a human/PM-agent habit. This closes
+the retro leg of the loop epic 165 (`KAY-E15`, "Adopt real Scrum cadence") asks for, on top of the
+2-week/6-sprint-per-PI cadence KAN-1160 recorded (comments 624/625 on that epic). First sprint this
+applies to is Sprint 3 (cycle 11, the live one) — Sprints 1–2 were backdated (KAN-1159) and get no
+retroactive note.
+
+**`make up` env forwarding, the non-default-setting recipe.**
+
+**`make up` forwards only two env vars into the app container** — `DATABASE_URL` and
+`KAYA_PANDAN_URL`, per `docker-compose.yml`'s `app.environment:` block. Every other `Settings` field
+(timeouts, cache TTLs, `log_level`, `spa_dist`) silently takes its default, however you've exported
+it in your shell. To exercise a non-default value (e.g. starving card resolution for an R5.1-style
+measurement), run the backend directly instead:
+
+```bash
+cd backend && KAYA_CARD_RESOLUTION_CONNECT_TIMEOUT_SECONDS=1 KAYA_CARD_RESOLUTION_READ_TIMEOUT_SECONDS=1 \
+  uv run uvicorn app.main:app --port 8000
+```
+
+The app logs which settings differ from their declared default at boot, so a value that *did* take
+effect is visible in `docker compose logs app` — but a value that never reached the process can't be
+named that way. `DATABASE_URL` is deliberately excluded from that log (it embeds a plaintext
+password).
+
 ## Part 3 — release process detail
 
 **The GLIBC floor (KAN-719).** PyInstaller copies the interpreter uv resolved rather than compiling
