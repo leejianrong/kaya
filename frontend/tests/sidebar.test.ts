@@ -123,7 +123,7 @@ describe('the note list', () => {
       unmount(instance as never)
     }
     render([])
-    expect(host.textContent).toContain('No notes yet')
+    expect(host.textContent).toContain('No notes yet. Create one, or ask your agent to.')
   })
 })
 

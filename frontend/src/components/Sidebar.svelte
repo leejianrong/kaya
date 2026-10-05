@@ -290,7 +290,7 @@
     <!-- Presentation over the same empty array either way (ADR 0004: no aggregate to read a
          count from here) — only the wording tells a "you own nothing yet" apart from a search
          that matched nothing. -->
-    <p class="empty">{query === '' ? 'No notes yet.' : `No notes match "${query}".`}</p>
+    <p class="empty">{query === '' ? 'No notes yet. Create one, or ask your agent to.' : `No notes match "${query}".`}</p>
   {:else if view === 'list'}
     <!-- Every note, in the order `GET /api/v1/notes` returned them: `updated_at DESC, id DESC` for
          the corpus, `ts_rank DESC, id DESC` for a search (KAN-558). Nothing is grouped, sorted or
