@@ -46,7 +46,17 @@
    * **The renderer arrives on its own chunk (KAN-836), and the loader is deliberately not in the
    * effect that renders.** See {@link renderer} for the whole of that argument.
    */
-  const { note, source }: { note: Note | null; source: string } = $props()
+  const {
+    note,
+    source,
+    reading = false,
+  }: {
+    note: Note | null
+    source: string
+    /** KAN-1819, Read mode: the pane is the document itself, so it drops its "Preview" label and its
+     *  box. A styling input only — nothing in the render effect reads it. */
+    reading?: boolean
+  } = $props()
 
   /** The element `replaceChildren` owns. No template children — see the docstring above. */
   let rendered: HTMLDivElement | undefined = $state()
@@ -334,7 +344,7 @@
   }
 </script>
 
-<section class="preview" aria-label="Preview">
+<section class="preview" class:reading aria-label="Preview">
   <header>
     <h2>Preview</h2>
     {#if note === null}
@@ -365,6 +375,22 @@
     min-width: 0;
     height: 100%;
     padding: 1.5rem 1.5rem 1.5rem 0;
+  }
+
+  /* KAN-1819, Read: no label, no box, symmetric gutters; the page (not the box) scrolls. */
+  .preview.reading {
+    height: auto;
+    padding: 0 1.5rem 1.5rem;
+  }
+
+  .preview.reading header {
+    display: none;
+  }
+
+  .preview.reading .rendered {
+    overflow: visible;
+    padding: 0;
+    border: 0;
   }
 
   header {

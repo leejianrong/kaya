@@ -1,8 +1,11 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
+
   import DeviceApproval from './components/DeviceApproval.svelte'
   import EditorPane from './components/EditorPane.svelte'
   import GraphView from './components/GraphView.svelte'
   import Landing from './components/Landing.svelte'
+  import ModeSwitch from './components/ModeSwitch.svelte'
   import NavColumn from './components/NavColumn.svelte'
   import PandanConnect from './components/PandanConnect.svelte'
   import PreviewPane from './components/PreviewPane.svelte'
@@ -23,6 +26,13 @@
     setNavigationGuard,
     type Route,
   } from './lib/router'
+  import {
+    modeAvailable,
+    readStoredMode,
+    resolveMode,
+    writeStoredMode,
+    type NoteMode,
+  } from './lib/noteMode'
   import { shellRegions } from './lib/shell'
   import type { Note } from './lib/types'
   import { currentWindowClass, watchWindowClass, type WindowClass } from './lib/windowClass'
@@ -54,9 +64,9 @@
    * KAN-568 added the **fourth** region, and it is a deliberate exception to the sentence above
    * rather than a drift past it. `BacklinksPanel` could have been a third column of `.split`, and
    * that placement is the one thing this file gets to decide: it would make the rail a sibling of
-   * `{#if previewing}`, so a toggle about the editor's preview would be one edit away from
+   * `{#if shownMode !== 'edit'}`, so a toggle about the editor's preview would be one edit away from
    * reflowing or discarding a panel that is about neither pane. KAN-554 and KAN-962 both paid for
-   * that rule. Outside `main` the preview toggle cannot reach the rail at all, which is the
+   * that rule. Outside `main` the mode switch cannot reach the rail at all, which is the
    * structural version of the property rather than the carefully-placed one — and the rail is not a
    * pane of the document, so it does not want one of `.split`'s `minmax(0, 1fr)` tracks either.
    *
@@ -111,6 +121,7 @@
   async function createAndOpen(title: string): Promise<void> {
     try {
       const created = await createNote({ title })
+      justCreatedRef = created.ref
       navigate(routeHref({ name: 'note', ref: created.ref }))
       const term = query.trim()
       notes = await listNotes({ q: term === '' ? undefined : term })
@@ -236,16 +247,38 @@
   let rejected: string | null = $state(null)
 
   /**
-   * Whether the preview is on the screen. KAN-554.
+   * How the open note is shown: Read, Edit or Split (KAN-1819; it replaced KAN-554's header Preview
+   * toggle). Which modes exist and what a note opens in is `lib/noteMode.ts`; this is the state.
    *
-   * **`EditorPane` is deliberately outside the `{#if}` this controls, and that placement is the whole
-   * of the toggle's correctness.** Inside it, the editor would be a *different component instance*
-   * every time the preview appeared or disappeared — `$effect` cleanup, `view.destroy()`, a fresh
-   * `EditorState` — so toggling the preview would throw away your unsaved edit and your undo history
-   * on a command that is about the pane beside it. `tests/preview.test.ts` types, toggles twice and
-   * asserts the same `EditorView` object is still there holding the same text.
+   * **`EditorPane` is deliberately outside every `{#if}` the mode controls, and that placement is the
+   * whole of the switch's correctness.** Inside one, the editor would be a *different component
+   * instance* every time the mode changed — `$effect` cleanup, `view.destroy()`, a fresh
+   * `EditorState` — so choosing Read would throw away your unsaved edit and your undo history on a
+   * command that is about how the note is *shown*. The mode reaches the pane only as the `mode`
+   * prop, which the template reads and the mount effect does not; Read hides the editor with CSS
+   * rather than removing it, so the live document keeps flowing and the preview shows unsaved text.
+   * `tests/preview.test.ts` and `tests/note-mode-switch.test.ts` assert the same `EditorView` object
+   * survives every switch, holding the same text.
+   *
+   * Resolved when the open note changes (remembered choice for this size class, else the default —
+   * and a note just made through New note opens in Edit below expanded), and written back, per class,
+   * only when the *person* picks a mode.
    */
-  let previewing = $state(currentWindowClass() !== 'compact')
+  let mode: NoteMode = $state(
+    resolveMode({
+      windowClass: currentWindowClass(),
+      stored: readStoredMode(currentWindowClass()),
+      justCreated: false,
+    }),
+  )
+
+  /** The ref `createAndOpen` just made, until the first resolution that sees it consumes it. */
+  let justCreatedRef: string | null = null
+
+  function chooseMode(next: NoteMode): void {
+    mode = next
+    writeStoredMode(windowClass, next)
+  }
 
   /**
    * The document the editor is showing right now, out of `EditorPane`'s `ondocument` seam.
@@ -336,6 +369,29 @@
 
   const regions = $derived(shellRegions(windowClass, route, authed))
   const compact = $derived(windowClass === 'compact')
+
+  /** The open note's ref, or `null` — a derived so the effect below re-runs on a *different* note,
+   *  never on a re-assignment of the same route. */
+  const openRef = $derived(route.name === 'note' ? route.ref : null)
+
+  $effect(() => {
+    const ref = openRef
+    if (ref === null) {
+      return
+    }
+    const fresh = ref === justCreatedRef
+    justCreatedRef = null
+    // `windowClass` is read untracked: a resize must not re-pick the mode under someone who is
+    // typing. The one resize rule (Split falls back to Edit) is `shownMode`'s, below.
+    const current = untrack(() => windowClass)
+    mode = resolveMode({ windowClass: current, stored: readStoredMode(current), justCreated: fresh })
+  })
+
+  /** What is actually on screen: `mode`, except that Split cannot outlive the width that offers it,
+   *  and a route with no note (the empty `/`) is the editor's "pick a note" notice alone. */
+  const shownMode: NoteMode = $derived(
+    route.name !== 'note' ? 'edit' : modeAvailable(mode, windowClass) ? mode : 'edit',
+  )
 
   /** Compact only: whether the backlinks/history rail is open below the note. Closed on every
    *  navigation, so opening another note never starts with a stale panel in the way. */
@@ -502,17 +558,6 @@
       <a class="brand" href="/" onclick={(event) => interceptClick(event, '/')}>kaya</a>
     {/if}
     <span class="tagline">markdown notes, API-first</span>
-    {#if authed && (!compact || route.name === 'note')}
-      <button
-        class="toggle"
-        class:on={previewing}
-        aria-pressed={previewing}
-        onclick={() => (previewing = !previewing)}
-        data-testid="toggle-preview"
-      >
-        Preview
-      </button>
-    {/if}
     {#if regions.detail === 'on-demand'}
       <button
         class="toggle"
@@ -565,24 +610,35 @@
         {:else}
           <!--
             The editor and its preview, side by side. `EditorPane` is **outside** the `{#if}` below on
-            purpose (see `previewing`), and the preview is its **sibling** rather than anything nested
+            purpose (see `mode`), and the preview is its **sibling** rather than anything nested
             in it — PLAN §S9: Svelte never renders inside CM6's subtree. The document travels from
             one to the other through `ondocument` and `liveDocument`, which is a published prop
             rather than a reach into the editor's internals; see `liveDocument` on why it is not
             `note.body`.
           -->
-          <div class="split" class:solo={!previewing}>
-            <EditorPane
-              {note}
-              error={failure === '' ? null : failure}
-              ondocument={publishDocument}
-              ondirty={noteDirty}
-              ondeleted={noteDeleted}
-              onupdated={noteUpdated}
-            />
-            {#if previewing}
-              <PreviewPane {note} source={liveDocument} />
+          <div class="note-screen">
+            {#if route.name === 'note'}
+              <!-- KAN-1819: above the note, not in the header — it is about this note, and on a
+                   phone the header has no room. A sibling of `.split`, so it can never be the
+                   thing that remounts the editor. -->
+              <div class="mode-bar">
+                <ModeSwitch mode={shownMode} {windowClass} onchange={chooseMode} />
+              </div>
             {/if}
+            <div class="split" data-mode={shownMode}>
+              <EditorPane
+                {note}
+                mode={shownMode}
+                error={failure === '' ? null : failure}
+                ondocument={publishDocument}
+                ondirty={noteDirty}
+                ondeleted={noteDeleted}
+                onupdated={noteUpdated}
+              />
+              {#if shownMode !== 'edit'}
+                <PreviewPane {note} source={liveDocument} reading={shownMode === 'read'} />
+              {/if}
+            </div>
           </div>
         {/if}
       </main>
@@ -731,24 +787,65 @@
     overflow-y: auto;
   }
 
-  .split {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* KAN-1819: the note screen is the mode switch above the document area. `.split` fills what the
+     switch leaves; `min-height: 0` lets its grid track (and the editor's own scrolling) shrink. */
+  .note-screen {
+    display: flex;
+    flex-direction: column;
     height: 100%;
+    min-height: 0;
   }
 
-  /* `minmax(0, …)` on both tracks, not `1fr 1fr`: a `1fr` track has an `auto` minimum, so one long
-     unbroken line in a fenced code block would widen the editor and push the preview off the pane. */
-  .split.solo {
+  .mode-bar {
+    flex: none;
+    padding: 0.75rem 1.5rem 0;
+  }
+
+  /* One track by default (Edit). `minmax(0, …)` always, not `1fr`: a `1fr` track has an `auto`
+     minimum, so one long unbroken line in a fenced code block would widen the editor and push the
+     preview off the pane. */
+  .split {
+    display: grid;
+    flex: 1;
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  /* Edit: the editor alone. Capped to a readable measure and centred so it does not stretch across
+     a wide pane. */
+  .split[data-mode='edit'] > :global(.pane) {
+    width: 100%;
+    max-width: 72ch;
+    margin-inline: auto;
+  }
+
+  /* Read: the document alone, as a column of text (~65ch) centred in the pane. The editor is still
+     mounted inside `.pane`, hidden by `EditorPane`'s own `reading` class; the page scrolls, not the
+     box. */
+  .split[data-mode='read'] {
+    display: block;
+    overflow-y: auto;
+  }
+
+  .split[data-mode='read'] > :global(.pane),
+  .split[data-mode='read'] > :global(.preview) {
+    max-width: 65ch;
+    margin-inline: auto;
+  }
+
+  /* Split (expanded only): editor 55 / preview 45. */
+  .split[data-mode='split'] {
+    grid-template-columns: minmax(0, 55fr) minmax(0, 45fr);
   }
 
   /* Under about a laptop's width two columns are two cramped columns. Stacking keeps both usable, and
      the editor stays first so the thing you type in is the thing you see. */
   @media (max-width: 60rem) {
-    .split {
+    .split[data-mode='split'] {
       grid-template-columns: minmax(0, 1fr);
-      height: auto;
+      grid-template-rows: auto;
+      flex: none;
     }
   }
 
@@ -823,15 +920,8 @@
       font-size: 0.8rem;
     }
 
-    /* The split is a single column of whole-screen height here; with the preview on, the two
-       panes share it equally (the Read/Edit/Split switch is KAN-1819's). */
-    .split {
-      grid-template-rows: minmax(0, 1fr);
-      height: 100%;
-    }
-
-    .split:not(.solo) {
-      grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    .mode-bar {
+      padding: 0.5rem 1rem 0;
     }
   }
 </style>

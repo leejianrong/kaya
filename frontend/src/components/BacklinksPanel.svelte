@@ -17,8 +17,8 @@
    *
    * **It is a fourth region of the shell rather than a third pane of `main`** (`App.svelte`'s grid).
    * The two arguments are in that file; the one that belongs here is that a rail placed inside
-   * `main` would be a sibling of `{#if previewing}`, and KAN-554 and KAN-962 both paid for the rule
-   * that a command about one pane must not disturb another's state. Outside `main` the preview toggle
+   * `main` would be a sibling of the mode switch's `{#if}`, and KAN-554 and KAN-962 both paid for the rule
+   * that a command about one pane must not disturb another's state. Outside `main` the mode switch
    * cannot reach this component at all — a *structural* version of the property `EditorPane` gets by
    * being carefully placed.
    *

@@ -65,6 +65,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  localStorage.clear()
   for (const instance of mounted.splice(0)) {
     unmount(instance as never)
   }
@@ -150,7 +151,7 @@ describe('the rail is a region of the shell, beside the document rather than ins
   })
 })
 
-describe('the preview toggle cannot reach the rail', () => {
+describe('the mode switch cannot reach the rail', () => {
   beforeEach(() => globalThis.history.pushState({}, '', `/notes/${NOTE.ref}`))
 
   it('keeps the very same element, with its rows, across a hide and a show', async () => {
@@ -160,9 +161,11 @@ describe('the preview toggle cannot reach the rail', () => {
     const rail = host.querySelector<HTMLElement>('aside.rail')!
     const row = host.querySelector<HTMLElement>('a[href="/notes/NOTE-2"]')!
 
-    click('toggle-preview')
+    // Edit (no preview) -> Split (preview) -> Edit: the preview comes and goes around the rail.
+    click('mode-split')
+    expect(host.querySelector('[data-testid="preview"]')).not.toBeNull()
+    click('mode-edit')
     expect(host.querySelector('[data-testid="preview"]')).toBeNull()
-    click('toggle-preview')
 
     // Element **identity**, not presence. A rail placed inside `.split` would be a fresh component
     // instance here — a new fetch, a flash of `Loading…`, and the panel's state discarded — and a
@@ -180,8 +183,8 @@ describe('the preview toggle cannot reach the rail', () => {
         .mock.calls.filter(([input]) => String(input).endsWith('/backlinks')).length
 
     expect(backlinkCalls()).toBe(1)
-    click('toggle-preview')
-    click('toggle-preview')
+    click('mode-split')
+    click('mode-edit')
     await vi.waitFor(() => {
       flushSync()
       expect(backlinkCalls()).toBe(1)

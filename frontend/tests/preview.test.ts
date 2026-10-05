@@ -67,6 +67,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  localStorage.clear()
   for (const instance of mounted.splice(0)) {
     unmount(instance as never)
   }
@@ -698,7 +699,7 @@ describe('a note attachment image hydrates after render (R14, KAN-1067/1068)', (
   })
 })
 
-describe('the preview toggle', () => {
+describe('the mode switch', () => {
   const NOTE = note()
 
   beforeEach(() => {
@@ -737,12 +738,17 @@ describe('the preview toggle', () => {
     const element = host.querySelector('.cm-editor')
     typeInto(view, '# Typed before hiding')
 
-    click('toggle-preview')
-    expect(host.querySelector('[data-testid="preview"]')).toBeNull()
-    click('toggle-preview')
+    click('mode-split')
     await settle()
     // The re-shown preview is a *new* component instance, so it loads the chunk again (from the
     // registry) before it can render.
+    await previewRendered(host)
+
+    // The preview is *added* beside the editor, then dropped again; the editor never notices.
+    click('mode-edit')
+    expect(host.querySelector('[data-testid="preview"]')).toBeNull()
+    click('mode-split')
+    await settle()
     await previewRendered(host)
 
     expect(editor(host)).toBe(view)
@@ -756,6 +762,9 @@ describe('the preview toggle', () => {
     mounted.push(mount(App, { target: host, props: {} }))
     await settle()
     await editorArrived(host)
+    click('mode-split')
+    await settle()
+    await previewRendered(host)
 
     const rendered = preview(host)
     expect(rendered.closest('.editor-host')).toBeNull()
