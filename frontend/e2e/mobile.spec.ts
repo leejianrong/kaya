@@ -62,7 +62,9 @@ test('the phone layout: list and note are separate screens under a bottom nav', 
     await expect(page.getByTestId('title-input')).toHaveValue(title)
     await expect(page.locator('.sidebar')).toHaveCount(0)
     expect((await page.getByTestId('title-input').boundingBox())!.width).toBeGreaterThanOrEqual(300)
-    expect((await page.locator('.editor-host').boundingBox())!.width).toBeGreaterThanOrEqual(300)
+    // KAN-1819: a saved note opens in Read — the rendered note, not the editor.
+    await expect(page.getByTestId('mode-read')).toHaveAttribute('aria-pressed', 'true')
+    expect((await page.getByTestId('preview').boundingBox())!.width).toBeGreaterThanOrEqual(300)
     await noHorizontalScroll(page)
     await expect(nav).toBeVisible()
 
@@ -114,6 +116,105 @@ test('no authed route scrolls sideways, at the narrowest supported width', async
     for (const path of ['/', `/notes/${note.ref}`, '/graph', '/settings', '/tokens', '/pandan', '/device']) {
       await page.goto(path)
       await expect(page.getByTestId('nav-column')).toBeVisible()
+      await noHorizontalScroll(page)
+    }
+  } finally {
+    await apiDeleteNote(request, note.ref)
+  }
+})
+
+test('Read / Edit on a phone: a saved note opens in Read, Split is absent, Edit has the editor and Save', async ({
+  authedPage: page,
+  request,
+}) => {
+  const title = prefixedTitle('mobile-modes')
+  const note = await apiCreateNote(request, {
+    title,
+    body: `# ${title}\n\nProse.\n\n\`\`\`ts\n${LONG_LINE}\n\`\`\`\n`,
+  })
+  try {
+    await page.goto(`/notes/${note.ref}`)
+    await expect(page.getByTestId('title-input')).toHaveValue(title)
+
+    // Read: the document alone; no editor, Save or Delete; the title and ref still read as a heading.
+    await expect(page.getByTestId('mode-read')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId('mode-split')).toHaveCount(0)
+    await expect(page.getByTestId('toggle-preview')).toHaveCount(0)
+    await expect(page.getByTestId('preview').locator('h1')).toHaveText(title)
+    await expect(page.locator('.editor-host')).toBeHidden()
+    await expect(page.getByRole('button', { name: 'Save' })).toHaveCount(0)
+    await expect(page.getByTestId('delete-button')).toHaveCount(0)
+    await noHorizontalScroll(page)
+
+    // The segments are touch targets and the control spans the screen.
+    const switchBox = (await page.getByTestId('mode-switch').boundingBox())!
+    expect(switchBox.width).toBeGreaterThanOrEqual(page.viewportSize()!.width - 40)
+    for (const mode of ['read', 'edit']) {
+      expect((await page.getByTestId(`mode-${mode}`).boundingBox())!.height).toBeGreaterThanOrEqual(44)
+    }
+
+    // Edit: the editor at full width, with Save and Delete.
+    await page.getByTestId('mode-edit').click()
+    await expect(page.getByTestId('mode-edit')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId('preview')).toHaveCount(0)
+    await expect(page.locator('.cm-content')).toBeVisible()
+    expect((await page.locator('.editor-host').boundingBox())!.width).toBeGreaterThanOrEqual(300)
+    await expect(page.getByRole('button', { name: 'Save' })).toBeVisible()
+    await expect(page.getByTestId('delete-button')).toBeVisible()
+    await noHorizontalScroll(page)
+
+    // And the choice is remembered for the phone: the next note opens in Edit.
+    await page.reload()
+    await expect(page.getByTestId('mode-edit')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.cm-content')).toBeVisible()
+  } finally {
+    await apiDeleteNote(request, note.ref)
+  }
+})
+
+test('a note just created through New note opens in Edit, even when Read is what is remembered', async ({
+  authedPage: page,
+  request,
+}) => {
+  const title = prefixedTitle('mobile-new')
+  const existing = await apiCreateNote(request, { title: prefixedTitle('mobile-existing'), body: 'x\n' })
+  try {
+    // Remember Read for this size class.
+    await page.goto(`/notes/${existing.ref}`)
+    await page.getByTestId('mode-read').click()
+    await page.getByTestId('back-to-list').click()
+
+    await page.getByTestId('new-note-button').click()
+    await page.getByTestId('create-title-input').fill(title)
+    await page.getByTestId('create-title-input').press('Enter')
+    await expect(page).toHaveURL(/\/notes\/NOTE-\d+$/)
+    await expect(page.getByTestId('mode-edit')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.cm-content')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Save' })).toBeVisible()
+    await noHorizontalScroll(page)
+
+    // Typing works straight away, with nothing to tap first beyond the editor itself.
+    await page.locator('.cm-content').click()
+    await page.keyboard.type('hello')
+    await expect(page.getByTestId('save-state')).toHaveText(/unsaved changes/)
+
+    const ref = new URL(page.url()).pathname.split('/').pop()!
+    await apiDeleteNote(request, ref)
+  } finally {
+    await apiDeleteNote(request, existing.ref)
+  }
+})
+
+test('no mode scrolls sideways on a phone', async ({ authedPage: page, request }) => {
+  const note = await apiCreateNote(request, {
+    title: prefixedTitle('mobile-modes-scroll'),
+    body: `\`\`\`\n${LONG_LINE}\n\`\`\`\n\n${'word '.repeat(200)}\n`,
+  })
+  try {
+    await page.goto(`/notes/${note.ref}`)
+    for (const mode of ['edit', 'read']) {
+      await page.getByTestId(`mode-${mode}`).click()
+      await expect(page.getByTestId(`mode-${mode}`)).toHaveAttribute('aria-pressed', 'true')
       await noHorizontalScroll(page)
     }
   } finally {

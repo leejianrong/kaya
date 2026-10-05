@@ -73,6 +73,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  localStorage.clear()
   unmount(instance as never)
   host.remove()
   auth.clearToken()
@@ -121,10 +122,17 @@ describe('the compact shell', () => {
     expect(host.querySelector('.right-rail')).not.toBeNull()
   })
 
-  it('starts with the preview off, so the editor owns the screen', async () => {
+  it('opens a saved note in Read: the preview alone, the editor mounted but hidden (KAN-1819)', async () => {
     await open('/notes/NOTE-6', 390)
 
-    expect(host.querySelector('.split.solo')).not.toBeNull()
+    expect(host.querySelector('.split')!.getAttribute('data-mode')).toBe('read')
+    expect(host.querySelector('[data-testid="preview"]')).not.toBeNull()
+    expect(host.querySelector('.pane.reading')).not.toBeNull()
+    // Two segments: Split is absent below expanded, not disabled.
+    expect(host.querySelector('[data-testid="mode-read"]')).not.toBeNull()
+    expect(host.querySelector('[data-testid="mode-edit"]')).not.toBeNull()
+    expect(host.querySelector('[data-testid="mode-split"]')).toBeNull()
+    expect(host.querySelector('[data-testid="toggle-preview"]')).toBeNull()
   })
 
   it('does not apply on expanded: list, note and rail all render together', async () => {

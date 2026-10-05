@@ -28,6 +28,7 @@
     ondirty,
     ondeleted,
     onupdated,
+    mode = 'edit',
   }: {
     note: Note | null
     error: string | null
@@ -89,6 +90,15 @@
      * rename or move until the next full reload.
      */
     onupdated?: (stored: Note) => void
+    /**
+     * KAN-1819: how the shell is showing this note. **A styling input only** — it is read by the
+     * template and by nothing in the mount effect, so changing it can never remount the view or
+     * re-run the effect that owns it. `read` keeps the title and path as the document's heading and
+     * metadata and hides the editor (`display: none` on the host, so it is out of the tab order and
+     * the accessibility tree) and the Delete button, while `ondocument` keeps flowing so the
+     * preview shows unsaved text.
+     */
+    mode?: 'read' | 'edit' | 'split'
   } = $props()
 
   /**
@@ -881,7 +891,7 @@
   }
 </script>
 
-<section class="pane" aria-label="Editor">
+<section class="pane" class:reading={mode === 'read'} aria-label="Editor">
   {#if error}
     <p class="notice">{error}</p>
   {:else if note}
@@ -940,6 +950,10 @@
       {/if}
     </header>
 
+    <!-- KAN-1819: in Read the bar is only here while there is something unsaved — a Save with
+         nothing to save is clutter, but unsaved text with no way to save it is a trap. Delete
+         never shows in Read. -->
+    {#if mode !== 'read' || dirty}
     <div class="bar">
       <button type="button" onclick={() => void save()} disabled={saving || !dirty}>
         {saving ? 'Saving…' : 'Save'}
@@ -962,6 +976,7 @@
           no changes
         {/if}
       </span>
+      {#if mode !== 'read'}
       <button
         type="button"
         class="delete"
@@ -982,7 +997,9 @@
           Cancel
         </button>
       {/if}
+      {/if}
     </div>
+    {/if}
 
     {#if deleteError}
       <p class="conflict" data-testid="delete-error">{deleteError}</p>
@@ -1170,6 +1187,21 @@
     border-left: 3px solid var(--accent);
     border-radius: 0.35rem;
     font-size: 0.85rem;
+  }
+
+  /* KAN-1819, Read: the pane is the document's heading and metadata only. The host is hidden, not
+     removed — the view stays mounted so the live document keeps flowing and a switch back to Edit
+     keeps the caret and the undo history. `display: none` takes it out of the tab order and the
+     accessibility tree too. */
+  .pane.reading {
+    height: auto;
+    gap: 0.5rem;
+    padding-bottom: 0.5rem;
+  }
+
+  .pane.reading .editor-host,
+  .pane.reading .stamp {
+    display: none;
   }
 
   .editor-host {

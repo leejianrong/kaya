@@ -399,10 +399,11 @@ the browser cache disabled — so the request sets below are observed, not deriv
 
 **The last two rows are identical, and that is a fact about the app rather than a rounding.**
 `EditorPane` sits **outside** the preview toggle's `{#if}` (see `App.svelte`, and `tests/preview.test.ts`
-for why), and `previewing` starts `true`, so a signed-in user on `/` already mounts both panes with
-`note === null`. Every cold load that has a credential fetches all five assets; every cold load that
+for why), and (as measured, before KAN-1819 replaced the Preview toggle with the Read/Edit/Split switch: `previewing` started `true`, so a signed-in user on `/` already mounted both panes with
+`note === null`). **Since KAN-1819 an expanded load opens in Edit, so the preview chunk is fetched
+only once Read or Split is chosen (or remembered); these numbers are the upper bound.** Every cold load that has a credential fetched all five assets; every cold load that
 does not fetches two. There is no fourth state to quote — toggling the preview off after the fact
-cannot un-fetch a chunk, and `previewing` is not persisted, so "preview off" is not a page a visitor
+cannot un-fetch a chunk, and `previewing` was not persisted, so "preview off" is not a page a visitor
 can land on.
 
 **So the trade is: −22,490 B gzip on the page where a person has not decided to use kaya yet, against
@@ -552,7 +553,7 @@ Four decisions, each argued in the file that holds it.
 
 **It is a region of the shell, not a third column of `.split`.** `App.svelte` was three layout regions
 "and nothing else", so the fourth is a deliberate exception rather than drift. A rail inside `main`
-would be a sibling of `{#if previewing}`, and KAN-554 and KAN-962 both paid for the rule that a command
+would be a sibling of the mode switch's `{#if}`, and KAN-554 and KAN-962 both paid for the rule that a command
 about one pane must not disturb another's state. Outside `main` the preview toggle **cannot reach it at
 all** — the structural form of the property rather than the carefully-placed one. It also is not a pane
 of the document, so it does not want one of `.split`'s `minmax(0, 1fr)` tracks; the grid becomes
