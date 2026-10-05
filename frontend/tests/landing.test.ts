@@ -127,23 +127,37 @@ async function until(predicate: () => boolean, label: string): Promise<void> {
 }
 
 describe('the landing state', () => {
-  it('says what kaya is, and that it mints its own credentials (ADR 0012, KAN-1740)', async () => {
+  it('carries the approved headline, subhead and three tile titles verbatim (KAN-1822)', async () => {
+    render(Landing, { rejected: null, onaccept: () => {} })
+    await settle()
+
+    expect(host.querySelector('h1')?.textContent).toBe('Markdown for humans and agents.')
+    expect(host.querySelector('.subhead')?.textContent).toBe('Work on notes alongside your agents.')
+    expect(Array.from(host.querySelectorAll('.tile h2')).map((h) => h.textContent)).toEqual([
+      'Agent ready',
+      'Linked notes',
+      'Knowledge graph',
+    ])
+    expect(host.textContent).toContain(
+      'Write and edit notes from Claude Code or any MCP client, or script them with the CLI.',
+    )
+    // Only Claude Code has been checked against the MCP endpoint, so no other client is named.
+    expect(host.textContent).not.toContain('Codex')
+  })
+
+  it('contains none of the removed copy and shows the phone demo, not the old example note', async () => {
     render(Landing, { rejected: null, onaccept: () => {} })
     await settle()
 
     const text = host.textContent ?? ''
-    expect(text).toContain('markdown notes')
-    expect(text).toContain('kaya mints and verifies its own credentials')
-    expect(text).toContain('Tokens')
-  })
-
-  it('links to kaya\'s own /tokens page, with no network call needed to build the link', async () => {
-    render(Landing, { rejected: null, onaccept: () => {} })
-    await settle()
-
-    // A same-origin SPA route, known at compile time — no round trip needed to build it.
-    const links = Array.from(host.querySelectorAll('a')).map((a) => a.getAttribute('href'))
-    expect(links).toContain('/tokens')
+    for (const gone of ['any device', 'no password', 'ADR', '/api/v1', 'Every save', 'mints']) {
+      expect(text).not.toContain(gone)
+    }
+    expect(host.querySelector('.demo')).toBeNull()
+    expect(host.querySelector('.identity-note')).toBeNull()
+    expect(host.querySelector('[data-testid="phone-demo"]')).not.toBeNull()
+    // Nothing on the page links anywhere: sign-in is a button, and the phone's contents are inert.
+    expect(host.querySelectorAll('a')).toHaveLength(0)
   })
 
   it('carries no pandan origin anywhere — identity no longer routes through pandan at all', async () => {

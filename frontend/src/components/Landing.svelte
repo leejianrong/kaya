@@ -1,21 +1,15 @@
 <!--
-  What a visitor with no credential sees (KAN-555; copy updated for ADR 0012's cutover, KAN-1740,
-  and again for KAN-1791). GitHub sign-in is the page's one and only credential-acquisition path
-  now — kaya mints no passwords and never did, GitHub OAuth is the sole login route
-  (`backend/app/identity/router.py`'s own comment on `/auth/login`), and there is no paste form to
-  fall back to any more: the `kayaauth` cookie `/auth/github/callback` sets is what `apiRequest`
-  (`lib/api.ts`, KAN-1791) now authenticates every note-API call against directly, with no
-  intermediate `kaya_pat_…` bearer this page has to hand the shell.
+  What a visitor with no credential sees (KAN-555; KAN-1740's identity cutover; KAN-1791; rewritten
+  for KAN-1822). One promise, one sign-in action, an interactive phone mock, three short tiles.
 
-  `Tokens.svelte`'s "Use this token now" still exists for minting a *named*, purpose-specific
-  bearer (the CLI, a script, another device) without disturbing a browser tab's cookie session —
-  that is a deliberate, still-live exception `lib/auth.ts`'s own module docstring explains. This
-  page just no longer needs to be a second door to the identical bearer.
+  GitHub sign-in is the page's only credential-acquisition path: kaya mints no passwords, and the
+  `kayaauth` cookie `/auth/github/callback` sets is what `apiRequest` (`lib/api.ts`) authenticates
+  against. A named bearer for the CLI or a script is minted later, on the Tokens page, once signed in.
 -->
 <script lang="ts">
   import { githubLoginUrl, IdentityError } from '../lib/identity'
   import Logo from './Logo.svelte'
-  import { interceptClick } from '../lib/router'
+  import PhoneDemo from './PhoneDemo.svelte'
 
   const {
     rejected = null,
@@ -39,6 +33,26 @@
      */
     onaccept: () => void
   } = $props()
+
+  /**
+   * The three tiles. The approved copy, in one place. The first tile deliberately names Claude Code
+   * and MCP clients in general and no other product: only Claude Code has been checked against
+   * kaya's MCP endpoint, so another client's name is added here once it has been.
+   */
+  const TILES = [
+    {
+      title: 'Agent ready',
+      text: 'Write and edit notes from Claude Code or any MCP client, or script them with the CLI.',
+    },
+    {
+      title: 'Linked notes',
+      text: 'Link notes with [[wikilinks]]. Backlinks appear automatically.',
+    },
+    {
+      title: 'Knowledge graph',
+      text: 'See how your notes connect, including the ones your agents wrote.',
+    },
+  ] as const
 
   let signingIn = $state(false)
   let signInProblem: string | null = $state(null)
@@ -81,12 +95,8 @@
 <main class="landing">
   <section class="hero">
     <div class="hero-mark"><Logo size={72} /></div>
-    <h1>The same note, on every surface.</h1>
-    <p class="subhead">
-      Cloud-hosted markdown notes, wikilinks and backlinks built in. Every action here is a plain
-      <code>/api/v1</code> call — the same one kaya's CLI and its MCP tools use, so what you write in
-      the browser is exactly what your agent reads.
-    </p>
+    <h1>Markdown for humans and agents.</h1>
+    <p class="subhead">Work on notes alongside your agents.</p>
 
     <div class="cta-row">
       <button
@@ -123,61 +133,25 @@
     {/if}
   </section>
 
-  <section class="demo" aria-label="What a kaya note looks like">
-    <div class="note-card">
-      <p class="note-path">journal/2026/sprint-12-retro.md</p>
-      <pre class="note-source"><code
-          ># Sprint 12 retro
-
-Blocked on <span class="demo-wikilink">[[Board embed follow-ups]]</span> until that ships.</code
-        ></pre>
-      <p class="note-backlink">↳ backlinked automatically — no link to maintain by hand</p>
-    </div>
-  </section>
+  <div class="phone-slot"><PhoneDemo /></div>
 
   <section class="features" aria-label="What kaya does">
-    <article class="tile">
-      <h3>One API, three surfaces</h3>
-      <p>
-        The browser, the <code>kaya</code> CLI and its MCP tools all read and write the same
-        <code>/api/v1</code> — one source of truth, however you reach it.
-      </p>
-    </article>
-    <article class="tile">
-      <h3>Wikilinks &amp; backlinks</h3>
-      <p>
-        Type <code>[[a note's title]]</code>, kaya resolves it to a real note and the note on the
-        other end shows the backlink without you doing anything else.
-      </p>
-    </article>
-    <article class="tile">
-      <h3>Built for agents</h3>
-      <p>
-        Six MCP tools and a hosted endpoint, plus a CLI that never prompts — agent-drivable by
-        design, not bolted on after.
-      </p>
-    </article>
-  </section>
-
-  <!-- KAN-1791: no longer "the paste section" — the form, its input, its own refusal message and
-       the sessionStorage footnote are gone along with it. What is left is the one thing that was
-       never about pasting: kaya's own identity model, and the link to where a *named* bearer (for
-       the CLI, a script, another device) still gets minted by hand. -->
-  <section class="identity-note" aria-labelledby="identity">
-    <h2 id="identity">Kaya mints its own credentials</h2>
-    <p>
-      Sign in with GitHub above — kaya mints and verifies its own credentials (ADR 0012), so no
-      pandan account is needed to use kaya itself. Need a bearer for the CLI, a script or another
-      device instead? Mint a named one on the
-      <a href="/tokens" onclick={(event) => interceptClick(event, '/tokens')}>Tokens</a>
-      page.
-    </p>
+    {#each TILES as tile (tile.title)}
+      <article class="tile">
+        <h2>{tile.title}</h2>
+        <p>{tile.text}</p>
+      </article>
+    {/each}
   </section>
 </main>
 
 <style>
   .landing {
-    max-width: 46rem;
+    /* An explicit width, not just a max: as a grid item with auto margins it would otherwise size to
+       its content's min-content and push the page 10px wider than a 320px screen. */
+    box-sizing: border-box;
+    width: min(100%, 46rem);
+    min-width: 0;
     margin: 0 auto;
     padding: clamp(2.5rem, 7vw, 4.5rem) 1.5rem 3rem;
   }
@@ -196,7 +170,7 @@ Blocked on <span class="demo-wikilink">[[Board embed follow-ups]]</span> until t
 
   h1 {
     margin: 0 auto 0.85rem;
-    max-width: 18ch;
+    max-width: 20ch;
     font-size: clamp(1.9rem, 5vw, 2.65rem);
     line-height: 1.08;
     letter-spacing: -0.02em;
@@ -264,53 +238,8 @@ Blocked on <span class="demo-wikilink">[[Board embed follow-ups]]</span> until t
     flex-shrink: 0;
   }
 
-  /* --- signature note-card demo ---------------------------------------------------------------- */
-
-  .demo {
-    margin-top: clamp(2.25rem, 5vw, 3.25rem);
-    display: flex;
-    justify-content: center;
-  }
-
-  .note-card {
-    width: 100%;
-    max-width: 30rem;
-    padding: 1.1rem 1.25rem 1.25rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--card-bg);
-    box-shadow: var(--shadow-md);
-  }
-
-  .note-path {
-    margin: 0 0 0.65rem;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 0.75rem;
-  }
-
-  .note-source {
-    margin: 0;
-    color: var(--text);
-    font-family: var(--mono);
-    font-size: 0.85rem;
-    line-height: 1.6;
-    white-space: pre-wrap;
-  }
-
-  .demo-wikilink {
-    padding: 0 0.15rem;
-    border-radius: 0.25rem;
-    /* The exact values `lib/codemirror.ts`'s `.cm-wikilink-resolved` decorates a real pill with —
-       this card is a demonstration of the actual product, not an illustration of it. */
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
-    color: var(--accent);
-  }
-
-  .note-backlink {
-    margin: 0.85rem 0 0;
-    color: var(--muted);
-    font-size: 0.8rem;
+  .phone-slot {
+    margin-top: clamp(1.75rem, 4vw, 2.5rem);
   }
 
   /* --- features -------------------------------------------------------------------------------- */
@@ -329,7 +258,7 @@ Blocked on <span class="demo-wikilink">[[Board embed follow-ups]]</span> until t
     background: var(--card-bg);
   }
 
-  .tile h3 {
+  .tile h2 {
     margin: 0 0 0.4rem;
     font-size: 0.95rem;
     letter-spacing: -0.01em;
@@ -348,37 +277,6 @@ Blocked on <span class="demo-wikilink">[[Board embed follow-ups]]</span> until t
     }
   }
 
-  /* --- the identity note (KAN-1791: what the paste form's card became once the form left it) ---- */
-
-  .identity-note {
-    margin-top: clamp(2.5rem, 6vw, 3.5rem);
-    padding: 1.5rem 1.5rem 1.75rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--card-bg);
-  }
-
-  .identity-note h2 {
-    margin: 0 0 0.5rem;
-    font-size: 1rem;
-  }
-
-  .identity-note > p {
-    margin: 0;
-    line-height: 1.55;
-  }
-
-  .identity-note > p a {
-    color: var(--accent);
-    font-weight: 600;
-  }
-
-  .identity-note > p a:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-    border-radius: 0.2rem;
-  }
-
   .refused {
     margin: 1rem 0 0;
     color: var(--danger);
@@ -389,9 +287,8 @@ Blocked on <span class="demo-wikilink">[[Board embed follow-ups]]</span> until t
      nothing left to reveal once scrolled to. */
   @media (prefers-reduced-motion: no-preference) {
     .hero > *,
-    .demo,
-    .tile,
-    .identity-note {
+    .phone-slot,
+    .tile {
       opacity: 0;
       transform: translateY(8px);
       animation: rise 0.5s ease forwards;
@@ -405,7 +302,7 @@ Blocked on <span class="demo-wikilink">[[Board embed follow-ups]]</span> until t
     .hero > *:nth-child(3) {
       animation-delay: 0.14s;
     }
-    .demo {
+    .phone-slot {
       animation-delay: 0.2s;
     }
     .tile:nth-child(1) {
@@ -416,9 +313,6 @@ Blocked on <span class="demo-wikilink">[[Board embed follow-ups]]</span> until t
     }
     .tile:nth-child(3) {
       animation-delay: 0.32s;
-    }
-    .identity-note {
-      animation-delay: 0.36s;
     }
     @keyframes rise {
       to {

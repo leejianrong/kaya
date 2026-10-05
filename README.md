@@ -7,10 +7,9 @@
 
 # kaya
 
-Markdown notes that you and your agents share. kaya is a hosted web app with a Read, Edit and Split
-editor that also works on a phone, a command-line client, and a remote MCP endpoint, all over one
-REST API. Notes link to each other with `[[wikilinks]]`, and a note can embed a live board from
-[pandan](https://github.com/leejianrong/pandan), the kanban sibling in the same suite.
+Markdown notes that you and your agents work on together. Use kaya in the browser, point Claude Code or any MCP client at the hosted endpoint, or script it with the CLI. Notes link to each other with `[[wikilinks]]`, and a knowledge graph shows how they connect.
+
+The web app has Read, Edit and Split modes and also works on a phone, and everything it does goes through one REST API. A note can embed a live board from [pandan](https://github.com/leejianrong/pandan), the kanban sibling in the same suite.
 
 ![kaya in Edit mode: a folder tree on the left, a note with wikilinks, a list and a code block in the middle, and its backlinks on the right](docs/images/editor-desktop.png)
 

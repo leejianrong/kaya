@@ -561,7 +561,7 @@
         <span>kaya</span>
       </a>
     {/if}
-    <span class="tagline">markdown notes, API-first</span>
+    <span class="tagline">markdown for humans and agents</span>
     {#if regions.detail === 'on-demand'}
       <button
         class="toggle"
