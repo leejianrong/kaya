@@ -1199,7 +1199,8 @@
     padding-bottom: 0.5rem;
   }
 
-  .pane.reading .editor-host {
+  .pane.reading .editor-host,
+  .pane.reading .stamp {
     display: none;
   }
 
