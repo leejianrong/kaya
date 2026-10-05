@@ -321,15 +321,18 @@ describe('the /tokens route (KAN-1739)', () => {
     expect(target.textContent).toContain('Tokens')
   })
 
-  it('the topbar link to /tokens is present regardless of credential state', () => {
+  it('the header no longer carries a Tokens link (KAN-1818: it lives under Settings)', () => {
     const withoutCredential = render(App, {})
-    expect(withoutCredential.querySelector('.tokens-link')).not.toBeNull()
+    expect(withoutCredential.querySelector('.tokens-link')).toBeNull()
+    expect(withoutCredential.querySelector('.topbar a[href="/tokens"]')).toBeNull()
   })
 })
 
 /**
- * KAN-1157: the authenticated topbar's link to pandan, resolved through the same
- * `resolvePandanHref` (KAN-1156) `Landing.svelte` already uses. `App.svelte` reaches the network
+ * KAN-1157: the link to pandan, resolved through the same `resolvePandanHref` (KAN-1156)
+ * `Landing.svelte` uses. KAN-1818 moved it from the topbar to the Settings page, so these tests
+ * open `/settings`; the claims (hidden when unset/unsafe/unreachable, never for a visitor with no
+ * credential) are unchanged. The `App` reaches the network
  * through the ambient `fetch` with no injected seam, the same reason `tests/landing.test.ts` stubs
  * `globalThis.fetch` rather than mocking `lib/meta.ts` directly — a mock of the module would not
  * notice a change to the request URL or shape.
@@ -348,7 +351,10 @@ describe('the pandan nav link (KAN-1157)', () => {
   /** Every request this describe block's App instances make, other than `/api/v1/meta`, answered
    * with an empty note list — nothing here is about the sidebar, and an unmocked `/api/v1/notes`
    * would just be a second, unrelated failure logged into `failure`. */
+  const realPathname = window.location.pathname
+
   function stubFetch(meta: () => Response | Promise<Response>): void {
+    window.history.pushState({}, '', '/settings')
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === '/api/v1/meta') {
@@ -363,6 +369,7 @@ describe('the pandan nav link (KAN-1157)', () => {
 
   afterEach(() => {
     globalThis.fetch = realFetch
+    window.history.pushState({}, '', realPathname)
   })
 
   /** Poll until `predicate` holds, flushing Svelte between attempts — `resolvePandanHref` resolves
@@ -407,7 +414,7 @@ describe('the pandan nav link (KAN-1157)', () => {
     // Matches `Landing.svelte`'s own pandan link (`tests/landing.test.ts`), rather than the bare
     // `noopener` the card's one-line description names — one convention for one destination.
     expect(link.getAttribute('rel')).toBe('noopener noreferrer')
-    expect(link.textContent?.trim()).toBe('pandan')
+    expect(link.textContent?.trim()).toMatch(/^pandan/)
   })
 
   it('is hidden entirely, not shown-and-disabled, when meta resolves to no pandan', async () => {
@@ -549,7 +556,8 @@ describe('the nav column', () => {
       'page',
     )
     expect(target.querySelector('[data-testid="nav-item-graph"]')?.getAttribute('aria-current')).toBeNull()
-    expect(target.querySelector('[data-testid="nav-item-tokens"]')?.getAttribute('aria-current')).toBeNull()
+    expect(target.querySelector('[data-testid="nav-item-settings"]')?.getAttribute('aria-current')).toBeNull()
+    expect(target.querySelector('[data-testid="nav-item-tokens"]')).toBeNull()
   })
 
   it('marks Graph active on the /graph route', async () => {
@@ -564,15 +572,16 @@ describe('the nav column', () => {
     expect(target.querySelector('[data-testid="nav-item-notes"]')?.getAttribute('aria-current')).toBeNull()
   })
 
-  it('still renders, with Tokens active, on the /tokens route — no sidebar there to anchor to', async () => {
+  it('still renders, with Settings active, on the /tokens route — no sidebar there to anchor to', async () => {
     window.history.pushState({}, '', '/tokens')
     auth.setToken(FAKE_TOKEN)
     const target = render(App, {})
     await until(() => target.querySelector('[data-testid="nav-column"]') !== null, 'the nav column')
 
-    expect(target.querySelector('[data-testid="nav-item-tokens"]')?.getAttribute('aria-current')).toBe(
+    expect(target.querySelector('[data-testid="nav-item-settings"]')?.getAttribute('aria-current')).toBe(
       'page',
     )
+    expect(target.querySelector('.sidebar')).toBeNull()
   })
 
   it('navigates to /graph without a reload when clicked', async () => {

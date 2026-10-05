@@ -311,6 +311,7 @@
 
   header {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     gap: 0.4rem;
     padding: 0 0.5rem;

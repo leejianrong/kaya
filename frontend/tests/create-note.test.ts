@@ -135,10 +135,10 @@ describe('creating a note from the browser (KAN-1040)', () => {
     await editorArrived(host)
     await vi.waitFor(() => {
       flushSync()
-      // KAN-1791 removed the header's `credential-state` readout this used as its settle marker —
-      // `.tokens-link` is always in the header regardless of auth state, so it serves the same
+      // KAN-1791 removed the header's `credential-state` readout this used as its settle marker;
+      // the brand link is always in the header regardless of auth state, so it serves the same
       // purpose: proving the shell itself has re-rendered before checking the editor's own input.
-      expect(host.querySelector('.tokens-link')).not.toBeNull()
+      expect(host.querySelector('.brand')).not.toBeNull()
     })
     expect(host.querySelector<HTMLInputElement>('[data-testid="title-input"]')?.value).toBe(CREATED.title)
   })

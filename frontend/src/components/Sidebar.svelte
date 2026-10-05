@@ -550,4 +550,35 @@
     color: var(--muted);
     font-size: 0.9rem;
   }
+
+  /* KAN-1818, compact: the list is its own full-width screen, so its controls and rows are touch
+     targets (48px; the M3 minimum is 44). */
+  @media (max-width: 599.98px) {
+    .new-note,
+    .search-input,
+    .create-input,
+    .create-form button,
+    .clear-search,
+    .views button {
+      min-height: 3rem;
+      font-size: 1rem;
+    }
+
+    .views button {
+      padding: 0 1rem;
+      font-size: 0.8rem;
+    }
+
+    .row {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-height: 3rem;
+    }
+
+    .row.folder {
+      flex-direction: row;
+      align-items: center;
+    }
+  }
 </style>
