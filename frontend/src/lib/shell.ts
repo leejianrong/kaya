@@ -41,16 +41,23 @@ export function shellRegions(windowClass: WindowClass, route: Route, authed: boo
 export interface NavDestination {
   label: string
   href: string
+  icon: 'notes' | 'graph' | 'settings'
   isActive: (route: Route) => boolean
 }
 
 /** The three primary destinations. Tokens and the pandan link live under Settings. */
 export const NAV_DESTINATIONS: readonly NavDestination[] = [
-  { label: 'Notes', href: '/', isActive: (r) => r.name === 'home' || r.name === 'note' },
-  { label: 'Graph', href: '/graph', isActive: (r) => r.name === 'graph' },
+  {
+    label: 'Notes',
+    href: '/',
+    icon: 'notes',
+    isActive: (r) => r.name === 'home' || r.name === 'note',
+  },
+  { label: 'Graph', href: '/graph', icon: 'graph', isActive: (r) => r.name === 'graph' },
   {
     label: 'Settings',
     href: '/settings',
+    icon: 'settings',
     isActive: (r) => r.name === 'settings' || r.name === 'tokens' || r.name === 'pandan',
   },
 ]

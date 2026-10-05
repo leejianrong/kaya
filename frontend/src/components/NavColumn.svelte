@@ -19,15 +19,14 @@
   which is why `App.svelte` places it as a sibling of that whole branch rather than nested inside
   one arm of it — the entire point is that it survives being wherever you are.
 
-  Text labels only, no icons: nothing else in kaya's UI has ever used one (`App.svelte`'s topbar,
-  `Sidebar.svelte`, `Tokens.svelte` are all plain text), and a rail matching that is a considered
-  choice, not an oversight — introducing lucide-svelte (pandan's own icon set) for this one column
-  would be the first icon anywhere in the product and the first new runtime dependency since
-  CodeMirror (`lib/router.ts`'s own docstring argues the bar that has to clear).
+  Each destination carries a Material-style icon (`NavIcon.svelte`, KAN-1822) with its label under
+  it on compact and beside it on the rail; the active one sits on a tonal pill. The icons are
+  decorative, the label is the accessible name, and the landing page's phone demo reuses them.
 -->
 <script lang="ts">
   import { interceptClick, type Route } from '../lib/router'
   import { NAV_DESTINATIONS, navActive } from '../lib/shell'
+  import NavIcon from './NavIcon.svelte'
 
   const { route }: { route: Route } = $props()
 </script>
@@ -43,6 +42,7 @@
       onclick={(event) => interceptClick(event, destination.href)}
       data-testid={`nav-item-${destination.label.toLowerCase()}`}
     >
+      <span class="nav-pill"><NavIcon name={destination.icon} /></span>
       <span class="nav-label">{destination.label}</span>
     </a>
   {/each}
@@ -69,9 +69,12 @@
   }
 
   .nav-item {
-    display: block;
-    padding: 0.4rem 0.35rem;
-    border-radius: 0.35rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.15rem;
+    padding: 0.4rem 0.2rem;
+    border-radius: 0.5rem;
     color: var(--nav-fg);
     text-decoration: none;
     font-size: 0.72rem;
@@ -80,8 +83,20 @@
     white-space: nowrap;
   }
 
+  /* The tonal pill sits behind the icon; the active destination fills it. */
+  .nav-pill {
+    display: grid;
+    place-items: center;
+    width: 3.25rem;
+    height: 1.75rem;
+    border-radius: 0.9rem;
+  }
+
   .nav-item:hover {
     color: var(--text);
+  }
+
+  .nav-item:hover .nav-pill {
     background: var(--nav-hover);
   }
 
@@ -91,24 +106,55 @@
   }
 
   .nav-item.active {
-    color: var(--nav-fg-active);
-    background: var(--nav-indicator);
+    color: var(--text);
+    font-weight: 650;
   }
 
+  .nav-item.active .nav-pill {
+    background: var(--nav-indicator);
+    color: var(--nav-fg-active);
+  }
+
+  /* Expanded: the labelled column, icon beside label, the whole row tinted when active. */
   @media (min-width: 840px) {
     .nav-column {
       padding: 0.75rem 0.4rem;
     }
 
     .nav-item {
-      padding: 0.45rem 0.6rem;
+      flex-direction: row;
+      gap: 0.55rem;
+      padding: 0.35rem 0.6rem 0.35rem 0.35rem;
       font-size: 0.82rem;
       text-align: left;
+    }
+
+    .nav-pill {
+      width: 2rem;
+      height: 2rem;
+      border-radius: 0.5rem;
+    }
+
+    .nav-item.active {
+      background: var(--nav-indicator);
+    }
+
+    .nav-item.active .nav-pill,
+    .nav-item:hover .nav-pill {
+      background: transparent;
+    }
+
+    .nav-item:hover {
+      background: var(--nav-hover);
+    }
+
+    .nav-item.active:hover {
+      background: var(--nav-indicator);
     }
   }
 
   /* Compact: an M3-style bottom navigation bar. 56px destinations, the active one marked by a pill
-     behind its label. */
+     behind its icon. */
   @media (max-width: 599.98px) {
     .nav-column {
       flex-direction: row;
@@ -119,30 +165,17 @@
     }
 
     .nav-item {
-      display: flex;
       flex: 1;
-      align-items: center;
       justify-content: center;
       min-height: 3.5rem;
-      padding: 0.25rem;
+      padding: 0.35rem 0.25rem;
       border-radius: 0;
-      background: transparent;
       font-size: 0.75rem;
-      font-weight: 600;
+      font-weight: 500;
     }
 
-    .nav-item:hover,
     .nav-item.active {
-      background: transparent;
-    }
-
-    .nav-label {
-      padding: 0.3rem 1.1rem;
-      border-radius: 1rem;
-    }
-
-    .nav-item.active .nav-label {
-      background: var(--nav-indicator);
+      font-weight: 650;
     }
   }
 </style>

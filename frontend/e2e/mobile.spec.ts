@@ -52,6 +52,8 @@ test('the phone layout: list and note are separate screens under a bottom nav', 
       const item = page.getByTestId(`nav-item-${label}`)
       await expect(item).toBeVisible()
       expect((await item.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+      // KAN-1822: each destination has its icon above the label.
+      await expect(item.locator('svg')).toHaveCount(1)
     }
     await expect(page.getByTestId('nav-item-tokens')).toHaveCount(0)
     expect((await page.getByTestId('new-note-button').boundingBox())!.height).toBeGreaterThanOrEqual(44)
