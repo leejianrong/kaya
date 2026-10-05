@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
+    <img src="docs/images/logo.svg" alt="kaya: a slice of toast with a green note spread on it and a butter knife" width="96">
+  </picture>
+</p>
+
 # kaya
 
 Markdown notes that you and your agents share. kaya is a hosted web app with a Read, Edit and Split

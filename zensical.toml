@@ -96,6 +96,9 @@ extra_css = ["assets/stylesheets/kaya.css"]
 
 [project.theme]
 language = "en"
+# KAN-1823: the mark, relative to docs_dir. `favicon.svg` is the small-size cut.
+logo = "assets/images/logo.svg"
+favicon = "assets/images/favicon.svg"
 features = [
   "navigation.tabs",
   "navigation.sections",

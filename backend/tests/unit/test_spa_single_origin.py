@@ -274,6 +274,42 @@ def test_a_root_level_file_is_served_without_the_immutable_header(served: TestCl
     assert "immutable" not in response.headers.get("cache-control", "")
 
 
+ICON_FILES = {
+    "favicon.svg": "image/svg+xml",
+    "favicon.ico": "image/vnd.microsoft.icon",
+    "apple-touch-icon.png": "image/png",
+    "icon-192.png": "image/png",
+    "icon-512.png": "image/png",
+    "icon-maskable-512.png": "image/png",
+    "og.png": "image/png",
+    "manifest.webmanifest": "application/manifest+json",
+}
+"""KAN-1823: Vite copies ``frontend/public/`` to the build root, where the root-level-file branch of
+``serve_spa`` serves it. The content type is the part worth pinning: a ``.webmanifest`` that came
+back ``text/plain`` is ignored by browsers, and an icon that came back as ``index.html`` is a
+silent generic globe."""
+
+
+@pytest.mark.parametrize(("name", "content_type"), sorted(ICON_FILES.items()))
+def test_the_real_icon_files_are_served_as_themselves_not_as_the_index(
+    dist: Path, name: str, content_type: str
+) -> None:
+    public = Path(__file__).resolve().parents[3] / "frontend" / "public"
+    real = public / name
+    assert real.is_file(), f"{name} is missing from frontend/public"
+    (dist / name).write_bytes(real.read_bytes())
+    app = _api_app()
+    assert mount_spa(app, dist) is True
+
+    with TestClient(app) as client:
+        response = client.get("/" + name)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].split(";")[0] == content_type
+    assert response.content == real.read_bytes()
+    assert b"<!doctype html" not in response.content.lower()
+
+
 # --- containment and absence ----------------------------------------------------------------------
 
 

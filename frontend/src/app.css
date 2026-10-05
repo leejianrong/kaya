@@ -22,6 +22,12 @@
   --shadow-md: 0 1px 1px rgba(20, 25, 30, 0.08), 0 8px 20px -12px rgba(20, 25, 30, 0.28);
   --radius: 8px;
 
+  /* The brand mark's own palette (KAN-1823, Logo.svelte). Independent of the UI tokens on purpose. */
+  --logo-k: #33403d;
+  --logo-toast: #d98a1f;
+  --logo-kaya: #1fa37a;
+  --logo-lt: #d5f7ea;
+
   --sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --mono: ui-monospace, 'SF Mono', 'Cascadia Code', monospace;
 
@@ -51,6 +57,10 @@
     --hover: rgba(255, 255, 255, 0.06);
     --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.5);
     --shadow-md: 0 10px 28px -14px rgba(0, 0, 0, 0.8);
+    --logo-k: #e3ebe8;
+    --logo-toast: #f2b45c;
+    --logo-kaya: #34c79a;
+    --logo-lt: #d5f7ea;
   }
 }
 
