@@ -1,16 +1,9 @@
 /**
- * SLICES.md §V3 end-to-end bullet 5, updated for ADR 0012's cutover (KAN-1740) and again for
- * KAN-1791: "An unauthenticated visitor sees the landing state, a working GitHub sign-in button,
- * and a link to mint a kaya token by hand."
+ * SLICES.md §V3 end-to-end bullet 5, as the landing page stands after KAN-1822: an unauthenticated
+ * visitor sees one promise, a working GitHub sign-in button, an interactive phone demo and three
+ * short tiles. There is no paste form (KAN-1791) and no identity section any more.
  *
- * Before KAN-1740 this asserted a link to pandan, built from `GET /api/v1/meta`'s `pandan_url`
- * (`fake-pandan`, an internal-only test double this suite no longer needs — see
- * `docker-compose.e2e.yml`'s header). Before KAN-1791 it also asserted a paste form — `Landing.svelte`
- * no longer has one at all: GitHub sign-in is the page's one and only credential-acquisition path,
- * and the `identity-note` section is prose plus a link to `/tokens` for minting a *named* bearer by
- * hand, not a place to type one in.
- *
- * No `authedPage` fixture and no `login()` here — this is the one test in the suite that must *not*
+ * No `authedPage` fixture and no `login()` here: this is the one test file that must *not*
  * authenticate, and it never touches a cookie or `sessionStorage`.
  */
 import { expect, test } from './fixtures'
@@ -21,20 +14,60 @@ test('an unauthenticated visitor sees the landing state with GitHub sign-in and 
   await page.goto('/')
 
   await expect(page.locator('.shell')).toHaveClass(/unauthenticated/)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Markdown for humans and agents.')
   await expect(page.getByTestId('github-signin')).toBeVisible()
-  // KAN-1791: there is no credential-typing surface left on this page at all.
   await expect(page.getByTestId('paste-form')).toHaveCount(0)
   await expect(page.locator('input[type="password"]')).toHaveCount(0)
-  // The authenticated regions must be absent, not merely hidden — no sidebar, no note list, no
-  // credential to have leaked into this tab before a session was ever established.
+  // The authenticated regions must be absent, not merely hidden.
   await expect(page.locator('.sidebar')).toHaveCount(0)
-
-  // `Landing.svelte`'s identity-note section: a same-origin link to kaya's own Tokens page, for
-  // minting a *named* bearer (the CLI, a script, another device) rather than signing in with it.
-  // This link is a signed-out visitor's way to `/tokens` (KAN-1818 removed the header's own link;
-  // signed in, Tokens is reached through Settings).
-  const identitySection = page.getByRole('region', { name: 'Kaya mints its own credentials' })
-  const tokensLink = identitySection.getByRole('link', { name: 'Tokens' })
-  await expect(tokensLink).toBeVisible()
-  await expect(tokensLink).toHaveAttribute('href', '/tokens')
+  await expect(page.getByRole('heading', { level: 2 })).toHaveText([
+    'Agent ready',
+    'Linked notes',
+    'Knowledge graph',
+  ])
 })
+
+test('the phone demo switches between Read and Edit', async ({ page }) => {
+  await page.goto('/')
+  const demo = page.getByRole('group', { name: 'Note preview demo' })
+  await expect(demo).toBeVisible()
+
+  const read = demo.getByRole('button', { name: 'Read', exact: true })
+  const edit = demo.getByRole('button', { name: 'Edit', exact: true })
+  await expect(read).toHaveAttribute('aria-pressed', 'true')
+  await expect(demo.getByTestId('phone-read')).toBeVisible()
+  await expect(demo.getByTestId('phone-edit')).toHaveCount(0)
+
+  await edit.click()
+  await expect(edit).toHaveAttribute('aria-pressed', 'true')
+  await expect(demo.getByTestId('phone-edit')).toBeVisible()
+  await expect(demo.getByTestId('phone-read')).toHaveCount(0)
+
+  // Keyboard: focus Read and press Enter.
+  await read.focus()
+  await page.keyboard.press('Enter')
+  await expect(read).toHaveAttribute('aria-pressed', 'true')
+
+  await demo.getByRole('button', { name: 'Graph', exact: true }).click()
+  await expect(demo.getByTestId('phone-graph')).toBeVisible()
+})
+
+test('sign-in is visible without scrolling on a phone', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/')
+  const box = (await page.getByTestId('github-signin').boundingBox())!
+  expect(box.y).toBeGreaterThanOrEqual(0)
+  expect(box.y + box.height).toBeLessThanOrEqual(844)
+})
+
+for (const width of [320, 390, 600, 840, 1440]) {
+  test(`the landing page does not scroll sideways at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 })
+    await page.goto('/')
+    await expect(page.getByTestId('phone-demo')).toBeVisible()
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    )
+    expect(overflow).toBeLessThanOrEqual(0)
+  })
+}
