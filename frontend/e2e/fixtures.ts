@@ -61,7 +61,7 @@ interface Note {
 
 /** `notePath`'s sibling for this file — one percent-encoded segment, same as `lib/notes.ts`. */
 function notePath(ref: string): string {
-  return `notes/${encodeURIComponent(ref)}`
+  return `/api/v1/notes/${encodeURIComponent(ref)}`
 }
 
 /**

@@ -13,7 +13,6 @@
   import { ApiError } from './lib/api'
   import { clearToken, credentialState } from './lib/auth'
   import { fetchCurrentUser } from './lib/identity'
-  import { resolvePandanHref } from './lib/meta'
   import { createNote, getNote, listNotes } from './lib/notes'
   import {
     currentRoute,
@@ -24,7 +23,9 @@
     setNavigationGuard,
     type Route,
   } from './lib/router'
+  import { shellRegions } from './lib/shell'
   import type { Note } from './lib/types'
+  import { currentWindowClass, watchWindowClass, type WindowClass } from './lib/windowClass'
 
   /**
    * The shell: three regions, the route, and the two reads the regions need. Nothing else.
@@ -43,6 +44,12 @@
    * flips because the mount-time session check below finds the fresh cookie, never because
    * `Landing.svelte` told it to. `Tokens.svelte`'s "Use this token now" is the one place left that
    * still calls `setToken` and then this file's `accept()`.
+   *
+   * KAN-1818 made the shell responsive. Which regions render is `lib/shell.ts`'s pure
+   * `shellRegions(windowClass, route, authed)`; the grid that places them is this file's CSS, keyed
+   * to the same breakpoints (`lib/windowClass.ts`). Compact (<600px) shows the note list and the
+   * note as separate screens under a bottom navigation bar; the header lost its Tokens and pandan
+   * links, which live under Settings now.
    *
    * KAN-568 added the **fourth** region, and it is a deliberate exception to the sentence above
    * rather than a drift past it. `BacklinksPanel` could have been a third column of `.split`, and
@@ -238,7 +245,7 @@
    * on a command that is about the pane beside it. `tests/preview.test.ts` types, toggles twice and
    * asserts the same `EditorView` object is still there holding the same text.
    */
-  let previewing = $state(true)
+  let previewing = $state(currentWindowClass() !== 'compact')
 
   /**
    * The document the editor is showing right now, out of `EditorPane`'s `ondocument` seam.
@@ -320,6 +327,26 @@
   })
 
   /**
+   * The window size class (KAN-1818), kept live from `matchMedia`. `expanded` where there is none,
+   * so every non-browser test sees the original four-region layout.
+   */
+  let windowClass: WindowClass = $state(currentWindowClass())
+
+  $effect(() => watchWindowClass((next) => (windowClass = next)))
+
+  const regions = $derived(shellRegions(windowClass, route, authed))
+  const compact = $derived(windowClass === 'compact')
+
+  /** Compact only: whether the backlinks/history rail is open below the note. Closed on every
+   *  navigation, so opening another note never starts with a stale panel in the way. */
+  let detailsOpen = $state(false)
+
+  $effect(() => {
+    void route
+    detailsOpen = false
+  })
+
+  /**
    * Whether the backlinks rail is on the screen — which is exactly "a note route is open" (KAN-568).
    *
    * Not a preference and deliberately not a toggle: the rail answers one question about one note, so
@@ -331,27 +358,11 @@
    * with no grid column would overlap `main`, and a grid column with no rail would be a stripe of
    * empty page.
    */
-  const railed = $derived(authed && route.name === 'note')
-
-  /**
-   * The pandan origin for the topbar's nav link (KAN-1157), resolved the same way `Landing`
-   * resolves it for the sign-in copy (KAN-1156) — `resolvePandanHref` already swallows a failed
-   * fetch and an unset/unsafe origin into `null`, so there is nothing to branch on here beyond
-   * "did we get a link".
-   *
-   * Fetched once per mount rather than gated on `authed`: this file is mounted for the app's whole
-   * lifetime (see the docstring at the top), so there is no re-mount for a toggle of `authed` to
-   * trigger, and re-asking `/api/v1/meta` every time a credential is acquired or cleared would just
-   * repeat a request whose answer cannot have changed. The link itself only *renders* while
-   * `authed`, in the template below.
-   */
-  let pandanHref: string | null = $state(null)
-
-  $effect(() => {
-    const abort = new AbortController()
-    resolvePandanHref({ signal: abort.signal }).then((resolved) => (pandanHref = resolved))
-    return () => abort.abort()
-  })
+  const railed = $derived(
+    regions.detail === 'beside' ||
+      regions.detail === 'below' ||
+      (regions.detail === 'on-demand' && detailsOpen),
+  )
 
   $effect(() => onNavigate((next) => (route = next)))
 
@@ -471,33 +482,27 @@
   class:unauthenticated={!authed}
   class:tokens-or-device={authed && (route.name === 'tokens' || route.name === 'device')}
   class:railed
+  class:compact
+  data-window-class={windowClass}
 >
   <header class="topbar">
-    <a class="brand" href="/" onclick={(event) => interceptClick(event, '/')}>kaya</a>
-    <span class="tagline">markdown notes, API-first</span>
-    <!-- Always reachable, unlike everything else in this header — see the top-of-file note on
-         why `route.name === 'tokens'` is a peer of `authed`, not gated on it. -->
-    <a class="tokens-link" href="/tokens" onclick={(event) => interceptClick(event, '/tokens')}>
-      Tokens
-    </a>
-    {#if authed && pandanHref}
-      <!--
-        KAN-1157. Hidden entirely rather than shown-and-disabled when `pandanHref` is `null` — the
-        same convention `Sidebar.svelte` uses for its view toggle during a search, and the one
-        `Landing.svelte` already applies to this exact link: an operator who has not configured
-        pandan gets no link, not a dead one.
-      -->
+    {#if compact && authed && route.name === 'note'}
+      <!-- KAN-1818: real navigation (a link to `/`), so the browser's and the OS's back button and
+           this arrow agree. -->
       <a
-        class="pandan-link"
-        href={pandanHref}
-        target="_blank"
-        rel="noopener noreferrer"
-        data-testid="pandan-link"
+        class="back"
+        href="/"
+        aria-label="Back to notes"
+        onclick={(event) => interceptClick(event, '/')}
+        data-testid="back-to-list"
       >
-        pandan
+        <span aria-hidden="true">&larr;</span> Notes
       </a>
+    {:else}
+      <a class="brand" href="/" onclick={(event) => interceptClick(event, '/')}>kaya</a>
     {/if}
-    {#if authed}
+    <span class="tagline">markdown notes, API-first</span>
+    {#if authed && (!compact || route.name === 'note')}
       <button
         class="toggle"
         class:on={previewing}
@@ -508,9 +513,20 @@
         Preview
       </button>
     {/if}
+    {#if regions.detail === 'on-demand'}
+      <button
+        class="toggle"
+        class:on={detailsOpen}
+        aria-pressed={detailsOpen}
+        onclick={() => (detailsOpen = !detailsOpen)}
+        data-testid="toggle-details"
+      >
+        Links &amp; history
+      </button>
+    {/if}
   </header>
 
-  {#if authed}
+  {#if regions.nav}
     <NavColumn {route} />
   {/if}
 
@@ -523,48 +539,54 @@
       <DeviceApproval />
     </main>
   {:else if authed}
-    <Sidebar {notes} {route} loading={listing} {query} onsearch={search} oncreate={createAndOpen} />
-    <main>
-      {#if route.name === 'unknown'}
-        <p class="notice">
-          Nothing lives at <code>{route.path}</code>. Pick a note from the sidebar.
-        </p>
-      {:else if route.name === 'graph'}
-        <!-- KAN-1050: read-only, so it takes no note-lifecycle callbacks — `onexpired` is the one
-             failure it cannot absorb itself, for the same reason `BacklinksPanel`'s cannot. -->
-        <GraphView onexpired={discard} />
-      {:else if route.name === 'settings'}
-        <!-- KAN-1815: reads and writes one resource (`/api/v1/preferences`), no note-lifecycle
-             callbacks, for the same reason `PandanConnect` below has none. -->
-        <Settings />
-      {:else if route.name === 'pandan'}
-        <!-- ADR 0012's amendment (KAN-1741): connecting a pandan account has no note-lifecycle
-             callbacks of its own either, for the same reason `GraphView` above has none — it reads
-             and writes exactly one resource (`/api/v1/pandan-link`) that no other region touches. -->
-        <PandanConnect />
-      {:else}
-        <!--
-          The editor and its preview, side by side. `EditorPane` is **outside** the `{#if}` below on
-          purpose (see `previewing`), and the preview is its **sibling** rather than anything nested in
-          it — PLAN §S9: Svelte never renders inside CM6's subtree. The document travels from one to
-          the other through `ondocument` and `liveDocument`, which is a published prop rather than a
-          reach into the editor's internals; see `liveDocument` on why it is not `note.body`.
-        -->
-        <div class="split" class:solo={!previewing}>
-          <EditorPane
-            {note}
-            error={failure === '' ? null : failure}
-            ondocument={publishDocument}
-            ondirty={noteDirty}
-            ondeleted={noteDeleted}
-            onupdated={noteUpdated}
-          />
-          {#if previewing}
-            <PreviewPane {note} source={liveDocument} />
-          {/if}
-        </div>
-      {/if}
-    </main>
+    {#if regions.list}
+      <Sidebar {notes} {route} loading={listing} {query} onsearch={search} oncreate={createAndOpen} />
+    {/if}
+    {#if regions.main}
+      <main>
+        {#if route.name === 'unknown'}
+          <p class="notice">
+            Nothing lives at <code>{route.path}</code>. Pick a note from the list.
+          </p>
+        {:else if route.name === 'graph'}
+          <!-- KAN-1050: read-only, so it takes no note-lifecycle callbacks — `onexpired` is the one
+               failure it cannot absorb itself, for the same reason `BacklinksPanel`'s cannot. -->
+          <GraphView onexpired={discard} />
+        {:else if route.name === 'settings'}
+          <!-- KAN-1815: reads and writes one resource (`/api/v1/preferences`), no note-lifecycle
+               callbacks, for the same reason `PandanConnect` below has none. -->
+          <Settings />
+        {:else if route.name === 'pandan'}
+          <!-- ADR 0012's amendment (KAN-1741): connecting a pandan account has no note-lifecycle
+               callbacks of its own either, for the same reason `GraphView` above has none — it
+               reads and writes exactly one resource (`/api/v1/pandan-link`) that no other region
+               touches. -->
+          <PandanConnect />
+        {:else}
+          <!--
+            The editor and its preview, side by side. `EditorPane` is **outside** the `{#if}` below on
+            purpose (see `previewing`), and the preview is its **sibling** rather than anything nested
+            in it — PLAN §S9: Svelte never renders inside CM6's subtree. The document travels from
+            one to the other through `ondocument` and `liveDocument`, which is a published prop
+            rather than a reach into the editor's internals; see `liveDocument` on why it is not
+            `note.body`.
+          -->
+          <div class="split" class:solo={!previewing}>
+            <EditorPane
+              {note}
+              error={failure === '' ? null : failure}
+              ondocument={publishDocument}
+              ondirty={noteDirty}
+              ondeleted={noteDeleted}
+              onupdated={noteUpdated}
+            />
+            {#if previewing}
+              <PreviewPane {note} source={liveDocument} />
+            {/if}
+          </div>
+        {/if}
+      </main>
+    {/if}
     {#if railed}
       <!--
         KAN-568's rail — the fourth region, and **outside `main` on purpose** (see `railed`). It
@@ -585,36 +607,74 @@
 </div>
 
 <style>
+  /*
+    KAN-1818. Written base = medium (600-839px): a slim nav rail, the list beside the note, the
+    rail *below* the note. `min-width: 840px` is expanded (the original four regions);
+    `max-width: 599.98px` is compact (one screen at a time, bottom navigation bar). The numbers
+    mirror `lib/windowClass.ts` and `tests/window-class.test.ts` checks them. Every grid track that
+    holds content is `minmax(0, …)`, so nothing keeps a laptop-width minimum on a phone.
+  */
   .shell {
     display: grid;
-    grid-template-areas: 'topbar topbar topbar' 'nav sidebar main';
-    grid-template-columns: 5.5rem minmax(12rem, 18rem) 1fr;
-    grid-template-rows: auto 1fr;
+    grid-template-areas: 'topbar topbar' 'nav main';
+    grid-template-columns: 3.75rem minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
     height: 100dvh;
   }
 
-  /* KAN-568's fourth region, present only while a note route is open (see `railed`). The rail is
-     a fixed-ish rail rather than a `1fr` pane, because it holds one column of titles and giving it
-     a third of the width would take that width from the document. */
-  .shell.railed {
-    grid-template-areas: 'topbar topbar topbar topbar' 'nav sidebar main rail';
-    grid-template-columns: 5.5rem minmax(12rem, 18rem) 1fr minmax(11rem, 16rem);
+  /* The list region, whenever there is one (`Sidebar` places itself by class, below). */
+  .shell:has(> :global(.sidebar)) {
+    grid-template-areas: 'topbar topbar topbar' 'nav sidebar main';
+    grid-template-columns: 3.75rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr);
   }
 
-  /* `NavColumn` switches between sections that do not exist here: `Tokens`/`DeviceApproval` each
-     fill `main` alone, the same way `Landing` does, so there is no `sidebar`/`rail` track to
-     reserve — but the column itself still renders (`App.svelte`'s own `{#if authed}` above), which
-     `.unauthenticated` below deliberately does not get. */
-  .shell.tokens-or-device {
-    grid-template-areas: 'topbar topbar' 'nav main';
-    grid-template-columns: 5.5rem 1fr;
+  /* KAN-568's fourth region, present only while a note route is open (see `railed`): below the
+     document on medium, beside it on expanded. The list spans both rows (named twice) because it is
+     a column, not something that stacks. */
+  .shell.railed {
+    grid-template-areas: 'topbar topbar topbar' 'nav sidebar main' 'nav sidebar rail';
+    grid-template-columns: 3.75rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .shell.railed > :global(.right-rail) {
+    max-height: 40dvh;
+    border-top: 1px solid var(--border);
+    border-left: 0;
   }
 
   /* No sidebar, no nav column, without a credential: there is nothing to list or switch between,
      and either one beside a sign-in page reads as a broken app rather than as a locked one. */
   .shell.unauthenticated {
     grid-template-areas: 'topbar' 'main';
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  @media (min-width: 840px) {
+    .shell {
+      grid-template-columns: 5.5rem minmax(0, 1fr);
+    }
+
+    .shell:has(> :global(.sidebar)) {
+      grid-template-columns: 5.5rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr);
+    }
+
+    .shell.railed {
+      grid-template-areas: 'topbar topbar topbar topbar' 'nav sidebar main rail';
+      grid-template-columns: 5.5rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr) clamp(10rem, 16vw, 14rem);
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .shell.railed > :global(.right-rail) {
+      max-height: none;
+      border-top: 0;
+      border-left: 1px solid var(--border);
+    }
+
+    .shell.unauthenticated {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 
   .topbar {
@@ -622,12 +682,19 @@
     align-items: baseline;
     gap: 0.75rem;
     grid-area: topbar;
+    min-width: 0;
     padding: 0.85rem 1.25rem;
     background: var(--card-bg);
     border-bottom: 1px solid var(--border);
   }
 
-  .brand {
+  /* The toggles sit at the right edge of the bar. */
+  .topbar > .toggle:first-of-type {
+    margin-left: auto;
+  }
+
+  .brand,
+  .back {
     color: inherit;
     font-size: 1.05rem;
     font-weight: 600;
@@ -640,26 +707,13 @@
     font-size: 0.85rem;
   }
 
-  .pandan-link,
-  .tokens-link {
-    color: var(--muted);
-    font-size: 0.85rem;
-    text-decoration: none;
-  }
-
-  .pandan-link:hover,
-  .tokens-link:hover {
-    color: var(--accent);
-    text-decoration: underline;
-  }
-
   .shell > :global(.sidebar) {
     grid-area: sidebar;
   }
 
   /* R13/KAN-1064 wrapped the fourth region in `RightRail.svelte` (the tab strip beside Backlinks),
-     so the direct child under `.shell` is now `.right-rail` rather than `BacklinksPanel`'s own
-     `.rail` — that class still exists, one level deeper, inside `RightRail`'s `.pane`. */
+     so the direct child under `.shell` is `.right-rail`; `BacklinksPanel`'s own `.rail` is one level
+     deeper. */
   .shell > :global(.right-rail) {
     grid-area: rail;
   }
@@ -673,6 +727,7 @@
   main {
     grid-area: main;
     min-width: 0;
+    min-height: 0;
     overflow-y: auto;
   }
 
@@ -694,29 +749,6 @@
     .split {
       grid-template-columns: minmax(0, 1fr);
       height: auto;
-    }
-
-    /* Three columns is one too many here, so the rail goes *below* the document rather than beside
-       it. It keeps its own region either way, which is what stops the narrow layout from being a
-       second place the toggle-cannot-reach-it property has to be re-established. `nav` spans both
-       stacked rows (named twice below) for the same reason `sidebar` already does — it is a
-       column, not something that stacks with them. */
-    .shell.railed {
-      grid-template-areas: 'topbar topbar topbar' 'nav sidebar main' 'nav sidebar rail';
-      grid-template-columns: 3.75rem minmax(12rem, 18rem) 1fr;
-      grid-template-rows: auto 1fr auto;
-    }
-
-    /* `nav`'s own track shrinks here too (`NavColumn.svelte` has the matching narrower item
-       styling): at a phone's width, `sidebar`'s 12rem minimum already claims half the viewport, so
-       `nav` at its laptop-width 5.5rem left `main` cut off rather than merely cramped — measured
-       with a real 390px viewport, not assumed. */
-    .shell {
-      grid-template-columns: 3.75rem minmax(12rem, 18rem) 1fr;
-    }
-
-    .shell.tokens-or-device {
-      grid-template-columns: 3.75rem 1fr;
     }
   }
 
@@ -742,5 +774,64 @@
     margin: 0;
     padding: 1.5rem;
     color: var(--muted);
+  }
+
+  /* Compact: one screen at a time, the navigation bar along the bottom. The list and `main` never
+     coexist here (`shellRegions`), so both claim the one content area. */
+  @media (max-width: 599.98px) {
+    .shell,
+    .shell:has(> :global(.sidebar)),
+    .shell.railed,
+    .shell.unauthenticated {
+      grid-template-areas: 'topbar' 'main' 'rail' 'nav';
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr) auto auto;
+    }
+
+    .shell > :global(.sidebar) {
+      grid-area: main;
+      border-right: 0;
+    }
+
+    .shell.railed > :global(.right-rail) {
+      max-height: 45dvh;
+    }
+
+    .topbar {
+      align-items: center;
+      gap: 0.5rem;
+      min-height: 3.5rem;
+      padding: 0.25rem 1rem;
+    }
+
+    .tagline {
+      display: none;
+    }
+
+    .back {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      min-height: 2.75rem;
+      margin-left: -0.5rem;
+      padding: 0 0.5rem;
+    }
+
+    .toggle {
+      min-height: 2.75rem;
+      padding: 0 0.75rem;
+      font-size: 0.8rem;
+    }
+
+    /* The split is a single column of whole-screen height here; with the preview on, the two
+       panes share it equally (the Read/Edit/Split switch is KAN-1819's). */
+    .split {
+      grid-template-rows: minmax(0, 1fr);
+      height: 100%;
+    }
+
+    .split:not(.solo) {
+      grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    }
   }
 </style>

@@ -1,5 +1,8 @@
 <!--
-  The persistent left rail switching between kaya's own top-level sections: Notes, Graph, Tokens.
+  The persistent left rail switching between kaya's own top-level sections: Notes, Graph, Settings. KAN-1818: one element, three
+  presentations by window class, all through the same `data-testid`s — a bottom navigation bar on
+  compact (<600px), a slim rail on medium, the labelled column on expanded. Tokens and the pandan link
+  live under Settings now, no longer here.
 
   Distinct from `Sidebar.svelte`, which lists individual *notes* — this is one level up, the thing
   that decides which of the app's sections `Sidebar`/the editor/`Tokens.svelte` even apply to.
@@ -24,64 +27,62 @@
 -->
 <script lang="ts">
   import { interceptClick, type Route } from '../lib/router'
+  import { NAV_DESTINATIONS, navActive } from '../lib/shell'
 
   const { route }: { route: Route } = $props()
-
-  interface Section {
-    label: string
-    href: string
-    isActive: (route: Route) => boolean
-  }
-
-  const SECTIONS: readonly Section[] = [
-    { label: 'Notes', href: '/', isActive: (r) => r.name === 'home' || r.name === 'note' },
-    { label: 'Graph', href: '/graph', isActive: (r) => r.name === 'graph' },
-    { label: 'Tokens', href: '/tokens', isActive: (r) => r.name === 'tokens' },
-    { label: 'Settings', href: '/settings', isActive: (r) => r.name === 'settings' },
-  ]
 </script>
 
 <nav class="nav-column" aria-label="Sections" data-testid="nav-column">
-  {#each SECTIONS as section (section.label)}
-    {@const active = section.isActive(route)}
+  {#each NAV_DESTINATIONS as destination (destination.label)}
+    {@const active = navActive(destination, route)}
     <a
       class="nav-item"
       class:active
-      href={section.href}
+      href={destination.href}
       aria-current={active ? 'page' : undefined}
-      onclick={(event) => interceptClick(event, section.href)}
-      data-testid={`nav-item-${section.label.toLowerCase()}`}
+      onclick={(event) => interceptClick(event, destination.href)}
+      data-testid={`nav-item-${destination.label.toLowerCase()}`}
     >
-      {section.label}
+      <span class="nav-label">{destination.label}</span>
     </a>
   {/each}
 </nav>
 
 <style>
+  /* Re-themable: the nav bar reads only these tokens (the M3 palette card overrides them). */
   .nav-column {
+    --nav-bg: var(--card-bg);
+    --nav-border: var(--border);
+    --nav-fg: var(--muted);
+    --nav-fg-active: var(--accent);
+    --nav-indicator: var(--accent-soft);
+    --nav-hover: var(--hover);
+
     grid-area: nav;
     display: flex;
     flex-direction: column;
     gap: 0.15rem;
-    padding: 0.75rem 0.4rem;
-    background: var(--card-bg);
-    border-right: 1px solid var(--border);
+    min-width: 0;
+    padding: 0.75rem 0.25rem;
+    background: var(--nav-bg);
+    border-right: 1px solid var(--nav-border);
   }
 
   .nav-item {
     display: block;
-    padding: 0.45rem 0.6rem;
+    padding: 0.4rem 0.35rem;
     border-radius: 0.35rem;
-    color: var(--muted);
+    color: var(--nav-fg);
     text-decoration: none;
-    font-size: 0.82rem;
+    font-size: 0.72rem;
     font-weight: 500;
+    text-align: center;
     white-space: nowrap;
   }
 
   .nav-item:hover {
     color: var(--text);
-    background: var(--hover);
+    background: var(--nav-hover);
   }
 
   .nav-item:focus-visible {
@@ -90,21 +91,58 @@
   }
 
   .nav-item.active {
-    color: var(--accent);
-    background: var(--accent-soft);
+    color: var(--nav-fg-active);
+    background: var(--nav-indicator);
   }
 
-  /* Matches `App.svelte`'s own narrow-viewport column width (measured against a real 390px
-     viewport) — smaller padding and type so three words still read as three words rather than
-     wrapping inside a track half as wide as the laptop layout's. */
-  @media (max-width: 60rem) {
+  @media (min-width: 840px) {
     .nav-column {
-      padding: 0.6rem 0.25rem;
+      padding: 0.75rem 0.4rem;
     }
 
     .nav-item {
-      padding: 0.4rem 0.35rem;
-      font-size: 0.72rem;
+      padding: 0.45rem 0.6rem;
+      font-size: 0.82rem;
+      text-align: left;
+    }
+  }
+
+  /* Compact: an M3-style bottom navigation bar. 56px destinations, the active one marked by a pill
+     behind its label. */
+  @media (max-width: 599.98px) {
+    .nav-column {
+      flex-direction: row;
+      gap: 0;
+      padding: 0 0 env(safe-area-inset-bottom);
+      border-top: 1px solid var(--nav-border);
+      border-right: 0;
+    }
+
+    .nav-item {
+      display: flex;
+      flex: 1;
+      align-items: center;
+      justify-content: center;
+      min-height: 3.5rem;
+      padding: 0.25rem;
+      border-radius: 0;
+      background: transparent;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .nav-item:hover,
+    .nav-item.active {
+      background: transparent;
+    }
+
+    .nav-label {
+      padding: 0.3rem 1.1rem;
+      border-radius: 1rem;
+    }
+
+    .nav-item.active .nav-label {
+      background: var(--nav-indicator);
     }
   }
 </style>

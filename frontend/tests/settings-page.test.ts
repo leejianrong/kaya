@@ -130,17 +130,28 @@ describe('the Settings page', () => {
 })
 
 describe('the nav column', () => {
-  it('links Settings alongside Notes, Graph and Tokens, active on /settings', () => {
+  it('links Settings alongside Notes and Graph, active on /settings', () => {
     mounted.push(mount(NavColumn, { target: host, props: { route: { name: 'settings' } } }))
     flushSync()
 
     const link = host.querySelector<HTMLAnchorElement>('[data-testid="nav-item-settings"]')!
     expect(link.getAttribute('href')).toBe('/settings')
     expect(link.getAttribute('aria-current')).toBe('page')
-    for (const other of ['notes', 'graph', 'tokens']) {
+    for (const other of ['notes', 'graph']) {
       expect(
         host.querySelector(`[data-testid="nav-item-${other}"]`)?.getAttribute('aria-current'),
       ).toBeNull()
     }
+    expect(host.querySelector('[data-testid="nav-item-tokens"]')).toBeNull()
+  })
+})
+
+describe('Settings is where Tokens and the pandan link live (KAN-1818)', () => {
+  it('links to the Tokens and pandan-connection pages', async () => {
+    await open()
+
+    const links = host.querySelector('[data-testid="settings-links"]')!
+    expect(links.querySelector('[data-testid="settings-tokens"]')?.getAttribute('href')).toBe('/tokens')
+    expect(links.querySelector('[data-testid="settings-pandan"]')?.getAttribute('href')).toBe('/pandan')
   })
 })

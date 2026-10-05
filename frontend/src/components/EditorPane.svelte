@@ -1180,4 +1180,11 @@
     border: 1px solid var(--border);
     border-radius: 0.4rem;
   }
+
+  /* KAN-1818, compact: Save/Delete are touch targets. */
+  @media (max-width: 599.98px) {
+    .bar button {
+      min-height: 2.75rem;
+    }
+  }
 </style>

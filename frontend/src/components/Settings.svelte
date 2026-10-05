@@ -12,6 +12,11 @@
   Nested inside `App.svelte`'s `authed` branch like `PandanConnect.svelte`: reaching it already
   means holding a working credential, and there is no bootstrap problem to special-case out of it.
 
+  KAN-1818: also the home of what used to sit in the header and the nav column — **Access tokens**
+  (`/tokens`), **Pandan connection** (`/pandan`) and, when the operator configured one, the pandan
+  board link (resolved by `resolvePandanHref`, hidden entirely rather than dead when unset). Those
+  routes still exist; this page is just how a person gets to them now.
+
   The checkbox is written optimistically and put back if the write fails, with the reason shown —
   a toggle that reads "off" while the server still says "on" would make the next save format a note
   the user believes it won't.
@@ -24,6 +29,8 @@
     rememberFormatOnSave,
     updatePreferences,
   } from '../lib/preferences'
+  import { resolvePandanHref } from '../lib/meta'
+  import { interceptClick } from '../lib/router'
 
   type Phase = 'loading' | 'ready'
 
@@ -70,6 +77,14 @@
     }
   }
 
+  let pandanHref: string | null = $state(null)
+
+  $effect(() => {
+    const abort = new AbortController()
+    resolvePandanHref({ signal: abort.signal }).then((resolved) => (pandanHref = resolved))
+    return () => abort.abort()
+  })
+
   function describe(error: unknown): string {
     if (error instanceof ApiError) {
       return error.message
@@ -104,6 +119,28 @@
     </div>
   {/if}
 
+  <nav class="links" aria-label="Account and connections" data-testid="settings-links">
+    <a href="/tokens" onclick={(event) => interceptClick(event, '/tokens')} data-testid="settings-tokens">
+      <span class="name">Access tokens</span>
+      <span class="hint">Mint and revoke tokens for the CLI and agents</span>
+    </a>
+    <a href="/pandan" onclick={(event) => interceptClick(event, '/pandan')} data-testid="settings-pandan">
+      <span class="name">Pandan connection</span>
+      <span class="hint">Link a pandan account for board embeds</span>
+    </a>
+    {#if pandanHref}
+      <a
+        href={pandanHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        data-testid="pandan-link"
+      >
+        <span class="name">pandan</span>
+        <span class="hint">Open the pandan board in a new tab</span>
+      </a>
+    {/if}
+  </nav>
+
   {#if problem}
     <p class="refused" role="alert" data-testid="problem">{problem}</p>
   {/if}
@@ -132,6 +169,48 @@
     color: var(--muted);
     font-size: 0.85rem;
     line-height: 1.5;
+  }
+
+  .links {
+    display: flex;
+    flex-direction: column;
+    margin-top: 2rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card-bg);
+  }
+
+  .links a {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 3.5rem;
+    padding: 0.5rem 1rem;
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .links a + a {
+    border-top: 1px solid var(--border);
+  }
+
+  .links a:hover {
+    background: var(--hover);
+  }
+
+  .links .name {
+    font-weight: 500;
+  }
+
+  .links .hint {
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
+
+  @media (max-width: 599.98px) {
+    .settings {
+      padding: 1.5rem 1rem;
+    }
   }
 
   .refused {

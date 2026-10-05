@@ -31,8 +31,8 @@ test('an unauthenticated visitor sees the landing state with GitHub sign-in and 
 
   // `Landing.svelte`'s identity-note section: a same-origin link to kaya's own Tokens page, for
   // minting a *named* bearer (the CLI, a script, another device) rather than signing in with it.
-  // Scoped to that section specifically: the shell's own header also links to `/tokens` (visible
-  // even signed out), and this test is about `Landing.svelte`'s own copy, not the header's.
+  // This link is a signed-out visitor's way to `/tokens` (KAN-1818 removed the header's own link;
+  // signed in, Tokens is reached through Settings).
   const identitySection = page.getByRole('region', { name: 'Kaya mints its own credentials' })
   const tokensLink = identitySection.getByRole('link', { name: 'Tokens' })
   await expect(tokensLink).toBeVisible()
