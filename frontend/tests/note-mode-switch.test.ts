@@ -248,7 +248,7 @@ describe('compact', () => {
     expect(localStorage.getItem(modeStorageKey('medium'))).toBeNull()
   })
 
-  it('keeps Save reachable in Read once there is unsaved text', async () => {
+  it('has no Save in Read, but never hides unsaved text in silence (KAN-1826)', async () => {
     await open('/notes/NOTE-6', 390)
     click('mode-edit')
     const v = view()
@@ -257,8 +257,14 @@ describe('compact', () => {
     click('mode-read')
 
     expect(dataMode()).toBe('read')
-    expect(host.querySelector('.bar button')?.textContent?.trim()).toBe('Save')
+    expect(host.querySelector('.bar')).toBeNull()
+    expect(host.querySelector('.bar button')).toBeNull()
+    expect(q('read-unsaved')?.textContent).toContain('Switch to Edit to save')
     expect(q('delete-button')).toBeNull()
+
+    click('mode-edit')
+    expect(q('read-unsaved')).toBeNull()
+    expect(host.querySelector('.bar button')?.textContent?.trim()).toBe('Save')
   })
 
   it('treats medium as its own class: a compact choice does not leak into it', async () => {

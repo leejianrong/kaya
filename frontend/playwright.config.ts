@@ -34,14 +34,14 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: /mobile\.spec\.ts/,
+      testIgnore: /mobile(-[\w-]+)?\.spec\.ts/,
     },
     {
       // KAN-1818: a phone-sized viewport (390x664, touch, mobile UA), still the chromium engine —
       // the iPhone profile defaults to webkit, which is not installed here nor asked for.
       name: 'mobile',
       use: { ...devices['iPhone 13'], defaultBrowserType: 'chromium' },
-      testMatch: /mobile\.spec\.ts/,
+      testMatch: /mobile(-[\w-]+)?\.spec\.ts/,
     },
   ],
   globalSetup: './e2e/global-setup.ts',

@@ -87,10 +87,14 @@ test('desktop: typing in Edit shows in Read without saving, and Split follows ke
 
     await page.getByTestId('mode-read').click()
     await expect(page.getByTestId('preview').locator('h1')).toHaveText('Typed live')
-    // Unsaved text still has a Save in Read, and Delete does not.
-    await expect(page.getByTestId('save-state')).toHaveText(/unsaved changes/)
+    // KAN-1826: Read has no Save and no Delete. Unsaved text is still said out loud.
+    await expect(page.getByTestId('read-unsaved')).toContainText('Switch to Edit to save')
+    await expect(page.getByRole('button', { name: 'Save' })).toHaveCount(0)
+    await expect(page.getByTestId('delete-button')).toHaveCount(0)
 
     await page.getByTestId('mode-edit').click()
+    await expect(page.getByTestId('save-state')).toHaveText(/unsaved changes/)
+    await expect(page.getByRole('button', { name: 'Save' })).toBeVisible()
     await expect(page.locator('.cm-content')).toContainText('# Typed live')
   } finally {
     await apiDeleteNote(request, note.ref)
@@ -112,6 +116,24 @@ test('desktop: Split falls back to Edit when the window shrinks below it, and th
     await expect(page.getByTestId('mode-edit')).toHaveAttribute('aria-pressed', 'true')
     await expect(page.getByTestId('preview')).toHaveCount(0)
     await expect(page.locator('.editor-host')).toBeVisible()
+  } finally {
+    await apiDeleteNote(request, note.ref)
+  }
+})
+
+test('desktop: the editor keeps its own size, the 16px phone rule does not reach it (KAN-1826)', async ({
+  authedPage: page,
+  request,
+}) => {
+  const note = await apiCreateNote(request, { title: prefixedTitle('desktop-font'), body: 'text\n' })
+  try {
+    await page.goto(`/notes/${note.ref}`)
+    await expect(page.locator('.cm-content')).toBeVisible()
+    const size = await page.locator('.cm-editor').evaluate((el) => getComputedStyle(el).fontSize)
+    expect(size).not.toBe('16px')
+    // And no toolbar at this width, focused or not.
+    await page.locator('.cm-content').click()
+    await expect(page.getByTestId('editor-toolbar')).toHaveCount(0)
   } finally {
     await apiDeleteNote(request, note.ref)
   }

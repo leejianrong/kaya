@@ -9,6 +9,7 @@
   import { conflictVersions, needsRemount, syncDocument, syncFormatted } from '../lib/editor'
   import { deleteNote, listLinks, updateNote } from '../lib/notes'
   import { formatOnSave, primePreferences } from '../lib/preferences'
+import type { EditorCommands } from '../lib/toolbar'
   import type { Link, Note, NoteUpdate } from '../lib/types'
   import ConflictBanner from './ConflictBanner.svelte'
 
@@ -28,6 +29,8 @@
     ondirty,
     ondeleted,
     onupdated,
+    oncommands,
+    onfocuschange,
     mode = 'edit',
   }: {
     note: Note | null
@@ -99,7 +102,25 @@
      * preview shows unsaved text.
      */
     mode?: 'read' | 'edit' | 'split'
+    /**
+     * KAN-1826: the live editor's toolbar commands, handed up when a view is built and `null` when
+     * it is torn down. The mobile toolbar is rendered by the layout around this pane and drives the
+     * editor only through this interface (`lib/toolbar.ts`), so it never imports CodeMirror and this
+     * component still owns nothing but its container. Read through `untrack`, like every other
+     * callback here: the mount effect must not depend on what its own output does downstream.
+     */
+    oncommands?: (commands: EditorCommands | null) => void
+    /** KAN-1826: the editor gained or lost focus; same untracked-callback rule as `oncommands`. */
+    onfocuschange?: (focused: boolean) => void
   } = $props()
+
+  function publishCommands(commands: EditorCommands | null): void {
+    untrack(() => oncommands)?.(commands)
+  }
+
+  function publishFocus(focused: boolean): void {
+    untrack(() => onfocuschange)?.(focused)
+  }
 
   /**
    * Hand the current document to {@link ondocument}, if anyone asked for it.
@@ -462,7 +483,10 @@
     }
 
     view?.destroy()
+    publishCommands(null)
+    publishFocus(false)
     view = build(loaded, parent, opened, currentLinks)
+    publishCommands(loaded.commandsFor(view))
     mountedRef = incomingRef
     appliedBody = incomingBody
     appliedLinks = currentLinks
@@ -566,6 +590,8 @@
       view?.destroy()
       view = undefined
       mountedRef = null
+      publishCommands(null)
+      publishFocus(false)
     }
   })
 
@@ -597,6 +623,7 @@
       onAttachmentError: (message) => {
         attachmentError = message
       },
+      onFocusChange: publishFocus,
       onSave: onSaveKey,
       onChange: (document) => {
         dirty = true
@@ -950,10 +977,13 @@
       {/if}
     </header>
 
-    <!-- KAN-1819: in Read the bar is only here while there is something unsaved — a Save with
-         nothing to save is clutter, but unsaved text with no way to save it is a trap. Delete
-         never shows in Read. -->
-    {#if mode !== 'read' || dirty}
+    <!-- KAN-1826: Save and Delete belong to editing, so Read has neither. Unsaved text is still
+         never silent there (KAN-1819's trap): a line says so and where the Save is. -->
+    {#if mode === 'read'}
+      {#if dirty}
+        <p class="unsaved" data-testid="read-unsaved">Unsaved changes. Switch to Edit to save.</p>
+      {/if}
+    {:else}
     <div class="bar">
       <button type="button" onclick={() => void save()} disabled={saving || !dirty}>
         {saving ? 'Saving…' : 'Save'}
@@ -976,7 +1006,6 @@
           no changes
         {/if}
       </span>
-      {#if mode !== 'read'}
       <button
         type="button"
         class="delete"
@@ -996,7 +1025,6 @@
         <button type="button" class="delete-cancel" onclick={cancelDelete} data-testid="delete-cancel">
           Cancel
         </button>
-      {/if}
       {/if}
     </div>
     {/if}
@@ -1133,6 +1161,13 @@
     color: var(--muted);
   }
 
+  .unsaved {
+    margin: 0;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+  }
+
   .bar {
     display: flex;
     align-items: center;
@@ -1217,6 +1252,19 @@
   @media (max-width: 599.98px) {
     .bar button {
       min-height: 2.75rem;
+    }
+
+    /* A keyboard shortcut hint means nothing on a phone, and the room matters with the keyboard up. */
+    .hint {
+      display: none;
+    }
+
+    /* KAN-1826: iOS zooms the page when a field under 16px takes focus, and does not zoom back.
+       The editor's own theme sets 0.9rem; this wins on specificity, and only on a phone, so the
+       desktop editor keeps its size. The path field is the other focusable text on this screen. */
+    .editor-host :global(.cm-editor),
+    .path-input {
+      font-size: 16px;
     }
   }
 </style>
