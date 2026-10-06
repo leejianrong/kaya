@@ -155,6 +155,17 @@ describe('uploadAttachment', () => {
 })
 
 describe('fetchAttachmentBlobUrl: never rejects, whatever went wrong', () => {
+  // jsdom >= 30.1 ships its own `URL.createObjectURL`, which only accepts a jsdom-internal `Blob`;
+  // under vitest the global `Blob` (and `Response#blob()`) is Node's, so the real call throws and
+  // `fetchAttachmentBlobUrl` returns null. These tests pin the fetch wiring, not blob minting.
+  const realCreateObjectURL = URL.createObjectURL
+  beforeEach(() => {
+    URL.createObjectURL = () => 'blob:test/attachment'
+  })
+  afterEach(() => {
+    URL.createObjectURL = realCreateObjectURL
+  })
+
   it('returns a blob: URL on a 200', async () => {
     const fetchImpl = vi.fn(
       async () => new Response(new Blob(['bytes']), { status: 200 }),
