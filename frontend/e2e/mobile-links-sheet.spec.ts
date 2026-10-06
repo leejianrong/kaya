@@ -79,6 +79,7 @@ test('the Links button opens a sheet with two tabs, and every way out returns fo
     // Tab stays inside: from the last control it wraps to the first.
     await links.tap()
     await expect(sheet).toBeVisible()
+    await expect(sheet.getByRole('link', { name: new RegExp(source.title) })).toBeVisible()
     await expect(sheet.getByRole('tab', { name: 'Backlinks' })).toBeFocused()
     for (let i = 0; i < 12; i += 1) {
       await page.keyboard.press('Tab')
@@ -134,6 +135,32 @@ test('the sheet lifts above the keyboard and clears the safe area', async ({
         return Math.round(b.y + b.height)
       })
       .toBe(viewport.height - 300)
+  } finally {
+    await apiDeleteNote(request, note.ref)
+  }
+})
+
+test('Tab stays inside the sheet while the backlinks are still loading', async ({
+  authedPage: page,
+  request,
+}) => {
+  const note = await apiCreateNote(request, { title: prefixedTitle('sheet-loading'), body: 'x\n' })
+  try {
+    // Hold the backlinks answer back so Refresh is disabled and the sheet has only three stops.
+    await page.route('**/backlinks', async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      await route.continue()
+    })
+    await page.goto(`/notes/${note.ref}`)
+    await page.getByTestId('toggle-details').tap()
+    const sheet = page.getByRole('dialog')
+    await expect(sheet.getByRole('tab', { name: 'Backlinks' })).toBeFocused()
+    await expect(sheet.getByRole('button', { name: 'Refresh' })).toBeDisabled()
+    for (let i = 0; i < 4; i += 1) {
+      await page.keyboard.press('Tab')
+      const inside = await page.evaluate(() => document.activeElement?.closest('[role="dialog"]') != null)
+      expect(inside, `after Tab ${i + 1}`).toBe(true)
+    }
   } finally {
     await apiDeleteNote(request, note.ref)
   }

@@ -42,7 +42,10 @@
     }
   })
 
-  const FOCUSABLE = 'a[href], button:not([disabled]), input, textarea, select, [tabindex]:not([tabindex="-1"])'
+  /** Tab stops only: a `tabindex="-1"` control (the unselected tab) is not one, and neither is a
+   *  disabled button (Refresh while loading). Counting either made the wrap miss the last stop. */
+  const FOCUSABLE =
+    ':is(a[href], button, input, textarea, select, [tabindex]):not([tabindex="-1"]):not([disabled])'
 
   function onkeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape') {
