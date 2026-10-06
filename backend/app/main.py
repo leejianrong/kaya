@@ -31,6 +31,8 @@ from app.api import (
     tokens_router,
 )
 from app.api import router as api_router
+from app.boot_guard import credential_problems
+from app.config import get_settings
 from app.identity import (
     device_auth_router,
     install_identity_routes,
@@ -44,7 +46,7 @@ from app.identity import (
 # `mcp_host` for the circular-import reason this one line has to come after every other
 # `app.identity`/`app.api` import above has already run.
 from app.identity.mcp_host import hosted_mcp_app, hosted_mcp_lifespan
-from app.observability import install_observability
+from app.observability import get_logger, install_observability
 from app.spa import mount_spa
 
 
@@ -52,7 +54,17 @@ from app.spa import mount_spa
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Enters `hosted_mcp_lifespan` (ADR 0014, KAN-1744) for the duration of this app's own — see
     `app/identity/mcp_host.py`'s module docstring for why the hosted MCP transport needs its own
-    lifespan entered explicitly rather than inheriting this one for free."""
+    lifespan entered explicitly rather than inheriting this one for free.
+
+    Also runs the credential guard (KAN-1763, `app/boot_guard.py`) before anything serves: a fatal
+    problem logs CRITICAL naming the setting (never its value) and raises, so a production deploy
+    on a default secret fails its health check instead of running."""
+    problems = credential_problems(get_settings())
+    for problem in problems:
+        get_logger("startup").critical(problem.message, extra={"setting": problem.setting})
+    fatal = [p.setting for p in problems if p.fatal]
+    if fatal:
+        raise RuntimeError(f"refusing to boot: insecure production settings: {', '.join(fatal)}")
     async with hosted_mcp_lifespan():
         yield
 
