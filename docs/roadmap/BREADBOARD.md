@@ -410,5 +410,5 @@ against) but not otherwise blocked on pandan's own EPIC-281/282 build — the RF
 spec-defined, not pandan-implementation-defined.
 
 **Cards:** `KAN-1743` (`kaya auth login/logout/status` — **shipped**), `KAN-1744` (hosted remote MCP
-endpoint — **shipped**), `KAN-1745` (docs: hosted MCP + CLI as top options, stdio as the fallback).
-All under `EPIC-284`. `KAN-1745` not started.
+endpoint — **shipped**), `KAN-1745` (docs: hosted MCP + CLI as top options, stdio as the fallback — **shipped** with `KAN-1825`).
+All under `EPIC-284`.

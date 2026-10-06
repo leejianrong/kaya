@@ -69,7 +69,7 @@ $ echo $?
 
 ```console
 $ kaya note list
-error	no_credential	no kaya token configured — set KAYA_TOKEN to a pandan personal access token, or put one under 'token' in the config file	KAYA_TOKEN
+error	no_credential	no kaya token configured — run `kaya auth login`, or set KAYA_TOKEN to a kaya_pat_… token, or put one under 'token' in the config file	KAYA_TOKEN
 $ echo $?
 1
 ```

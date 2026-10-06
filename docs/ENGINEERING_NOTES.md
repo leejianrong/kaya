@@ -443,8 +443,9 @@ The verbatim account of what the brief used to carry in full, kept here so the b
    registration, and RFC 8707 resource binding via a **new authorization_code+PKCE grant** ADR 0013
    hadn't specified — the identical gap pandan hit building its own EPIC-282 (ADR 0026), fixed the
    same way except kaya mints an ordinary, long-lived `kaya_pat_…` rather than adding refresh-token
-   rotation (ADR 0014's own "deliberate simplification" section). Its docs pass (KAN-1745) is next
-   — check the board before assuming this paragraph is the final word.
+   rotation (ADR 0014's own "deliberate simplification" section). Its docs pass shipped with KAN-1825
+   (the guide's get-started, CLI configure, agents, reference and self-hosting pages) and KAN-1745
+   (hosted MCP and the CLI as the top options, stdio as the self-hosting fallback).
 
 **The pandan-PAT encryption rule's full text, including the known card_resolution gap.**
 

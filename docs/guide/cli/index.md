@@ -10,7 +10,7 @@ prints what comes back — the API stays the single source of truth, and the CLI
 logic of its own beyond turning argv into that one call.
 
 It uses only `argparse` from the standard library, so the binary starts fast and there is nothing
-to configure beyond the two settings from [get started](../get-started/index.md).
+to configure beyond the API URL and token from [get started](../get-started/index.md).
 
 ## How the verbs are organised
 
@@ -53,6 +53,17 @@ kaya config set --api-url https://kaya-jian.fly.dev
 kaya config path
 ```
 
+`auth` is the other group that needs no token to start, since its job is to supply one. `kaya auth
+login` signs in through your browser, `kaya auth check` says whether a token is configured, and
+`kaya auth logout` removes it. The verb is `check` because `context` already owns the word
+`status`:
+
+```bash
+kaya auth login
+kaya auth check
+kaya auth logout
+```
+
 Run `kaya --help` for the full list, or `kaya <group> --help` for one group's own help.
 
 ## The full command map
@@ -63,10 +74,11 @@ Run `kaya --help` for the full list, or `kaya <group> --help` for one group's ow
 | Links | `links`, `backlinks` | [Reading](reading.md) |
 | Corpus | `export-all`, `import-all` | [Writing](writing.md) |
 | Configuration | `config set/show/path` | [Configuration](configure.md) |
+| Sign-in | `auth login/logout/check` | [Configuration](configure.md#setting-a-token) |
 
 ## Flags every verb shares
 
-Every verb — `note`, `config`, `links`, `backlinks`, the corpus pair — accepts the same output
+Every verb — `note`, `config`, `auth`, `links`, `backlinks`, the corpus pair — accepts the same output
 flags, from one parent parser, so a verb can never be added later without them:
 
 - **`--format {human,json,toon}`**, with `--json` as a documented alias for `--format json`.
@@ -113,7 +125,7 @@ that subset is and the test that proves it.
 
 -   **[Configuration](configure.md)**
 
-    Where settings come from, `config set`, and the token safety rules.
+    Where settings come from, `auth login`, `config set`, and the token safety rules.
 
 -   **[Reading notes](reading.md)**
 

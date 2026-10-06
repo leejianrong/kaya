@@ -52,7 +52,8 @@ This builds the image (via `scripts/image-build.sh`), starts Postgres, runs the 
 starts the app — one command, one origin, `:8000`. `docker-compose.yml`'s `app.environment:` block
 forwards exactly two variables into the container: `DATABASE_URL` and `KAYA_PANDAN_URL`. Every other
 setting in [configuration](configuration.md) silently takes its default under `make up`, however you
-export it in your shell.
+export it in your shell. That includes the GitHub OAuth variables, so browser sign-in needs the
+backend run directly or your own deployment environment.
 
 Running a second stack alongside another one on the same machine (a second worktree, say) needs its
 own project name and ports, since they'd otherwise share a database:
@@ -121,7 +122,7 @@ and `deploy/k8s/` are all meant to be run by anyone, and none of them talk to Fl
 own hosted instance is a separate, independent thing — provisioned outside this repository's
 manifests, tracked in ADR 0010's 2026-09-02 amendment (`KAN-1044` onward) — and self-hosting kaya
 does not mean reproducing that Fly.io setup. It means running the container and the manifests above
-against your own Postgres and your own pandan instance.
+against your own Postgres and your own GitHub OAuth App. A pandan instance is optional.
 
 ## Recap
 
@@ -130,7 +131,8 @@ against your own Postgres and your own pandan instance.
   `initContainer` both do this before the app starts.
 - `make up` is the fastest single-host loop; `make k3d` proves the Kubernetes manifests against a
   real, if throwaway, cluster.
-- Set `DATABASE_URL` and `KAYA_PANDAN_URL` to your own values — the defaults point at a local
-  Postgres and the maintainer's own hosted pandan, in that order.
+- Set `DATABASE_URL`, your GitHub OAuth App credentials and `KAYA_AUTH_SECRET`. The database default
+  points at a local Postgres, and `KAYA_AUTH_SECRET` has an insecure development default. Set
+  `KAYA_PANDAN_URL` only if you use pandan.
 - The manifests target a real cluster; the local overlay's gaps (TLS, cert-manager) are named, not
   hidden.

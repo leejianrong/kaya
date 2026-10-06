@@ -54,6 +54,9 @@ alongside its MCP tools, that's the one gap this covers:
 kaya links NOTE-12
 ```
 
+Card links resolve through the pandan account you linked under Settings > Pandan connection. With
+no linked account, or with pandan unreachable, the rows come back unresolved instead of failing.
+
 That's a stated limit of the frozen tool set, not an oversight — `MCP ⊆ CLI`, and this is one of the
 verbs the CLI side still has that the six tools don't. See
 [`mcp/README.md`](https://github.com/leejianrong/kaya/blob/main/mcp/README.md) if you're deciding

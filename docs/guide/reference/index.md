@@ -29,23 +29,25 @@ This page is a map to where the real reference material lives, not a restatement
 | --- | --- |
 | The full endpoint list, request/response schemas, status codes | A running instance's `/docs` and `/openapi.json` |
 | How note identity works (`NOTE-n` refs, why path isn't identity) | [ADR 0008](https://github.com/leejianrong/kaya/blob/main/docs/adr/0008-note-identity.md) |
-| How authentication resolves a caller | [ADR 0002](https://github.com/leejianrong/kaya/blob/main/docs/adr/0002-identity-pandan-as-provider.md), and [Agents & MCP → Authentication](../agents/index.md#authentication) |
+| How authentication resolves a caller | [ADR 0012](https://github.com/leejianrong/kaya/blob/main/docs/adr/0012-standalone-identity.md), and [Agents and MCP, Authentication](../agents/index.md#authentication) |
+| The hosted MCP endpoint and its OAuth discovery | [Connect an agent over MCP](../agents/mcp-setup.md#the-hosted-endpoint) |
 | Every CLI verb and its exit codes | [Using the CLI](../cli/index.md), [Errors and exit codes](../cli/errors-and-exit-codes.md) |
 | Every MCP tool and the CLI verb behind it | [`mcp/README.md`](https://github.com/leejianrong/kaya/blob/main/mcp/README.md) |
 | Why kaya's decisions are shaped the way they are | [About](../about/index.md) |
 
 ## Trying a request
 
-Every `/api/v1` request needs a bearer token — the same `pandan_pat_…` token from
-[get started](../get-started/index.md#get-a-token):
+Every `/api/v1` request needs a bearer token: a `kaya_pat_…` token from `kaya auth login`, or one you
+created under Settings > Tokens in the web app (see [get started](../get-started/index.md#sign-in)).
+The browser app uses a cookie session from GitHub sign-in instead.
 
 ```bash
 curl -H "Authorization: Bearer $KAYA_TOKEN" \
   https://your-kaya-instance/api/v1/notes
 ```
 
-`401` means the token didn't resolve against pandan; `403` means it resolved but doesn't own (or
-share a team with) the note in question; `404` means no such note exists at all. The exact shape of
+`401` means the token is missing, revoked or not one kaya issued; `403` means it resolved but doesn't
+own (or share a team with) the note in question; `404` means no such note exists at all. The exact shape of
 every error body — `{"error": {"code", "message", …}}`, everywhere, including a route the framework
 itself returns a bare 404/405 for — is worth relying on precisely because it's uniform; see a running
 instance's `/openapi.json` for the schema behind it rather than this page's word for it.

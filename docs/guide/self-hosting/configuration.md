@@ -17,36 +17,44 @@ fixtures already use. Every other application setting carries a `KAYA_` prefix.
 | Variable | Default | Why it matters |
 | --- | --- | --- |
 | `DATABASE_URL` | `postgresql+psycopg://kaya:kaya@localhost:5432/kaya` | Point this at your own Postgres. The `+psycopg` suffix selects psycopg v3 — [ADR 0001](https://github.com/leejianrong/kaya/blob/main/docs/adr/0001-stack-inherited-from-pandan.md) pins it, and it is not interchangeable with `+psycopg2`. |
-| `KAYA_PANDAN_URL` | `https://simple-kanban-jian.fly.dev` (the maintainer's own hosted pandan) | The identity provider every request is authenticated against ([ADR 0002](https://github.com/leejianrong/kaya/blob/main/docs/adr/0002-identity-pandan-as-provider.md)). Leaving the default means your users authenticate against the maintainer's pandan accounts, not yours. Not a secret — it's echoed verbatim in a `503` body so a caller can see which upstream is down. |
+| `KAYA_GITHUB_OAUTH_CLIENT_ID` | unset | Client id of your own GitHub OAuth App. Its callback URL is `<origin>/auth/github/callback`. Not shared with pandan's App. Unset means the GitHub sign-in routes don't register and nobody can sign in through the browser. |
+| `KAYA_GITHUB_OAUTH_CLIENT_SECRET` | unset | Paired with the id above. A credential, never logged. Both must be set to enable sign-in. |
+| `KAYA_AUTH_SECRET` | an insecure development value | Signs the OAuth state token and session cookies, and peppers the hash of every `kaya_pat_…` token. Set a long random value in production. Rotating it invalidates every cookie session and every token. |
+| `KAYA_COOKIE_SECURE` | off | `1` or `true` marks the session cookie `Secure`. Set it when you serve over HTTPS. |
 
-`make up` forwards exactly these two into the container, via `docker-compose.yml`'s `app.environment:`
-block. Every other field below silently takes its default under `make up`, however you've exported it
-in your shell — to exercise one, run the backend directly (`cd backend && KAYA_… uv run uvicorn
-app.main:app --port 8000`) or set it in your own deployment's environment.
+kaya mints its own tokens and verifies them against its own tables
+([ADR 0012](https://github.com/leejianrong/kaya/blob/main/docs/adr/0012-standalone-identity.md)),
+so authentication never calls pandan and no setting here points at an identity provider.
 
-## Pandan connection timeouts
+`make up` forwards exactly two variables into the container, `DATABASE_URL` and `KAYA_PANDAN_URL`,
+via `docker-compose.yml`'s `app.environment:` block. Every other field below, including the GitHub
+and auth settings above, silently takes its default under `make up`, however you've exported it in
+your shell. To sign in, or to exercise any other setting, run the backend directly
+(`cd backend && KAYA_… uv run uvicorn app.main:app --port 8000`) or set it in your own
+deployment's environment.
 
-Two separate budgets, not one, because "pandan is down" and "pandan is asleep" are different failures
-and a single deadline can't be right for both — pandan's own hosted instance scales to zero, so a
-cold-start wait is a real wait, not a fault.
+## pandan (optional)
+
+pandan is an optional integration. Setting `KAYA_PANDAN_URL` only tells kaya where to find a pandan
+instance if a user chooses to use one.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `KAYA_PANDAN_CONNECT_TIMEOUT_SECONDS` | `5.0` | How long kaya waits to *reach* pandan — DNS, TCP, TLS. Short: this phase answers "is pandan's front door up at all", and that doesn't get slower when the app behind it is asleep. |
-| `KAYA_PANDAN_READ_TIMEOUT_SECONDS` | `30.0` | How long kaya waits for pandan's *answer* once the request is on the wire. Long enough to let a cold start finish rather than report a false outage. |
+| `KAYA_PANDAN_URL` | `https://simple-kanban-jian.fly.dev` (the maintainer's own hosted pandan) | The pandan instance kaya calls for board embeds, `[[KAN-n]]` wikilink resolution and team-default access. Each degrades to "unresolved" or "not found" when pandan is missing or down, and a note always saves and renders. It is not a secret. |
+| `KAYA_PANDAN_LINK_CONNECT_TIMEOUT_SECONDS` | `3.0` | Connect budget for checking a pandan token a user pastes under Settings > Pandan connection. kaya verifies it against pandan before storing it. |
+| `KAYA_PANDAN_LINK_READ_TIMEOUT_SECONDS` | `3.0` | Read budget for the same check. |
 
-## Principal cache
-
-| Variable | Default | What it does |
-| --- | --- | --- |
-| `KAYA_PRINCIPAL_CACHE_TTL_SECONDS` | `60.0` | How long a resolved identity is trusted without re-asking pandan. This is exactly how far token revocation lags. |
-| `KAYA_PRINCIPAL_NEGATIVE_CACHE_TTL_SECONDS` | `10.0` | How long a rejected token is remembered, so a retry loop with a stray bad header doesn't cost one pandan round trip per request. |
+A user opts in by pasting a pandan personal access token under **Settings > Pandan connection**
+(the `/pandan` page). kaya stores it encrypted, keyed from `KAYA_AUTH_SECRET`, because it has to hand
+the token back to pandan unchanged. That linked credential is separate from the user's kaya tokens
+and is the only one kaya ever sends to pandan. A user who never links an account sees card
+wikilinks as unresolved and a "connect your pandan account" prompt in place of a board embed.
 
 ## Team access (R16, ADR 0011)
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `KAYA_TEAM_ACCESS_CONNECT_TIMEOUT_SECONDS` | `3.0` | Connect budget for resolving a caller's team memberships against pandan's `GET /api/v1/teams`. Short and separate from the identity budget above — team-default access is a softer dependency; a teammate's access degrading to "not found" during a slow pandan is accepted, not worth waiting out. |
+| `KAYA_TEAM_ACCESS_CONNECT_TIMEOUT_SECONDS` | `3.0` | Connect budget for resolving a caller's team memberships against pandan's `GET /api/v1/teams`. Short, because team-default access is a softer dependency; a teammate's access degrading to "not found" during a slow pandan is accepted, not worth waiting out. |
 | `KAYA_TEAM_ACCESS_READ_TIMEOUT_SECONDS` | `3.0` | Read budget for the same call. |
 | `KAYA_TEAM_ACCESS_CACHE_TTL_SECONDS` | `60.0` | How long a resolved membership set is trusted. |
 | `KAYA_TEAM_ACCESS_NEGATIVE_CACHE_TTL_SECONDS` | `10.0` | How long "pandan couldn't be asked" is remembered before trying again — decays to "no memberships", not a rejection. |
@@ -54,8 +62,7 @@ cold-start wait is a real wait, not a fault.
 ## Wikilink card/epic resolution (R5, KAN-564)
 
 Budgets for resolving `[[KAN-n]]` / `[[EPIC-n]]` wikilinks against pandan when rendering a note.
-Deliberately separate from the identity timeouts above: a render must return promptly with an
-unresolved link rather than wait out identity's much longer cold-start allowance
+A render must return promptly with an unresolved link rather than wait on a slow or sleeping pandan
 ([ADR 0003](https://github.com/leejianrong/kaya/blob/main/docs/adr/0003-cross-linking-one-way-soft.md) —
 "slow is worse than down").
 
@@ -66,7 +73,7 @@ unresolved link rather than wait out identity's much longer cold-start allowance
 | `KAYA_CARD_RESOLUTION_TOTAL_DEADLINE_SECONDS` | `8.0` | Wall-clock budget across every request one render makes. Refs still unresolved when this elapses render as unresolved rather than hanging the render. Bounds when a *new* request may start; it doesn't cancel one in flight, so worst case is this plus one request's own timeout. |
 | `KAYA_CARD_RESOLUTION_MAX_UPSTREAM_REQUESTS` | `5` | Hard cap on upstream requests per render, regardless of elapsed time — a huge note or board degrades to partially resolved deterministically, not just via the deadline clock. |
 | `KAYA_CARD_RESOLUTION_MAX_SELECTORS_PER_REQUEST` | `100` | How many refs go in one batched `GET /api/v1/cards?refs=…` request before chunking. Must not exceed pandan's own combined-selector cap, or an over-sized chunk gets `422` instead of an answer. |
-| `KAYA_CARD_RESOLUTION_CACHE_TTL_SECONDS` | `300.0` | How long a resolved (or confirmed-absent) card/epic is trusted. Generous compared to the identity cache — a stale card title is cosmetic, unlike a stale identity. |
+| `KAYA_CARD_RESOLUTION_CACHE_TTL_SECONDS` | `300.0` | How long a resolved (or confirmed-absent) card/epic is trusted. A stale card title is cosmetic, so this can be generous. |
 
 ## Board embeds (KAN-1049)
 
@@ -110,22 +117,25 @@ exists, the same fail-loudly instinct the app has for a missing `DATABASE_URL`.
 | --- | --- | --- |
 | `KAYA_SPA_DIST` | unset | Directory holding the built SPA, served from the same origin ([ADR 0010](https://github.com/leejianrong/kaya/blob/main/docs/adr/0010-no-hosted-deploy-until-the-homelab.md)). Unset means the app serves the API alone — no directory is guessed at, and no `../frontend/dist` fallback is tried, because silently serving a months-old build is worse than not finding one. The container image sets this; `make dev` does not, since Vite serves the SPA on `:5173` and proxies `/api` back. Set it to `../frontend/dist` to run the single-artifact layout from a checkout. |
 
-## What kaya holds no setting for
+## Secrets kaya holds
 
-There is no `KAYA_TOKEN` or bearer field here, and no login secret to set. kaya holds no long-lived
-credential of its own — every request forwards the caller's own pandan bearer
-([ADR 0002](https://github.com/leejianrong/kaya/blob/main/docs/adr/0002-identity-pandan-as-provider.md)).
-The R2 credential fields above are the one exception: they're kaya's *own* credential for its
-attachment store, not a caller's forwarded bearer.
+kaya holds credentials of its own now, and they all arrive through settings: the GitHub OAuth client
+secret, `KAYA_AUTH_SECRET`, and the R2 fields above. The tokens it hands out are not settings. They
+live in the database as hashes (a linked pandan token is stored encrypted instead), and a caller's
+token is never forwarded to anyone.
 
 ## A minimal production checklist
 
 ```bash
 DATABASE_URL=postgresql+psycopg://…       # your database
-KAYA_PANDAN_URL=https://…                 # your pandan instance, not the maintainer's default
+KAYA_GITHUB_OAUTH_CLIENT_ID=…             # your own GitHub OAuth App
+KAYA_GITHUB_OAUTH_CLIENT_SECRET=…
+KAYA_AUTH_SECRET=…                        # long and random; rotating it signs everyone out
+KAYA_COOKIE_SECURE=1                      # when served over HTTPS
 ```
 
-Everything else is optional tuning. Confirm `GET /health` returns `200` before pointing real traffic
-at it.
+Add `KAYA_PANDAN_URL=https://…` only if your users will link a pandan account and you run your own
+instance. Everything else is optional tuning. Confirm `GET /health` returns `200` before pointing
+real traffic at it.
 
 Next: [deploy it](deploy.md).
