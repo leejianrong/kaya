@@ -29,15 +29,14 @@ The board-embed wiring below follows the same upstream/resolver split, minus the
 ``board_embed.py``'s module docstring explains why that integration deliberately has none.
 """
 
+from collections.abc import Callable
 from functools import lru_cache
 from typing import Annotated
 
 from fastapi import Depends
-from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from app.auth import Principal, get_principal
-from app.auth.dependencies import bearer_scheme
 from app.config import get_settings
 from app.db import get_session
 from app.identity.pandan_link import linked_pandan_bearer
@@ -133,41 +132,6 @@ def reset_object_storage() -> None:
     get_object_storage.cache_clear()
 
 
-def caller_bearer(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
-) -> str | None:
-    """The caller's own bearer, verbatim, for forwarding to pandan — `app/api/refs.py`'s
-    team-default access check (ADR 0011, R16.3) is the only remaining reason to forward it: pandan
-    still has no concept of a kaya-minted `kaya_pat_…`, so `TeamAccessResolver.member_of` only ever
-    gets an answer for a caller whose kaya-side bearer *is itself* still a valid pandan credential —
-    unaffected callers on kaya's now-standalone identity (ADR 0012) simply see no team memberships,
-    the same soft-fail ADR 0011 already accepts for pandan being unreachable outright.
-
-    **Card/epic wikilink resolution used to be a second consumer of this and no longer is.**
-    `app/integrations/card_resolution.py` forwarded this same caller bearer to pandan until it hit
-    the identical, KAN-1740-shaped defect `app/api/embeds.py`'s board-embed preview had already been
-    fixed for (KAN-1741): a `kaya_pat_…` reaches pandan as a credential it has never seen. Wikilink
-    resolution now uses `card_resolution_bearer`, below — the caller's *linked* pandan PAT, not this
-    one — for exactly that reason.
-
-    **It reuses ``app.auth.dependencies.bearer_scheme`` rather than reading the header itself**, so
-    the claim in that module's comment — "this is the only place in kaya where anything about the
-    ``Authorization`` header is parsed, and it is Starlette doing the parsing" — stays true with a
-    second consumer. What is parsed there is the HTTP *scheme*, the literal ``Bearer `` in front;
-    nothing here or downstream looks at the credential itself (ADR 0002: kaya has no token format).
-
-    ``str | None``, and ``None`` is a **degradation rather than a refusal**. Every route that asks
-    for this also depends on ``get_principal``, which already answers `401` for a request with no
-    usable header, so in practice a route body never sees ``None``; raising a second `401` here
-    would be a second copy of an error shape ``principal_from_bearer`` already owns, for a case that
-    cannot arrive. If one ever did — a route wired to this and not to a principal — the ADR
-    0003-shaped answer is a soft-fail: no team ids resolved, nothing else affected.
-
-    The value is returned and never stored, logged or put in an exception (Q41/Q42).
-    """
-    return credentials.credentials if credentials is not None else None
-
-
 def card_resolution_bearer(
     principal: Annotated[Principal, Depends(get_principal)],
     db: Annotated[Session, Depends(get_session)],
@@ -176,8 +140,8 @@ def card_resolution_bearer(
     one — what `app/integrations/card_resolution.py`'s `CardEpicResolver` forwards to pandan to
     resolve `KAN-`/`EPIC-` wikilinks (`app/api/links.py`).
 
-    **Replaces forwarding `caller_bearer` here, which is what this route used to depend on and was
-    a bug after ADR 0012's cutover (KAN-1740).** Before that cutover the caller's own kaya-side
+    **Replaces forwarding the caller's own kaya bearer, which this route used to do and which was a
+    bug after ADR 0012's cutover (KAN-1740).** Before that cutover the caller's own kaya-side
     bearer *was* a pandan credential (ADR 0002: one PAT authenticated both apps), so forwarding it
     verbatim was correct. `KAN-1740` ended that — a `kaya_pat_…` (or no bearer at all, from a cookie
     session) reaches pandan as a credential it has never seen, indistinguishable from an outage by
@@ -186,7 +150,7 @@ def card_resolution_bearer(
     (`app/identity/pandan_link.py`'s `linked_pandan_bearer`, reused here rather than
     reimplemented) — this dependency is that fix applied to wikilink resolution.
 
-    ``None`` is a degradation, not a refusal, for the same reason `caller_bearer` gives: a route
+    ``None`` is a degradation, not a refusal, as in `pandan_bearer` below: a route
     depending on this also depends on `get_principal`, which already answers `401` before the route
     body runs, so in practice this only returns `None` for a caller who has simply never linked a
     pandan account — and `CardEpicResolver.resolve` (via `app/api/links.py`) already treats a `None`
@@ -195,7 +159,42 @@ def card_resolution_bearer(
     return linked_pandan_bearer(db, principal.id)
 
 
-CallerBearer = Annotated[str | None, Depends(caller_bearer)]
+PandanBearerLookup = Callable[[], str | None]
+"""Call it to get the caller's linked pandan PAT (or ``None``). A lookup, not a value, so a route
+that only sometimes needs pandan pays for the database query only then."""
+
+
+def pandan_bearer(
+    principal: Annotated[Principal, Depends(get_principal)],
+    db: Annotated[Session, Depends(get_session)],
+) -> PandanBearerLookup:
+    """A lookup for the caller's linked pandan PAT, for **team-default access** (ADR 0011,
+    `app/api/refs.py` and `app/api/notes.py`). Calling it returns the PAT, or ``None`` if they never
+    linked one.
+
+    This used to forward the caller's own kaya bearer, which pandan has not recognised since ADR
+    0012 (a `kaya_pat_…` is not a pandan credential), so every non-owner of a team-shared note got
+    the soft-fail "no memberships" answer whatever pandan held (KAN-1804). The linked PAT is the one
+    credential pandan can resolve to the same person, exactly as for wikilink resolution and the
+    board embed. ``None`` degrades to "no team memberships known" (ADR 0003, ADR 0011 Fork 3), never
+    a refusal, so an unlinked caller keeps every note they own.
+
+    **Lazy, and it releases the connection when called.** The owner path of `resolve_note` never
+    needs this, so it must not cost a query. When it is called the caller goes on to ask pandan over
+    the network, and a sync handler must not hold a Postgres connection across that
+    (`app/api/links.py`'s `_release_the_connection`), so the lookup commits. ``expire_on_commit=
+    False`` (`app/db.py`) keeps the session's objects usable afterwards.
+    """
+
+    def lookup() -> str | None:
+        found = linked_pandan_bearer(db, principal.id)
+        db.commit()
+        return found
+
+    return lookup
+
+
+PandanBearer = Annotated[PandanBearerLookup, Depends(pandan_bearer)]
 CardResolutionBearer = Annotated[str | None, Depends(card_resolution_bearer)]
 CardResolver = Annotated[CardEpicResolver, Depends(get_card_epic_resolver)]
 BoardResolver = Annotated[BoardEmbedResolver, Depends(get_board_embed_resolver)]

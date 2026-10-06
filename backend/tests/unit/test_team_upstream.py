@@ -12,7 +12,7 @@ import pytest
 from fakes import TOKEN
 
 from app.auth.principal import UpstreamUnavailable
-from app.auth.team_upstream import TEAMS_PATH, PandanTeamUpstream
+from app.auth.team_upstream import WORKSPACES_PATH, PandanTeamUpstream
 
 BASE_URL = "https://pandan.invalid"
 
@@ -53,7 +53,7 @@ def test_the_request_hits_teams_and_forwards_the_bearer_byte_for_byte() -> None:
 
     upstream_returning(handler).member_teams(TOKEN)
 
-    assert str(seen[0].url) == BASE_URL + TEAMS_PATH
+    assert str(seen[0].url) == BASE_URL + WORKSPACES_PATH
     assert seen[0].headers["authorization"] == f"Bearer {TOKEN}"
 
 
@@ -67,7 +67,7 @@ def test_a_trailing_slash_on_the_configured_origin_does_not_double_up() -> None:
     client = httpx.Client(transport=httpx.MockTransport(handler))
     PandanTeamUpstream(BASE_URL + "/", timeout=1.0, client=client).member_teams(TOKEN)
 
-    assert str(seen[0].url) == BASE_URL + TEAMS_PATH
+    assert str(seen[0].url) == BASE_URL + WORKSPACES_PATH
 
 
 @pytest.mark.parametrize("status", [401, 403, 500, 502, 503, 504])
@@ -128,5 +128,5 @@ def test_the_failure_message_names_the_upstream() -> None:
     with pytest.raises(UpstreamUnavailable) as raised:
         upstream.member_teams(TOKEN)
 
-    assert BASE_URL + TEAMS_PATH in str(raised.value)
+    assert BASE_URL + WORKSPACES_PATH in str(raised.value)
     assert "500" in str(raised.value)

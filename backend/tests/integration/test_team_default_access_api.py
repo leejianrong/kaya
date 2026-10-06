@@ -23,6 +23,9 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 ALICE_TOKEN = "a-caller-supplied-string-kaya-does-not-parse"
 BOB_TOKEN = "a-different-caller-supplied-string"
+# Team membership is asked of pandan with the caller's *linked pandan PAT* (KAN-1804), never the
+# kaya bearer above, so the fake upstream is keyed by this one.
+BOB_PANDAN_PAT = "bobs-linked-pandan-pat"
 ALICE_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
 BOB_ID = uuid.UUID("22222222-2222-4222-8222-222222222222")
 PLATFORM_TEAM_ID = 501
@@ -36,7 +39,7 @@ INSERT_TEAM_NOTE = text(
 
 
 class FakeTeamUpstream:
-    """Pandan's `GET /api/v1/teams`, faked — a bearer maps to the team ids its owner belongs to."""
+    """Pandan's `GET /api/v1/workspaces`, faked: a linked PAT maps to its owner's team ids."""
 
     def __init__(self) -> None:
         self.known: dict[str, frozenset[int]] = {}
@@ -128,10 +131,19 @@ def alice(client: Any, known_principals: dict[str, Any]) -> Any:
 @pytest.fixture
 def bob(client: Any, known_principals: dict[str, Any]) -> Any:
     from app.auth.principal import Principal
+    from app.config import get_settings
     from app.db import get_sessionmaker
+    from app.identity.pandan_link import PandanLink, encrypt_token
 
     with get_sessionmaker()() as session:
         seed_kaya_account(session, id=BOB_ID, email="bob@example.com")
+        session.add(
+            PandanLink(
+                user_id=BOB_ID,
+                encrypted_token=encrypt_token(BOB_PANDAN_PAT, get_settings().kaya_auth_secret),
+            )
+        )
+        session.commit()
 
     principal = Principal(id=BOB_ID, email="bob@example.com")
     known_principals[BOB_TOKEN] = principal
@@ -167,7 +179,7 @@ def alices_team_note(alice: Any) -> str:
 def test_a_team_member_reaches_a_teammates_team_shared_note_over_http(
     client: Any, team_upstream: FakeTeamUpstream, alices_team_note: str
 ) -> None:
-    team_upstream.known[BOB_TOKEN] = frozenset({PLATFORM_TEAM_ID})
+    team_upstream.known[BOB_PANDAN_PAT] = frozenset({PLATFORM_TEAM_ID})
 
     response = client.get(f"{NOTES}/{alices_team_note}", headers=auth(BOB_TOKEN))
 
@@ -215,7 +227,7 @@ def test_a_team_note_appears_in_a_members_list_and_not_a_strangers(
     # Carol only ever reads (`GET /api/v1/notes`), never creates, so — unlike `alice`/`bob` — she
     # needs no `kaya_account` row: nothing here writes a foreign key that would need one.
     known_principals[carol_token] = Principal(id=uuid.uuid4(), email="carol@example.com")
-    team_upstream.known[BOB_TOKEN] = frozenset({PLATFORM_TEAM_ID})
+    team_upstream.known[BOB_PANDAN_PAT] = frozenset({PLATFORM_TEAM_ID})
     # carol is a real, resolvable caller who belongs to no team at all.
 
     bobs_view = client.get(NOTES, headers=auth(BOB_TOKEN))
@@ -236,7 +248,7 @@ def test_creating_a_note_with_a_team_you_belong_to_succeeds(
     """The team's own `team` mirror row does not exist yet anywhere -- this is the first time
     anyone has ever mentioned `PLATFORM_TEAM_ID` to kaya. `ensure_team_mirrored` has to create it
     just-in-time, in the same request, or the note insert fails its own foreign key."""
-    team_upstream.known[BOB_TOKEN] = frozenset({PLATFORM_TEAM_ID})
+    team_upstream.known[BOB_PANDAN_PAT] = frozenset({PLATFORM_TEAM_ID})
 
     response = client.post(
         NOTES,

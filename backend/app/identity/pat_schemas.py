@@ -23,9 +23,7 @@ class TokenScope(StrEnum):
     with the split already in place rather than growing into it). `read` = observer (GET only);
     `write` = operator (the owning account's full access, and the default).
 
-    **Unenforced by this card.** The column and this enum exist so `KAN-1740` has something to
-    read when it wires a PAT bearer into request authentication; until then, minting a `read`-scope
-    token has no effect on what it can do, because nothing checks `scope` yet."""
+    Enforced in `app/auth/dependencies.py`'s `get_principal` (KAN-1887)."""
 
     read = "read"
     write = "write"

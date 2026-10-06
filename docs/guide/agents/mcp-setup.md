@@ -29,7 +29,8 @@ A client that supports remote MCP only needs the URL:
 2. It reads the metadata, finds kaya as the authorization server, and registers itself with
    dynamic client registration (`POST /auth/register`, RFC 7591) or a client ID metadata document.
 3. It sends you to `/auth/authorize` in the browser with a PKCE challenge (`S256` only). You sign
-   in with GitHub if you are not already, pick a scope (`read` or `write`) and approve.
+   in with GitHub if you are not already, pick a scope (`read` or `write`) and approve. With `read`, the read tools work and
+   `create_note` and `edit_note` fail with a `403`.
 4. The client exchanges the code for a token at the token endpoint and uses it as a bearer.
 
 The token you end up with is an ordinary `kaya_pat_…` token. It does not expire and there is no

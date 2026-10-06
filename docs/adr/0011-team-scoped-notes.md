@@ -122,3 +122,13 @@ repeated here beyond the one-line reasons above, per this repo's "cite, don't re
 - **Per-note explicit sharing** (Q8's other half) is untouched by this ADR — it remains a separate,
   undecided question, and nothing here forecloses adding a third rung between owner and team-default
   later if it's ever needed.
+
+## Amendment (2026-10-06): pandan renamed teams to workspaces (KAN-1804)
+
+Pandan ADR 0023 renamed its team tier to workspace in place, ids preserved, so `note.team_id` holds a
+pandan workspace id and kaya keeps its own `team` naming. `TeamAccessResolver` now asks
+`GET /api/v1/workspaces`; the old `/api/v1/teams` path no longer exists in pandan, and until this
+amendment every non-owner of a team-shared note was refused because that call returned `404`. It
+also now sends the caller's linked pandan PAT (Settings > pandan link) instead of their kaya bearer,
+which pandan does not recognise (ADR 0012). A caller who never linked an account has no known team
+memberships, the same soft-fail as pandan being down.

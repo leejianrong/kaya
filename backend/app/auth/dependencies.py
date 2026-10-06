@@ -89,6 +89,8 @@ def reset_auth() -> None:
     get_team_upstream.cache_clear()
 
 
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
 bearer_scheme = HTTPBearer(
     scheme_name="kaya PAT",
     description="A personal access token minted by kaya itself (ADR 0012, `kaya_pat_…`).",
@@ -138,5 +140,16 @@ def get_principal(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=error_body("invalid_token", "kaya did not accept this credential"),
             headers={"WWW-Authenticate": "Bearer"},
+        )
+    if principal.scope == "read" and request.method not in SAFE_METHODS:
+        # KAN-1887: the one place a token's scope is enforced. Every route that resolves its caller
+        # here is covered, and `tests/unit/test_token_scope_decision.py` fails the build for a
+        # mutating route that does not.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=error_body(
+                "insufficient_scope",
+                "this token has read scope and cannot change anything; use a write-scope token",
+            ),
         )
     return principal
