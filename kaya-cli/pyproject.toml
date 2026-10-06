@@ -136,7 +136,9 @@ name = "kaya-notes"
 # no endpoint of its own, ADR 0008's `move` pattern) and the format hint on `note create`/`edit`.
 # 0.20.0 — release cut for the mobile-first web app (responsive shell, Read/Edit/Split, new logo and
 # landing page, KAN-1818 to KAN-1823). No CLI behaviour changed; the tag is what deploys kaya-jian.
-version = "0.20.0"
+# 0.21.0 — release cut for Read-mode wikilinks and the mobile editing toolbar (KAN-1824, KAN-1826). No
+# CLI behaviour changed; the tag is what deploys kaya-jian.
+version = "0.21.0"
 description = "kaya — the notes CLI"
 readme = "README.md"
 license = "Apache-2.0"
