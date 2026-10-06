@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * KAN-1818: the compact (<600px) shell. jsdom has no layout, so this asserts which regions the shell
- * *renders* (the list and the note are separate screens, the back link, the on-demand rail);
+ * *renders* (the list and the note are separate screens, the back link, the Links sheet);
  * `e2e/mobile.spec.ts` proves the widths in a real browser.
  */
 
