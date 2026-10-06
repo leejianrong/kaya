@@ -180,16 +180,19 @@ describe('the compact shell', () => {
     expect(backlinks.getAttribute('aria-selected')).toBe('true')
   })
 
-  it('closes the sheet when navigation happens', async () => {
+  it('closes the sheet when navigation happens, also from one note to another', async () => {
     await open('/notes/NOTE-6', 390)
     host.querySelector<HTMLButtonElement>('[data-testid="toggle-details"]')!.click()
     flushSync()
     expect(host.querySelector('[role="dialog"]')).not.toBeNull()
 
-    window.history.pushState({}, '', '/')
+    // Another note, not the list: the surface is still a sheet there, so only the navigation rule
+    // (not "there is no note any more") can be what closes it.
+    window.history.pushState({}, '', '/notes/NOTE-9')
     window.dispatchEvent(new PopStateEvent('popstate'))
     await vi.waitFor(() => {
       flushSync()
+      expect(window.location.pathname).toBe('/notes/NOTE-9')
       expect(host.querySelector('[role="dialog"]')).toBeNull()
     })
   })
