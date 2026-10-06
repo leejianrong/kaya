@@ -5,9 +5,9 @@ description: >-
   CLI — the primary interface — with the `mcp__kaya__*` MCP tools as a narrower fallback (MCP ⊆ CLI,
   the opposite direction from pandan). Use whenever the task is to list, read, create, edit, move,
   delete, or search markdown notes in kaya, follow or list `[[wikilinks]]`/backlinks, or wire up
-  kaya's ambient SessionStart context (`kaya context`). Kaya has no login of its own — it forwards a
-  pandan personal access token (ADR 0002) — so this skill is worth reading before assuming kaya needs
-  its own credential.
+  kaya's ambient SessionStart context (`kaya context`). Kaya mints its own `kaya_pat_…` token
+  (`kaya auth login`, ADR 0012 and 0013), not a pandan one — so this skill is worth reading before you
+  go looking for a credential.
 ---
 
 # Driving kaya with the `kaya` CLI
@@ -24,21 +24,32 @@ what that means in practice, and `mcp/README.md` (repo root) for the test that h
 
 Prefer `kaya`. Drop to MCP only when the CLI isn't reachable, and say why when you do.
 
-## Authentication: kaya has no login of its own
+## Authentication: kaya mints its own token
 
-**There is no `kaya login` and no kaya-native token format** (ADR 0002). Kaya's backend resolves a
-caller by forwarding the bearer it's given, unchanged, to pandan's `GET /api/v1/me` — cached on
-`sha256(token)` — so **the credential kaya wants is a pandan personal access token**
-(`pandan_pat_…`), the same one that drives the `pandan` CLI. One account, one set of tokens, across
-both apps.
+Kaya has its own accounts and its own tokens (ADR 0012). Its backend checks a bearer against its own
+tables and never calls pandan to do it, so **the credential kaya wants is a `kaya_pat_…` token**. A
+human gets one by running `kaya auth login` (an RFC 8628 device flow, ADR 0013: it prints a link and
+a code, a person approves in the browser, and the token is written straight to the config file and
+never printed) or by creating one under Settings > Tokens in the web app. A token from pandan does not
+work here. Linking a pandan account is optional and only powers board-card embeds and `[[KAN-n]]`
+resolution; a note saves, renders and searches without it.
+
+```bash
+kaya auth login                       # sign in; add --scope read for a token that cannot write
+kaya auth check                       # is a token configured, and from the environment or the file?
+kaya auth logout                      # remove the stored token from the file (it is not revoked server-side)
+```
+
+If you are an agent with no browser, ask the human to run `kaya auth login` or to set `KAYA_TOKEN`
+for you. A `read` scope token that tries to write gets a `403` (exit `4`).
 
 Two independent settings resolve in this precedence, each looked up on its own (KAN-541/KAN-551):
 
 1. **Environment** — `KAYA_API_URL` (default `http://localhost:8000`, what `make up`/`make dev`
    serve) and `KAYA_TOKEN` (no default — unset is a structured `no_credential` refusal, never a
-   silent guess).
+   silent guess, and its message points at `kaya auth login`).
 2. **User config file** — `$XDG_CONFIG_HOME/kaya/config.json` (falling back to
-   `~/.config/kaya/config.json`), written by `kaya config set --token … --api-url …` at mode `0600`
+   `~/.config/kaya/config.json`), written by `kaya auth login` or `kaya config set --token … --api-url …` at mode `0600`
    and read-modify-write (a key you set by hand and `config set` doesn't know about survives).
 
 Unlike pandan's `.mcp.json` tier, **kaya does not yet read `.mcp.json` on its own** — that third tier
@@ -48,10 +59,11 @@ docstring). If a project's `.mcp.json` exports `KAYA_TOKEN`/`KAYA_API_URL` into 
 case work anyway — but don't assume the CLI reads the file directly the way `pandan` does.
 
 **Treat the token as a credential you handle blind** — never `cat`/`echo`/paste the literal
-`pandan_pat_…` value into a command you write. Set it once and never touch it again:
+`kaya_pat_…` value into a command you write. `kaya auth login` is the way to never see it. To store
+one a person minted, set it once and never touch it again:
 
 ```bash
-kaya config set --token "$(cat /path/to/pat)" --api-url https://your-kaya-deployment
+kaya config set --token "$(cat /path/to/token)" --api-url https://your-kaya-deployment
 kaya config show                      # confirms; the token prints as "set", never a value or fragment
 kaya config path                      # where the file is, whether or not it exists yet
 ```
@@ -124,8 +136,8 @@ recording what kind of target it names and whether it resolved:
 - **`[[Some Note Title]]`** resolves against another note you own, by title, matched at save time (or
   reconciled later if the target didn't exist yet — creating the target note afterward links it up
   without editing the source again).
-- **`[[KAN-123]]` / `[[EPIC-45]]`** resolves against a **pandan** card or epic, using your own token,
-  by a bounded list sweep over the board rather than a per-ref round trip (spike 0001 found there's no
+- **`[[KAN-123]]` / `[[EPIC-45]]`** resolves against a **pandan** card or epic, using the pandan
+  account linked under Settings (not your kaya token), by a bounded list sweep over the board rather than a per-ref round trip (spike 0001 found there's no
   pandan endpoint that would accept a ticket ref directly, so this scales with board size, not with
   how many `[[KAN-n]]` refs a note has).
 - **A link that can't be resolved renders as unresolved, never as an error** (ADR 0003) — pandan being

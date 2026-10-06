@@ -172,15 +172,15 @@ real kaya tool *call* costs through kaya's own MCP server against kaya's own not
 which is the number this section reports.
 
 Unlike schema compaction, a tool call needs I/O a static `tools/list` does not: a live kaya backend,
-a real pandan PAT, and a real `kaya-mcp` subprocess talked to over stdio — the same transport
+a real `kaya_pat_…` token, and a real `kaya-mcp` subprocess talked to over stdio — the same transport
 `scripts/verify_stdio_image.py` drives against a built image, here against `python -m kaya_mcp` so
 no image is needed. `scripts/measure_read_payload.py` is that script, and its own docstring is why
 it is a script and not a test: there is no hosted kaya (ADR 0010) to run it against in CI, and no
 committed fixture corpus realistic enough to make truncation's effect honest, so wiring it into
 `make check` would mean either standing up a stack on every push for a number that does not move
 between runs, or teaching CI a secret it does not otherwise need. It follows `make measure-auth`'s
-contract instead: reads a credential (`KAYA_MCP_MEASURE_PAT`, falling back to
-`~/.config/pandan/config.toml`), never prints it, and exits 0 having done nothing when the target
+contract instead: reads a credential (`KAYA_MCP_MEASURE_PAT`; the script's fallback of
+`~/.config/pandan/config.toml` predates ADR 0012 and no longer authenticates, so set the variable), never prints it, and exits 0 having done nothing when the target
 backend or the credential is absent.
 
 Measured 2026-08-20 against an isolated stack (`COMPOSE_PROJECT_NAME=kaya-measure KAYA_DB_PORT=5443
@@ -188,10 +188,10 @@ KAYA_APP_PORT=8023 make up` — never the shared dev stack on :8010/:5434) seede
 realistic, non-uniform multi-paragraph markdown (`--seed-notes 40`; corpus shape: mean body 1,382
 chars, range 630–2,221 — close to `kaya-client/scripts/measure_toon_delta.py`'s own 40-note, 1,351-
 mean corpus, so the percentage below is not an artifact of one-line placeholders), driven with a
-real pandan PAT and re-runnable with:
+real `kaya_pat_…` token and re-runnable with:
 
 ```bash
-KAYA_MCP_MEASURE_URL=http://localhost:8023 KAYA_MCP_MEASURE_PAT=<a real pandan PAT> \
+KAYA_MCP_MEASURE_URL=http://localhost:8023 KAYA_MCP_MEASURE_PAT=<a real kaya_pat_… token> \
   uv run --with tiktoken python scripts/measure_read_payload.py --markdown
 ```
 
