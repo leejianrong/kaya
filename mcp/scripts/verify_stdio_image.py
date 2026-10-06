@@ -37,11 +37,10 @@ HANDSHAKE_TIMEOUT_SECONDS = 30
 async def _list_tools_over_docker(image: str) -> list[str]:
     params = StdioServerParameters(command="docker", args=["run", "-i", "--rm", image])
     with anyio.fail_after(HANDSHAKE_TIMEOUT_SECONDS):
-        async with stdio_client(params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.list_tools()
-                return sorted(tool.name for tool in result.tools)
+        async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.list_tools()
+            return sorted(tool.name for tool in result.tools)
 
 
 def main() -> int:
