@@ -603,8 +603,20 @@ describe('a note attachment image hydrates after render (R14, KAN-1067/1068)', (
 
   const ATTACHMENT_URL = '/api/v1/notes/NOTE-6/attachments/34'
 
+  const realCreateObjectURL = URL.createObjectURL
+  let blobUrls = 0
+
   beforeEach(() => {
     auth.setToken(FAKE_TOKEN)
+    // jsdom >= 30.1 ships its own `URL.createObjectURL`, which only accepts a jsdom-internal
+    // `Blob`; under vitest the global `Blob` (and `Response#blob()`) is Node's, so the real call
+    // throws inside `fetchAttachmentBlobUrl` (-> null -> no <img>). What these tests pin is the
+    // hydration wiring, not blob minting, so stand in a unique `blob:` URL per call.
+    URL.createObjectURL = () => `blob:test/${(blobUrls += 1)}`
+  })
+
+  afterEach(() => {
+    URL.createObjectURL = realCreateObjectURL
   })
 
   it('replaces the placeholder with a real <img> pointing at a blob: URL on success', async () => {
