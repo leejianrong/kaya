@@ -58,12 +58,13 @@ import {
   type Completion,
   type CompletionContext,
   type CompletionResult,
+  startCompletion,
 } from '@codemirror/autocomplete'
-import { defaultKeymap, history, historyKeymap, isolateHistory } from '@codemirror/commands'
+import { defaultKeymap, history, historyKeymap, isolateHistory, undo } from '@codemirror/commands'
 import { markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown'
 import { defaultHighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language'
 import type { Annotation } from '@codemirror/state'
-import { EditorState, StateEffect, StateField } from '@codemirror/state'
+import { EditorSelection, EditorState, StateEffect, StateField } from '@codemirror/state'
 import {
   Decoration,
   type DecorationSet,
@@ -75,7 +76,9 @@ import {
 } from '@codemirror/view'
 
 import { uploadAttachment } from './attachments'
+import { applyFormat } from './formatting'
 import { listNotes } from './notes'
+import type { EditorCommands, ToolbarAction } from './toolbar'
 import type { Link } from './types'
 import {
   excludeFenced,
@@ -120,6 +123,11 @@ export interface EditorSpec {
    * same convention as every other optional callback here.
    */
   onAttachmentError?: (message: string) => void
+  /**
+   * KAN-1826: the editor gained or lost focus. The mobile toolbar shows only while the editor is
+   * focused, which is also when a soft keyboard is up. Optional, like `onAttachmentError`.
+   */
+  onFocusChange?: (focused: boolean) => void
 }
 
 /**
@@ -469,6 +477,9 @@ export function createView(spec: EditorSpec): EditorView {
           if (update.docChanged) {
             spec.onChange(update.state.doc.toString())
           }
+          if (update.focusChanged) {
+            spec.onFocusChange?.(update.view.hasFocus)
+          }
         }),
         theme,
         // KAN-567. `wikilinksField.init` seeds the field from this specific note's initial
@@ -484,4 +495,59 @@ export function createView(spec: EditorSpec): EditorView {
       ],
     }),
   })
+}
+
+// --- KAN-1826: the mobile formatting toolbar's commands -----------------------------------------
+
+/**
+ * What the toolbar's buttons do to a live view. The text rules are `lib/formatting.ts`'s pure
+ * `applyFormat`; this only reads the selection, dispatches the answer as **one** transaction (one
+ * tap is one undo step) and puts the caret where the rules said.
+ *
+ * `scrollIntoView: true` keeps the caret visible after a change that moves it (a link's `](|)`).
+ * Focus is never taken here: the toolbar's buttons refuse focus on pointer-down, so the editor
+ * still has it and the soft keyboard stays up. `view.focus()` is called anyway, because it is free
+ * when the view is focused and it is the recovery when something stole focus.
+ *
+ * `[[` completion: the pure rule types `[[` at a bare caret and says to open the list. Typing `[[`
+ * through a transaction tagged `input.type` is what CM6's own typing handler would produce, and
+ * `startCompletion` opens the list explicitly rather than hoping the activation heuristic fires
+ * for a programmatic change.
+ */
+export function commandsFor(view: EditorView): EditorCommands {
+  function run(action: ToolbarAction): void {
+    view.focus()
+    if (action === 'undo') {
+      undo(view)
+      return
+    }
+    const { main } = view.state.selection
+    const result = applyFormat(action, view.state.doc.toString(), {
+      anchor: main.anchor,
+      head: main.head,
+    })
+    if (result === null) {
+      return
+    }
+    view.dispatch({
+      changes: { from: result.from, to: result.to, insert: result.insert },
+      selection: EditorSelection.single(result.anchor, result.head),
+      scrollIntoView: true,
+      userEvent: action === 'wikilink' ? 'input.type' : 'input.format',
+    })
+    if (result.opensWikilinkCompletion) {
+      startCompletion(view)
+    }
+  }
+
+  function revealCaret(): void {
+    view.dispatch({
+      effects: EditorView.scrollIntoView(view.state.selection.main.head, {
+        y: 'nearest',
+        yMargin: 24,
+      }),
+    })
+  }
+
+  return { run, revealCaret }
 }

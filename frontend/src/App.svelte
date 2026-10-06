@@ -3,6 +3,7 @@
 
   import DeviceApproval from './components/DeviceApproval.svelte'
   import EditorPane from './components/EditorPane.svelte'
+  import EditorToolbar from './components/EditorToolbar.svelte'
   import GraphView from './components/GraphView.svelte'
   import Landing from './components/Landing.svelte'
   import Logo from './components/Logo.svelte'
@@ -35,6 +36,8 @@
     type NoteMode,
   } from './lib/noteMode'
   import { shellRegions } from './lib/shell'
+import { type EditorCommands, toolbarShown } from './lib/toolbar'
+import { watchViewport } from './lib/viewport'
   import type { Note } from './lib/types'
   import { currentWindowClass, watchWindowClass, type WindowClass } from './lib/windowClass'
 
@@ -394,6 +397,52 @@
     route.name !== 'note' ? 'edit' : modeAvailable(mode, windowClass) ? mode : 'edit',
   )
 
+  /**
+   * KAN-1826: the mobile formatting toolbar. `editorCommands` and `editorFocused` come up out of
+   * `EditorPane` through two callbacks, so this file never touches the editor itself; the toolbar
+   * goes back down the same way, as an interface. It shows while a note is being edited with focus
+   * in the editor on a compact or medium window (`toolbarShown`), which is when a soft keyboard is
+   * up. `keyboardInset` is only watched while it shows.
+   */
+  let editorCommands: EditorCommands | null = $state(null)
+  let editorFocused = $state(false)
+  let keyboardInset = $state(0)
+
+  const toolbarOn = $derived(
+    toolbarShown({
+      windowClass,
+      mode: shownMode,
+      focused: editorFocused,
+      inNote: route.name === 'note',
+    }),
+  )
+
+  // A hidden editor (Read) keeps a stale "focused" in Chrome, which fires no blur for it.
+  $effect(() => {
+    if (shownMode !== 'edit') {
+      editorFocused = false
+    }
+  })
+
+  $effect(() => {
+    if (!toolbarOn) {
+      keyboardInset = 0
+      return
+    }
+    return watchViewport((inset) => (keyboardInset = inset))
+  })
+
+  // The keyboard coming up or the toolbar appearing moves the editor's bottom edge. CodeMirror does
+  // not re-reveal the caret on a resize, so ask once the layout has settled.
+  $effect(() => {
+    if (!toolbarOn) {
+      return
+    }
+    void keyboardInset
+    const frame = requestAnimationFrame(() => editorCommands?.revealCaret())
+    return () => cancelAnimationFrame(frame)
+  })
+
   /** Compact only: whether the backlinks/history rail is open below the note. Closed on every
    *  navigation, so opening another note never starts with a stale panel in the way. */
   let detailsOpen = $state(false)
@@ -540,6 +589,7 @@
   class:tokens-or-device={authed && (route.name === 'tokens' || route.name === 'device')}
   class:railed
   class:compact
+  class:toolbar-open={toolbarOn}
   data-window-class={windowClass}
 >
   <header class="topbar">
@@ -620,7 +670,7 @@
             rather than a reach into the editor's internals; see `liveDocument` on why it is not
             `note.body`.
           -->
-          <div class="note-screen">
+          <div class="note-screen" style:--kb-inset="{keyboardInset}px">
             {#if route.name === 'note'}
               <!-- KAN-1819: above the note, not in the header — it is about this note, and on a
                    phone the header has no room. A sibling of `.split`, so it can never be the
@@ -638,11 +688,16 @@
                 ondirty={noteDirty}
                 ondeleted={noteDeleted}
                 onupdated={noteUpdated}
+                oncommands={(next) => (editorCommands = next)}
+                onfocuschange={(focused) => (editorFocused = focused)}
               />
               {#if shownMode !== 'edit'}
                 <PreviewPane {note} source={liveDocument} reading={shownMode === 'read'} />
               {/if}
             </div>
+            {#if toolbarOn}
+              <EditorToolbar commands={editorCommands} inset={keyboardInset} />
+            {/if}
           </div>
         {/if}
       </main>
@@ -806,6 +861,12 @@
     min-height: 0;
   }
 
+  /* KAN-1826: the toolbar is fixed to the visible bottom, so the editor stops above it: the
+     keyboard's inset plus the toolbar's own height (2.75rem, `EditorToolbar`'s button). */
+  .shell.toolbar-open .note-screen {
+    padding-bottom: calc(var(--kb-inset, 0px) + 2.75rem);
+  }
+
   .mode-bar {
     flex: none;
     padding: 0.75rem 1.5rem 0;
@@ -893,6 +954,23 @@
       grid-template-areas: 'topbar' 'main' 'rail' 'nav';
       grid-template-columns: minmax(0, 1fr);
       grid-template-rows: auto minmax(0, 1fr) auto auto;
+    }
+
+    /* KAN-1826: the toolbar takes the bottom edge while a note is being edited. */
+    .shell.toolbar-open > :global(.nav-column) {
+      display: none;
+    }
+
+    /* KAN-1826: a phone's keyboard leaves about half the screen. While the editor has focus the
+       document gets it: the title and path step aside, and the editor may shrink below its usual
+       minimum. Save and the mode switch stay: on an iPhone there is no key to dismiss the keyboard,
+       and switching to Read is how a person leaves editing. Everything is back once focus leaves. */
+    .shell.toolbar-open .note-screen :global(.pane > header) {
+      display: none;
+    }
+
+    .shell.toolbar-open .note-screen :global(.editor-host) {
+      min-height: 0;
     }
 
     .shell > :global(.sidebar) {
