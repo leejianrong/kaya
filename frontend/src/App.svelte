@@ -973,6 +973,15 @@ import { watchViewport } from './lib/viewport'
       min-height: 0;
     }
 
+    .shell.toolbar-open .mode-bar {
+      padding-top: 0.25rem;
+    }
+
+    .shell.toolbar-open .note-screen :global(.pane) {
+      gap: 0.5rem;
+      padding-block: 0.5rem;
+    }
+
     .shell > :global(.sidebar) {
       grid-area: main;
       border-right: 0;

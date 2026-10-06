@@ -1254,6 +1254,11 @@ import type { EditorCommands } from '../lib/toolbar'
       min-height: 2.75rem;
     }
 
+    /* A keyboard shortcut hint means nothing on a phone, and the room matters with the keyboard up. */
+    .hint {
+      display: none;
+    }
+
     /* KAN-1826: iOS zooms the page when a field under 16px takes focus, and does not zoom back.
        The editor's own theme sets 0.9rem; this wins on specificity, and only on a phone, so the
        desktop editor keeps its size. The path field is the other focusable text on this screen. */
