@@ -144,7 +144,9 @@ name = "kaya-notes"
 # skill and READMEs; also ships the backend scope enforcement of KAN-1887 on the next deploy.
 # 0.24.0 — release cut for the dependency security bumps (KAN-1812: urllib3, Mako, PyJWT, httpx2 and the
 # frontend dev tree). No CLI behaviour changed; the tag is what deploys kaya-jian.
-version = "0.24.0"
+# 0.25.0 — release cut for the deploy guards (KAN-1763: boot-time secret check, release-drift workflow)
+# and the dev dependency bumps. No CLI behaviour changed; the tag is what deploys kaya-jian.
+version = "0.25.0"
 description = "kaya — the notes CLI"
 readme = "README.md"
 license = "Apache-2.0"
