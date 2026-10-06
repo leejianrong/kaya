@@ -70,12 +70,14 @@ test('the phone layout: list and note are separate screens under a bottom nav', 
     await noHorizontalScroll(page)
     await expect(nav).toBeVisible()
 
-    // The links/history rail is behind a control, not squashing the document beside it.
+    // KAN-1827: backlinks and history are behind the Links button, in a sheet, not squashing the
+    // document. The sheet's own behaviour is in `mobile-links-sheet.spec.ts`.
     await expect(page.locator('.right-rail')).toHaveCount(0)
     await page.getByTestId('toggle-details').click()
-    await expect(page.locator('.right-rail')).toBeVisible()
+    await expect(page.getByRole('dialog', { name: 'Links and history' })).toBeVisible()
     await noHorizontalScroll(page)
-    await page.getByTestId('toggle-details').click()
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog')).toHaveCount(0)
 
     // note -> list, by the browser's back button and by the on-screen arrow.
     await page.goBack()

@@ -76,8 +76,9 @@ unit-tested without a browser, decide everything; components only consume them.
   mirror the numbers, and `tests/window-class.test.ts` fails if a shell stylesheet uses any other
   width (the one allowance is the 60rem split stack). Do not invent a third breakpoint.
 - **`lib/shell.ts`** (`shellRegions`) says which regions render: compact is a bottom nav with the
-  list and the note as separate screens and the backlinks/history rail behind a control; medium puts
-  the rail below the note; expanded has it beside.
+  list and the note as separate screens; `supportingSurface` says backlinks/history are a modal
+  bottom sheet on compact (opened by the top bar's Links button) and an on-demand pane on medium
+  (below the note) and expanded (beside it), closed by default, open state remembered per class.
 - **`lib/noteMode.ts`** owns Read | Edit | Split (`ModeSwitch.svelte`). It replaced the Preview
   toggle, which is gone. Split exists only at `expanded` and is *hidden*, never disabled, below 840;
   expanded opens in Edit, narrower opens a saved note in Read and a just-created one in Edit. The mode
