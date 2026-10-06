@@ -379,10 +379,9 @@ async def _call(
         env["KAYA_MAX_TEXT_CHARS"] = max_text_chars
     params = StdioServerParameters(command=sys.executable, args=["-m", "kaya_mcp"], env=env)
     with anyio.fail_after(HANDSHAKE_TIMEOUT_SECONDS):
-        async with stdio_client(params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool(tool, arguments)
+        async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool(tool, arguments)
     if result.is_error:
         text = result.content[0].text if result.content else "<no content>"
         raise RuntimeError(f"{tool}({arguments!r}) failed over the real stack: {text}")
