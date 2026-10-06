@@ -46,7 +46,7 @@ uv run ruff check .
 ## The verbs (KAN-541, completed by KAN-551)
 
 ```console
-$ export KAYA_TOKEN=…                      # a pandan PAT. KAYA_API_URL defaults to :8000
+$ export KAYA_TOKEN=…                      # a kaya_pat_… token (`kaya auth login`). KAYA_API_URL defaults to :8000
 $ kaya note list
 NOTE-12  Groceries       home/groceries.md
 NOTE-3   A reading list
@@ -96,7 +96,7 @@ a guess, and a host launching one usually exports the `env` block anyway).
 
 | | |
 |---|---|
-| `KAYA_TOKEN` | A pandan PAT. **Required** — ADR 0002 gives kaya no way to mint one. Missing → `error<TAB>no_credential<TAB>…<TAB>KAYA_TOKEN` on stdout, exit `1` |
+| `KAYA_TOKEN` | A `kaya_pat_…` token, from `kaya auth login` or Settings > Tokens in the web app (ADR 0012, ADR 0013). **Required.** Missing → `error<TAB>no_credential<TAB>…<TAB>KAYA_TOKEN` on stdout, exit `1` |
 | `KAYA_API_URL` | The deployment. Defaults to `http://localhost:8000`, which is what `make up` serves |
 | `KAYA_MAX_TEXT_CHARS` | Where prose is cut. Default `500`; `0` disables, which is what `--full` resolves to. A value that is not a whole number is a usage error naming the tier it came from |
 

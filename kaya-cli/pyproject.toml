@@ -140,7 +140,9 @@ name = "kaya-notes"
 # CLI behaviour changed; the tag is what deploys kaya-jian.
 # 0.22.0 — release cut for the links and history sheet/pane and the M3 look (KAN-1827, KAN-1828). No
 # CLI behaviour changed; the tag is what deploys kaya-jian.
-version = "0.22.0"
+# 0.23.0 — KAN-1888 corrects the credential wording (kaya_pat_, not pandan PAT) in --help, the bundled
+# skill and READMEs; also ships the backend scope enforcement of KAN-1887 on the next deploy.
+version = "0.23.0"
 description = "kaya — the notes CLI"
 readme = "README.md"
 license = "Apache-2.0"

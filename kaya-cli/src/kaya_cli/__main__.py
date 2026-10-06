@@ -542,7 +542,10 @@ def _add_config_verbs(config_commands, flags: argparse.ArgumentParser) -> None:
     setting.add_argument(
         TOKEN_FLAG,
         default=None,
-        help="a pandan personal access token; stored in a 0600 file and never printed back",
+        help=(
+            "a kaya_pat_… token (or use `kaya auth login`); "
+            "stored in a 0600 file and never printed back"
+        ),
     )
 
     config_commands.add_parser(
