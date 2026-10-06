@@ -186,20 +186,17 @@ def test_last_used_at_is_stamped_on_a_successful_pat_auth(client: Any) -> None:
         assert after.last_used_at is not None
 
 
-def test_a_read_scope_pat_still_authenticates_writes_today(client: Any) -> None:
-    """`scope` is stored (ADR 0012) but unenforced until `KAN-1740`'s own follow-up wires it into
-    request authorization — this pins the *current*, honest behaviour rather than a claim about
-    enforcement this card does not implement."""
+def test_a_read_scope_pat_authenticates_but_cannot_write(client: Any) -> None:
+    """`scope` is enforced in `get_principal` (KAN-1887); `test_token_scope_api.py`
+    covers every mutating route. This pins the resolver-level half: the token still resolves."""
     token = mint_pat(client, scope="read")
 
-    response = client.post(
-        NOTES, json={"title": "read-scope token, unenforced"}, headers=bearer(token)
-    )
+    read = client.get(NOTES, headers=bearer(token))
+    write = client.post(NOTES, json={"title": "read-scope token"}, headers=bearer(token))
 
-    assert response.status_code == 201, (
-        "scope enforcement is not yet wired up -- if this starts failing, either enforcement "
-        "landed (update this test to assert a 403) or something else broke write access entirely"
-    )
+    assert read.status_code == 200
+    assert write.status_code == 403
+    assert write.json()["error"]["code"] == "insufficient_scope"
 
 
 # --- The real resolver, end to end: a cookie session ----------------------------------------------

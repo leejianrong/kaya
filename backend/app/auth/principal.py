@@ -23,6 +23,10 @@ class Principal:
 
     id: uuid.UUID
     email: str
+    scope: str = "write"
+    """`read` only for a request authenticated by a `read`-scope `kaya_pat_` token (KAN-1887);
+    `get_principal` refuses an unsafe method for it. A cookie session, and any `Principal` built
+    without naming a scope, is `write`: the owning account's full access."""
 
 
 class UpstreamUnavailable(Exception):

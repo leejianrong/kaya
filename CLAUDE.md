@@ -130,10 +130,15 @@ These have tests; you will meet them as a failing build otherwise. Full accounts
 - **One module owns "the bearer for a request"** (`lib/auth.ts`): the token lives in
   `sessionStorage`, never `localStorage` or a cookie, and `credentialState()` returns `set`/`not set`
   only. It is separate from `lib/identity.ts`'s cookie-session seam on purpose.
+- **A token's `read` scope is enforced in `get_principal` and nowhere else** (KAN-1887): an unsafe
+  method on a `read` token is `403 insufficient_scope`. `tests/unit/test_token_scope_decision.py` fails
+  for a mutating route that neither depends on `get_principal` nor is justified in that file. The
+  hosted `/mcp` tools call the REST API with the caller's bearer, so they inherit it.
 - **A linked pandan PAT is encrypted at rest, never hashed** (`app/identity/pandan_link.py`, Fernet
   keyed from `KAYA_AUTH_SECRET`): it must be handed back to pandan raw. Wikilink resolution
-  (`app/integrations/card_resolution.py`) uses the same linked credential, and a caller who never linked
-  one degrades to "unresolved" (ADR 0003).
+  (`app/integrations/card_resolution.py`) and team-default access (`GET /api/v1/workspaces`, ADR 0011)
+  use the same linked credential, and a caller who never linked one degrades to "unresolved" or "no
+  team memberships" (ADR 0003).
 - **A `PATCH` is guarded only if `if_updated_at` is sent, and only over `body`** (ADR 0009). The CLI's
   only guard flag is `--if-updated-at`; there is no `--force`, and the client never fetches the
   precondition itself.

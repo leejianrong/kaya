@@ -81,7 +81,7 @@ def principal_from_pat(session: Session, bearer: str | None, *, secret: str) -> 
 
     pat.last_used_at = now
     session.commit()
-    return Principal(id=account.id, email=account.email)
+    return Principal(id=account.id, email=account.email, scope=pat.scope)
 
 
 def resolve_principal(

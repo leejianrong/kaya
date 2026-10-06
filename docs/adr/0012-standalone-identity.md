@@ -105,3 +105,19 @@ bearer the exact same way the board-embed preview used to, and has the identical
 **not** fixed by this amendment. It degrades to "unresolved" rather than failing loudly (ADR 0003),
 which made it the lower-priority of the two broken call sites, not an oversight; a future card should
 give it the same `pandan_link` lookup this one gave the board-embed preview.
+
+## Amendment (2026-10-06): scope enforced, and the two pandan callers fixed (KAN-1887, KAN-1804)
+
+The `read`/`write` scope this ADR specified was stored and never checked, so a `read` token could
+write. `get_principal` now carries the token's scope on the `Principal` and answers `403`
+`insufficient_scope` for any unsafe method on a `read` token, in that one place. A cookie session is
+`write`, and every token minted before this change holds `write` from the column's server default,
+so no existing token changes behaviour. `tests/unit/test_token_scope_decision.py` fails the build
+for a new mutating route that neither resolves its caller through `get_principal` nor says why.
+Preset scopes beyond `read` and `write` stay with KAN-1803.
+
+The "deliberately narrow scope" paragraph above is out of date: wikilink resolution has used the
+linked pandan PAT since KAN-1741's follow-up (`card_resolution_bearer`). Team-default access
+(ADR 0011) was the remaining caller still forwarding the kaya bearer, and it also asked pandan's
+retired `/api/v1/teams`. It now asks `GET /api/v1/workspaces` with the linked PAT
+(`tests/integration/test_pandan_contract_api.py`).

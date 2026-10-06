@@ -54,7 +54,7 @@ wikilinks as unresolved and a "connect your pandan account" prompt in place of a
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `KAYA_TEAM_ACCESS_CONNECT_TIMEOUT_SECONDS` | `3.0` | Connect budget for resolving a caller's team memberships against pandan's `GET /api/v1/teams`. Short, because team-default access is a softer dependency; a teammate's access degrading to "not found" during a slow pandan is accepted, not worth waiting out. |
+| `KAYA_TEAM_ACCESS_CONNECT_TIMEOUT_SECONDS` | `3.0` | Connect budget for resolving a caller's team memberships against pandan's `GET /api/v1/workspaces`, using the caller's linked pandan token. Short, because team-default access is a softer dependency; a teammate's access degrading to "not found" during a slow pandan is accepted, not worth waiting out. |
 | `KAYA_TEAM_ACCESS_READ_TIMEOUT_SECONDS` | `3.0` | Read budget for the same call. |
 | `KAYA_TEAM_ACCESS_CACHE_TTL_SECONDS` | `60.0` | How long a resolved membership set is trusted. |
 | `KAYA_TEAM_ACCESS_NEGATIVE_CACHE_TTL_SECONDS` | `10.0` | How long "pandan couldn't be asked" is remembered before trying again — decays to "no memberships", not a rejection. |

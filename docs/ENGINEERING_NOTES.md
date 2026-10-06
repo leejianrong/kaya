@@ -447,19 +447,29 @@ The verbatim account of what the brief used to carry in full, kept here so the b
    (the guide's get-started, CLI configure, agents, reference and self-hosting pages) and KAN-1745
    (hosted MCP and the CLI as the top options, stdio as the self-hosting fallback).
 
-**The pandan-PAT encryption rule's full text, including the known card_resolution gap.**
+**The pandan-PAT encryption rule's full text, and the two callers that used to forward the wrong bearer.**
 
 - **A linked pandan PAT is encrypted at rest, never hashed** (`app/identity/pandan_link.py`, ADR
   0012's amendment, KAN-1741) — kaya's own PATs are hashed because kaya only ever verifies one was
   presented; a linked pandan PAT must be handed back to pandan raw on every board-embed render, so a
   one-way hash cannot work here. `Fernet`, keyed from `KAYA_AUTH_SECRET` — rotating that secret
   invalidates every stored link the same way it already invalidates every cookie session and kaya
-  PAT hash. **`app/integrations/card_resolution.py` (wikilink resolution) has the identical
-  now-broken-bearer problem KAN-1741 fixed for board embeds** (both used to forward the caller's own
-  kaya-side bearer, which stopped being a pandan credential at `KAN-1740`) **and is not yet fixed** —
-  a known, explicitly-tracked gap, not something papered over; it degrades to "unresolved" rather
-  than failing loudly (ADR 0003), which is why it was sequenced after the board-embed preview rather
-  than blocking it.
+  PAT hash. Wikilink resolution had the identical
+  now-broken-bearer problem (both used to forward the caller's own kaya-side bearer, which stopped
+  being a pandan credential at `KAN-1740`) and was fixed the same way (`card_resolution_bearer`).
+  **KAN-1804 found team-default access (ADR 0011) in the same state, and also calling pandan's
+  retired `/api/v1/teams`**: every non-owner of a team-shared note was refused, quietly, because the
+  soft-fail looks like "not a member". Fixed to `GET /api/v1/workspaces` with the linked PAT. A
+  fake pandan that serves only the current paths and records the `Authorization` header
+  (`tests/integration/test_pandan_contract_api.py`) is what catches this class; the old fakes
+  were keyed by whatever bearer kaya forwarded, so they could not.
+
+**Token scope is enforced in `get_principal`, one place (KAN-1887).** The column existed since
+migration `0008` and nothing read it, so a `read` token could write. `Principal.scope` carries it,
+and `get_principal` raises `403 insufficient_scope` for an unsafe method on `read`. Existing tokens
+hold `write` from the server default, so nothing locks out. The hosted `/mcp` tools call the REST API
+with the caller's bearer and inherit it; `test_token_scope_api.py` proves that over a live loopback
+server. The structural pin (`test_token_scope_decision.py`) enumerates every non-GET route.
 
 **The formatter rule's full text.**
 

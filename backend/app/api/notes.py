@@ -62,7 +62,7 @@ from app.auth import (
     notes_owned_by,
 )
 from app.db import get_session
-from app.integrations.dependencies import CallerBearer
+from app.integrations.dependencies import PandanBearer
 from app.markdown_format import format_markdown
 from app.models import Note
 from app.note_links import reconcile_note_links, resolve_pending_note_links
@@ -85,7 +85,7 @@ def create_note(
     principal: CurrentPrincipal,
     session: DbSession,
     response: Response,
-    bearer: CallerBearer,
+    bearer: PandanBearer,
     team_resolver: CurrentTeamResolver,
 ) -> NoteRead:
     """Create a note owned by the caller.
@@ -125,7 +125,8 @@ def create_note(
     heuristic" (BREADBOARD.md's R13) draws no exception for a body that happens to be ``""``.
     """
     if payload.team_id is not None:
-        team_ids = team_resolver.member_of(bearer) if bearer is not None else frozenset()
+        pandan_pat = bearer()
+        team_ids = team_resolver.member_of(pandan_pat) if pandan_pat is not None else frozenset()
         if payload.team_id not in team_ids:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -152,7 +153,7 @@ def list_notes(
     principal: CurrentPrincipal,
     session: DbSession,
     term: SearchTerm,
-    bearer: CallerBearer,
+    bearer: PandanBearer,
     team_resolver: CurrentTeamResolver,
 ) -> NoteList:
     """Every note the caller owns, newest first — or, with ``?q=``, the ones that match it.
@@ -191,7 +192,8 @@ def list_notes(
     when one does. It is deliberately not added *with* search either — a `limit` would need a
     documented interaction with ranking, and that is a second undiscussed contract.
     """
-    team_ids = team_resolver.member_of(bearer) if bearer is not None else frozenset()
+    pandan_pat = bearer()
+    team_ids = team_resolver.member_of(pandan_pat) if pandan_pat is not None else frozenset()
     statement = (
         notes_owned_by(principal, team_ids).order_by(Note.updated_at.desc(), Note.id.desc())
         if term is None

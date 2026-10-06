@@ -77,7 +77,10 @@ that never became one of the six.
 kaya mints and checks its own credentials, and pandan is not involved
 ([ADR 0012](https://github.com/leejianrong/kaya/blob/main/docs/adr/0012-standalone-identity.md)).
 A person signs in to the web app with GitHub. An agent uses a `kaya_pat_…` personal access token,
-which is account-wide and has a `read` or `write` scope. There are three ways one gets minted:
+which is account-wide and has a `read` or `write` scope. A `read` token can read everything the
+account can, and any request that would change something is refused with a `403` and the code
+`insufficient_scope`, over the REST API and over the hosted MCP endpoint alike. There are three
+ways one gets minted:
 
 - `kaya auth login` runs a device flow in your browser and stores the token for the CLI
   ([ADR 0013](https://github.com/leejianrong/kaya/blob/main/docs/adr/0013-device-flow-and-hosted-mcp.md)).
