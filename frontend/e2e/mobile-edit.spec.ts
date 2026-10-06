@@ -119,6 +119,20 @@ test('tapping a button formats the text and leaves focus in the editor', async (
     await openInEdit(page, note.ref)
     const tool = (name: string) => page.getByTestId('editor-toolbar').getByRole('button', { name, exact: true })
 
+    // Count every time the editor loses focus. `run` refocuses as a safety net, so the end state
+    // alone cannot tell a button that refused focus from one that took it and gave it back.
+    await page.evaluate(() => {
+      const w = window as unknown as { __blurs: number }
+      w.__blurs = 0
+      document.addEventListener(
+        'focusout',
+        (event) => {
+          if ((event.target as Element).closest?.('.cm-content')) w.__blurs += 1
+        },
+        true,
+      )
+    })
+
     // Select the first word: Home, then shift-right x5.
     await page.keyboard.press('Control+Home')
     for (let i = 0; i < 5; i += 1) {
@@ -168,6 +182,9 @@ test('tapping a button formats the text and leaves focus in the editor', async (
     await page.keyboard.press('Control+Home')
     await tool('Code').tap()
     expect(await docText(page)).toContain('``*hello*')
+
+    // Not once, in all of the above taps and clicks, did the editor lose focus.
+    expect(await page.evaluate(() => (window as unknown as { __blurs: number }).__blurs)).toBe(0)
   } finally {
     await apiDeleteNote(request, note.ref)
   }
