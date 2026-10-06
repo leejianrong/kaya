@@ -109,43 +109,43 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
-    background: var(--surface-2);
-    border-left: 1px solid var(--border);
+    background: var(--surface-container);
+    border-left: 1px solid var(--outline-variant);
   }
 
   .team-note {
     flex: none;
     margin: 0.75rem 0.5rem 0;
-    color: var(--muted);
-    font-size: 0.75rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-small-size);
   }
 
+  /* M3 primary tabs: label colour for the selected tab, a 3px primary indicator under it. */
   .tabs {
     display: flex;
     flex: none;
     flex-wrap: wrap;
-    gap: 0.25rem;
-    padding: 0.75rem 0.5rem 0;
+    padding: 0.5rem 0.5rem 0;
+    border-bottom: 1px solid var(--outline-variant);
   }
 
   .tabs button {
-    padding: 0.3rem 0.6rem;
-    border: 1px solid transparent;
-    border-radius: 0.35rem 0.35rem 0 0;
+    min-height: 2.5rem;
+    padding: 0 1rem;
+    border: 0;
+    border-bottom: 3px solid transparent;
+    border-radius: var(--shape-sm) var(--shape-sm) 0 0;
     background: transparent;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     cursor: pointer;
     font: inherit;
-    font-size: 0.7rem;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-size: var(--type-label-large-size);
+    font-weight: var(--type-label-large-weight);
   }
 
   .tabs button.active {
-    border-color: var(--border);
-    border-bottom-color: transparent;
-    color: inherit;
+    border-bottom-color: var(--primary);
+    color: var(--primary);
   }
 
   .pane {

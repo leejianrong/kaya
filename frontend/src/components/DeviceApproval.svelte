@@ -301,7 +301,7 @@
 
   h1 {
     margin: 0 0 1rem;
-    font-size: 1.4rem;
+    font-size: var(--type-title-large-size);
   }
 
   .lede {
@@ -322,16 +322,16 @@
 
   form label {
     flex-basis: 100%;
-    color: var(--muted);
-    font-size: 0.85rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-medium-size);
   }
 
   form input {
     flex: 1 1 12rem;
     min-width: 0;
     padding: 0.4rem 0.6rem;
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-xs);
     background: transparent;
     color: inherit;
     font-family: var(--mono);
@@ -342,8 +342,8 @@
   .consent {
     margin: 1.5rem 0;
     padding: 0.75rem 1rem;
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--shape-md);
   }
 
   .actions {
@@ -354,8 +354,8 @@
 
   button {
     padding: 0.4rem 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-full);
     background: transparent;
     color: inherit;
     cursor: pointer;

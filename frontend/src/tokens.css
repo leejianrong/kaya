@@ -1,0 +1,174 @@
+/*
+ * Kaya's Material 3 tokens (KAN-1828), hand-built: no component library, no runtime colour code.
+ *
+ * Colour roles come from seed #0d9488, generated once with a throwaway script (not a dependency):
+ *
+ *   npm i @material/material-color-utilities@0.3.0
+ *   themeFromSourceColor(argbFromHex('#0d9488')).schemes.light | .dark   // hexFromArgb of each role
+ *
+ * ok/warn are TonalPalette.fromHueAndChroma(145, 40) and (70, 60) at tones 35/90/10 (light) and
+ * 80/20/90 (dark). The surface-container tiers are the plan artifact's neutral steps. The scrim and
+ * shadow roles are black. tests/tokens-contrast.test.ts checks the text pairs (>= 4.5:1) and the
+ * outline (>= 3:1) in both schemes; tests/tokens-shape.test.ts checks every role has both values and
+ * that no component spells a colour out. The dark block is the same names again, switched by
+ * prefers-color-scheme (the app has no manual theme switch).
+ *
+ * Components use role names. The old names (--bg, --text, --accent ...) are aliases kept so a
+ * component can move over one at a time.
+ */
+:root {
+  --primary: #006a61;
+  --on-primary: #ffffff;
+  --primary-container: #73f8e7;
+  --on-primary-container: #00201d;
+  --secondary: #4a635f;
+  --on-secondary: #ffffff;
+  --secondary-container: #cce8e3;
+  --on-secondary-container: #05201c;
+  --tertiary: #46617a;
+  --on-tertiary: #ffffff;
+  --tertiary-container: #cde5ff;
+  --on-tertiary-container: #001d32;
+  --error: #ba1a1a;
+  --on-error: #ffffff;
+  --error-container: #ffdad6;
+  --on-error-container: #410002;
+  --ok: #2a5d29;
+  --ok-container: #b8f1ad;
+  --on-ok-container: #002203;
+  --warn: #754800;
+  --warn-container: #ffddb8;
+  --on-warn-container: #2b1700;
+  --surface: #fafdfb;
+  --on-surface: #191c1b;
+  --surface-variant: #dae5e2;
+  --on-surface-variant: #3f4947;
+  --outline: #6f7977;
+  --outline-variant: #bec9c6;
+  --surface-container-lowest: #ffffff;
+  --surface-container-low: #f4f7f5;
+  --surface-container: #eef1ef;
+  --surface-container-high: #e8ebe9;
+  --surface-container-highest: #e3e6e4;
+  --inverse-surface: #2d3130;
+  --inverse-on-surface: #eff1ef;
+  --inverse-primary: #52dbcb;
+  --scrim: #000000;
+  --shadow: #000000;
+  --logo-k: #33403d;
+  --logo-toast: #d98a1f;
+  --logo-kaya: #1fa37a;
+  --logo-lt: #d5f7ea;
+
+  /* Type scale (M3 roles). The system font stack stays: no web font blocks first paint. */
+  --type-display-large-size: 3.5625rem; --type-display-large-line: 4rem; --type-display-large-weight: 400;
+  --type-headline-large-size: 2rem; --type-headline-large-line: 2.5rem; --type-headline-large-weight: 400;
+  --type-headline-medium-size: 1.75rem; --type-headline-medium-line: 2.25rem; --type-headline-medium-weight: 400;
+  --type-headline-small-size: 1.5rem; --type-headline-small-line: 2rem; --type-headline-small-weight: 400;
+  --type-title-large-size: 1.375rem; --type-title-large-line: 1.75rem; --type-title-large-weight: 400;
+  --type-title-medium-size: 1rem; --type-title-medium-line: 1.5rem; --type-title-medium-weight: 500;
+  --type-title-small-size: 0.875rem; --type-title-small-line: 1.25rem; --type-title-small-weight: 500;
+  --type-body-large-size: 1rem; --type-body-large-line: 1.5rem; --type-body-large-weight: 400;
+  --type-body-medium-size: 0.875rem; --type-body-medium-line: 1.25rem; --type-body-medium-weight: 400;
+  --type-body-small-size: 0.75rem; --type-body-small-line: 1rem; --type-body-small-weight: 400;
+  --type-label-large-size: 0.875rem; --type-label-large-line: 1.25rem; --type-label-large-weight: 500;
+  --type-label-medium-size: 0.75rem; --type-label-medium-line: 1rem; --type-label-medium-weight: 500;
+  --type-label-small-size: 0.6875rem; --type-label-small-line: 1rem; --type-label-small-weight: 500;
+
+  /* Shape scale. */
+  --shape-none: 0;
+  --shape-xs: 4px;
+  --shape-sm: 8px;
+  --shape-md: 12px;
+  --shape-lg: 16px;
+  --shape-xl: 28px;
+  --shape-full: 9999px;
+
+  /* State layers: an overlay of the content colour (currentColor) on the container. */
+  --state-hover: 0.08;
+  --state-focus: 0.1;
+  --state-pressed: 0.1;
+  --state-disabled-content: 0.38;
+  --state-disabled-container: 0.12;
+  --layer-hover: color-mix(in srgb, currentColor calc(var(--state-hover) * 100%), transparent);
+  --layer-pressed: color-mix(in srgb, currentColor calc(var(--state-pressed) * 100%), transparent);
+
+  /* Elevation is tonal: pick a surface-container tier. A real shadow only on what floats. */
+  --elevation-float: 0 1px 3px color-mix(in srgb, var(--shadow) 22%, transparent),
+    0 6px 16px -6px color-mix(in srgb, var(--shadow) 28%, transparent);
+
+  /* Motion. */
+  --motion-short: 150ms;
+  --motion-medium: 250ms;
+  --motion-ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* The ring every interactive element shows on keyboard focus. */
+  --focus-ring: 2px solid var(--primary);
+
+  /* Old names, aliased to roles. */
+  --bg: var(--surface);
+  --surface-2: var(--surface-container);
+  --card-bg: var(--surface-container-low);
+  --border: var(--outline-variant);
+  --text: var(--on-surface);
+  --muted: var(--on-surface-variant);
+  --accent: var(--primary);
+  --accent-soft: var(--secondary-container);
+  --success: var(--ok);
+  --success-soft: var(--ok-container);
+  --warning: var(--warn);
+  --warning-soft: var(--warn-container);
+  --danger: var(--error);
+  --danger-soft: var(--error-container);
+  --hover: var(--layer-hover);
+  --shadow-sm: none;
+  --shadow-md: var(--elevation-float);
+  --radius: var(--shape-md);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --primary: #52dbcb;
+    --on-primary: #003732;
+    --primary-container: #005049;
+    --on-primary-container: #73f8e7;
+    --secondary: #b1ccc7;
+    --on-secondary: #1c3531;
+    --secondary-container: #324b48;
+    --on-secondary-container: #cce8e3;
+    --tertiary: #aecae6;
+    --on-tertiary: #163349;
+    --tertiary-container: #2e4961;
+    --on-tertiary-container: #cde5ff;
+    --error: #ffb4ab;
+    --on-error: #690005;
+    --error-container: #93000a;
+    --on-error-container: #ffb4ab;
+    --ok: #9cd593;
+    --ok-container: #023909;
+    --on-ok-container: #b8f1ad;
+    --warn: #ffb960;
+    --warn-container: #472a00;
+    --on-warn-container: #ffddb8;
+    --surface: #191c1b;
+    --on-surface: #e0e3e1;
+    --surface-variant: #3f4947;
+    --on-surface-variant: #bec9c6;
+    --outline: #899390;
+    --outline-variant: #3f4947;
+    --surface-container-lowest: #0e1211;
+    --surface-container-low: #1d2120;
+    --surface-container: #212524;
+    --surface-container-high: #2b2f2e;
+    --surface-container-highest: #363a39;
+    --inverse-surface: #e0e3e1;
+    --inverse-on-surface: #2d3130;
+    --inverse-primary: #006a61;
+    --scrim: #000000;
+    --shadow: #000000;
+    --logo-k: #e3ebe8;
+    --logo-toast: #f2b45c;
+    --logo-kaya: #34c79a;
+    --logo-lt: #d5f7ea;
+  }
+}

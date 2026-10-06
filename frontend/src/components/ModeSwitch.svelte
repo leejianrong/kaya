@@ -45,21 +45,21 @@
     display: inline-flex;
     min-width: 0;
     overflow: hidden;
-    border: 1px solid var(--border);
-    border-radius: 999px;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-full);
   }
 
   button {
     min-height: 2.25rem;
     padding: 0 1.1rem;
     border: 0;
-    border-right: 1px solid var(--border);
+    border-right: 1px solid var(--outline);
     background: transparent;
-    color: var(--text);
+    color: var(--on-surface);
     cursor: pointer;
     font: inherit;
-    font-size: 0.85rem;
-    font-weight: 600;
+    font-size: var(--type-label-large-size);
+    font-weight: var(--type-label-large-weight);
   }
 
   button:last-child {
@@ -67,13 +67,13 @@
   }
 
   button.selected {
-    background: var(--accent-soft);
-    color: var(--accent);
+    background: var(--secondary-container);
+    color: var(--on-secondary-container);
   }
 
   /* Inset, so the ring is not clipped by the pill's `overflow: hidden`. */
   button:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--primary);
     outline-offset: -2px;
   }
 

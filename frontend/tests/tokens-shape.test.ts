@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const CSS = readFileSync('src/tokens.css', 'utf8')
-const dark = /@media \(prefers-color-scheme: dark\)\s*\{\s*:root\s*\{([\s\S]*?)\n  \}\s*\n\}/.exec(CSS)
+const dark = /@media \(prefers-color-scheme: dark\)\s*\{\s*:root\s*\{([\s\S]*?)\n {2}\}\s*\n\}/.exec(CSS)
 const light = /(?:^|\n):root\s*\{([\s\S]*?)\n\}/.exec(CSS)
 
 function colourNames(body: string): string[] {
@@ -79,7 +79,12 @@ function walk(dir: string): string[] {
 }
 
 /** Files that may spell a colour out: the token file, and nothing else. Add to this list on purpose. */
-const RAW_COLOUR_ALLOWED = new Set(['src/tokens.css'])
+const RAW_COLOUR_ALLOWED = new Set([
+  'src/tokens.css',
+  // The keys of HIGHLIGHT_ROLES are CodeMirror's default highlight colours, matched so they can be
+  // replaced by tokens. Nothing is painted with them.
+  'src/lib/codemirror.ts',
+])
 
 function withoutComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '').replace(/^\s*\/\/.*$/gm, '')

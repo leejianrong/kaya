@@ -22,7 +22,7 @@ function declarations(body: string): Scheme {
 
 /** The light block is the first `:root {...}`; the dark one is `:root` inside the dark media query. */
 function schemes(): { light: Scheme; dark: Scheme } {
-  const dark = /@media \(prefers-color-scheme: dark\)\s*\{\s*:root\s*\{([\s\S]*?)\n  \}\s*\n\}/.exec(CSS)
+  const dark = /@media \(prefers-color-scheme: dark\)\s*\{\s*:root\s*\{([\s\S]*?)\n {2}\}\s*\n\}/.exec(CSS)
   const light = /(?:^|\n):root\s*\{([\s\S]*?)\n\}/.exec(CSS)
   if (!dark || !light) throw new Error('tokens.css has no light :root block and dark media block')
   return { light: declarations(light[1]!), dark: declarations(dark[1]!) }

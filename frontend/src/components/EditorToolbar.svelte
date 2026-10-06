@@ -82,8 +82,8 @@
     z-index: 20;
     display: flex;
     align-items: stretch;
-    border-top: 1px solid var(--border);
-    background: var(--surface-2);
+    border-top: 1px solid var(--outline-variant);
+    background: var(--surface-container-high);
   }
 
   /* No keyboard to sit on: clear the home indicator instead. */
@@ -102,28 +102,28 @@
     border: 0;
     border-radius: 0;
     background: transparent;
-    color: var(--text);
+    color: var(--on-surface);
     cursor: pointer;
     font: inherit;
     touch-action: manipulation;
   }
 
   .tool:active {
-    background: var(--hover);
+    background: var(--layer-pressed);
   }
 
   .tool:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--primary);
     outline-offset: -2px;
   }
 
   .tool:disabled {
-    color: var(--muted);
+    color: var(--on-surface-variant);
     cursor: default;
   }
 
   .tool.apart {
-    border-left: 1px solid var(--border);
+    border-left: 1px solid var(--outline-variant);
   }
 
   .glyph {

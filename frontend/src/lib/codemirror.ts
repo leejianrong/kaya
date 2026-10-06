@@ -62,7 +62,12 @@ import {
 } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap, isolateHistory, undo } from '@codemirror/commands'
 import { markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown'
-import { defaultHighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language'
+import {
+  defaultHighlightStyle,
+  HighlightStyle,
+  syntaxHighlighting,
+  syntaxTree,
+} from '@codemirror/language'
 import type { Annotation } from '@codemirror/state'
 import { EditorSelection, EditorState, StateEffect, StateField } from '@codemirror/state'
 import {
@@ -151,18 +156,18 @@ export const HISTORY_ISOLATION: readonly Annotation<unknown>[] = [isolateHistory
 const theme = EditorView.theme({
   '&': {
     backgroundColor: 'transparent',
-    color: 'var(--text)',
+    color: 'var(--on-surface)',
     fontFamily: 'var(--mono)',
     fontSize: '0.9rem',
     height: '100%',
   },
   '.cm-scroller': { fontFamily: 'inherit', lineHeight: '1.6' },
-  '.cm-content': { caretColor: 'var(--accent)' },
-  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)' },
-  '.cm-gutters': { backgroundColor: 'transparent', borderRight: '1px solid var(--border)' },
-  '.cm-activeLine': { backgroundColor: 'color-mix(in srgb, var(--accent) 6%, transparent)' },
+  '.cm-content': { caretColor: 'var(--primary)' },
+  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--primary)' },
+  '.cm-gutters': { backgroundColor: 'transparent', borderRight: '1px solid var(--outline-variant)' },
+  '.cm-activeLine': { backgroundColor: 'color-mix(in srgb, var(--primary) 6%, transparent)' },
   '&.cm-focused': { outline: 'none' },
-  '.cm-placeholder': { color: 'var(--muted)' },
+  '.cm-placeholder': { color: 'var(--on-surface-variant)' },
   // KAN-567's pill, `Decoration.mark` over the raw `[[...]]` span — the text stays exactly what the
   // caret can edit, and only the styling changes. The two states mirror the app's existing visual
   // language rather than inventing a new one: `.cm-wikilink-resolved` is the same accent-tinted
@@ -171,14 +176,37 @@ const theme = EditorView.theme({
   // could not be confirmed reads the same way in the editor as it does in the preview beside it.
   '.cm-wikilink': { borderRadius: '0.25rem', padding: '0 0.15rem' },
   '.cm-wikilink-resolved': {
-    backgroundColor: 'color-mix(in srgb, var(--accent) 14%, transparent)',
-    color: 'var(--accent)',
+    backgroundColor: 'color-mix(in srgb, var(--primary) 14%, transparent)',
+    color: 'var(--primary)',
   },
   '.cm-wikilink-unresolved': {
-    color: 'var(--muted)',
-    borderBottom: '1px dotted var(--muted)',
+    color: 'var(--on-surface-variant)',
+    borderBottom: '1px dotted var(--on-surface-variant)',
   },
 })
+
+/**
+ * KAN-1828: the default highlight style with its hard-coded colours (blue links, dark-green strings)
+ * swapped for the colour tokens, so markdown source stays legible in the dark scheme. Built from
+ * `defaultHighlightStyle.specs`, which keeps every tag mapping and changes only the colour: this
+ * module needs no `@lezer/highlight` import for the tags.
+ */
+const HIGHLIGHT_ROLES: Record<string, string> = {
+  '#404740': 'var(--on-surface-variant)',
+  '#940': 'var(--on-surface-variant)',
+  '#f00': 'var(--error)',
+  '#164': 'var(--tertiary)',
+  '#a11': 'var(--tertiary)',
+  '#085': 'var(--tertiary)',
+  '#256': 'var(--tertiary)',
+  '#e40': 'var(--tertiary)',
+}
+const tokenHighlight = HighlightStyle.define(
+  defaultHighlightStyle.specs.map((spec) => {
+    const color = typeof spec.color === 'string' ? spec.color : undefined
+    return color === undefined ? spec : { ...spec, color: HIGHLIGHT_ROLES[color] ?? 'var(--primary)' }
+  }),
+)
 
 /** KAN-567: what {@link setWikilinks} carries into a live view, outside any transaction the caller
  *  already has in flight. */
@@ -464,7 +492,7 @@ export function createView(spec: EditorSpec): EditorView {
         // cost paid on opening a note rather than on loading the page, which makes it cheaper and
         // not free — KAN-767 moved where the bytes are, not whether they exist.
         markdownLanguage.extension,
-        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+        syntaxHighlighting(tokenHighlight, { fallback: true }),
         EditorView.lineWrapping,
         EditorView.editable.of(spec.editable),
         // The zero states, as CM6's own placeholder rather than as a Svelte node — the container has

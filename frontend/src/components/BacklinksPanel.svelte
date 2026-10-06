@@ -306,7 +306,7 @@
     min-width: 0;
     overflow-y: auto;
     padding: 1rem 0.5rem 1.5rem;
-    border-left: 1px solid var(--border);
+    border-left: 1px solid var(--outline-variant);
   }
 
   header {
@@ -319,29 +319,29 @@
 
   h2 {
     margin: 0;
-    color: var(--muted);
-    font-size: 0.7rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-label-medium-size);
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
 
   .count {
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-family: var(--mono);
-    font-size: 0.7rem;
+    font-size: var(--type-label-medium-size);
   }
 
   .refresh {
     margin-left: auto;
     padding: 0.15rem 0.45rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-full);
     background: transparent;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     cursor: pointer;
     font: inherit;
-    font-size: 0.65rem;
+    font-size: var(--type-label-small-size);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -361,19 +361,19 @@
     display: block;
     min-width: 0;
     padding: 0.3rem 0.5rem;
-    border-radius: 0.3rem;
+    border-radius: var(--shape-md);
     color: inherit;
     text-decoration: none;
   }
 
   .row:hover {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    background: var(--layer-hover);
   }
 
   .title {
     display: block;
     overflow: hidden;
-    font-size: 0.85rem;
+    font-size: var(--type-body-medium-size);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -381,9 +381,9 @@
   .sub {
     display: block;
     overflow: hidden;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-family: var(--mono);
-    font-size: 0.7rem;
+    font-size: var(--type-label-medium-size);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -392,12 +392,12 @@
   .hint {
     margin: 0;
     padding: 0 0.5rem;
-    color: var(--muted);
-    font-size: 0.8rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-medium-size);
   }
 
   .hint {
-    font-size: 0.7rem;
+    font-size: var(--type-label-medium-size);
     line-height: 1.4;
   }
 
@@ -409,9 +409,9 @@
   .notice {
     margin: 0 0.25rem;
     padding: 0.6rem 0.75rem;
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--accent);
-    border-radius: 0.35rem;
-    font-size: 0.8rem;
+    border: 1px solid var(--outline-variant);
+    border-left: 3px solid var(--primary);
+    border-radius: var(--shape-md);
+    font-size: var(--type-body-medium-size);
   }
 </style>

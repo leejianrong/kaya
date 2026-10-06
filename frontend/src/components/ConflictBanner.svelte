@@ -182,10 +182,10 @@
 <style>
   .conflict {
     padding: 0.75rem 1rem;
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--accent);
-    border-radius: 0.35rem;
-    font-size: 0.85rem;
+    border: 1px solid var(--outline-variant);
+    border-left: 3px solid var(--primary);
+    border-radius: var(--shape-md);
+    font-size: var(--type-body-medium-size);
   }
 
   .lede,
@@ -198,11 +198,11 @@
   .stamps,
   .warning,
   .note {
-    color: var(--muted);
+    color: var(--on-surface-variant);
   }
 
   .stamps {
-    font-size: 0.8rem;
+    font-size: var(--type-body-medium-size);
   }
 
   .actions {
@@ -214,23 +214,23 @@
 
   button {
     padding: 0.3rem 0.7rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-full);
     background: transparent;
     color: inherit;
     cursor: pointer;
     font: inherit;
-    font-size: 0.8rem;
+    font-size: var(--type-body-medium-size);
   }
 
   button[data-testid='conflict-keep-mine'] {
-    border-color: var(--accent);
-    color: var(--accent);
+    border-color: var(--primary);
+    color: var(--primary);
   }
 
   button:disabled {
-    color: var(--muted);
-    border-color: var(--border);
+    color: var(--on-surface-variant);
+    border-color: var(--outline);
     cursor: default;
   }
 
@@ -249,13 +249,13 @@
     gap: 0.4rem;
     align-items: baseline;
     margin: 0 0 0.3rem;
-    font-size: 0.85rem;
+    font-size: var(--type-body-medium-size);
   }
 
   .tag {
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-family: var(--mono);
-    font-size: 0.7rem;
+    font-size: var(--type-label-medium-size);
     font-weight: 400;
   }
 
@@ -266,11 +266,11 @@
     margin: 0;
     overflow: auto;
     padding: 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
-    color: var(--text);
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--shape-sm);
+    color: var(--on-surface);
     font-family: var(--mono);
-    font-size: 0.75rem;
+    font-size: var(--type-body-small-size);
     /* The bodies are prose and the columns are narrow, so wrapping beats a horizontal scrollbar per
        column — but `pre-wrap`, never `pre-line`, which collapses runs of spaces and would render a
        markdown code block as something the note does not contain. */
@@ -279,12 +279,12 @@
   }
 
   mark {
-    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    background: var(--secondary-container);
     color: inherit;
   }
 
   kbd {
     font-family: var(--mono);
-    font-size: 0.75rem;
+    font-size: var(--type-body-small-size);
   }
 </style>

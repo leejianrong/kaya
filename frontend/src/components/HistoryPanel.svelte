@@ -294,21 +294,21 @@
   }
 
   .count {
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-family: var(--mono);
-    font-size: 0.7rem;
+    font-size: var(--type-label-medium-size);
   }
 
   .refresh,
   .restore {
     padding: 0.15rem 0.45rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-full);
     background: transparent;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     cursor: pointer;
     font: inherit;
-    font-size: 0.65rem;
+    font-size: var(--type-label-small-size);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
@@ -336,7 +336,7 @@
     width: 100%;
     padding: 0.3rem 0.5rem;
     border: none;
-    border-radius: 0.3rem;
+    border-radius: var(--shape-md);
     background: transparent;
     color: inherit;
     cursor: pointer;
@@ -345,25 +345,25 @@
   }
 
   .row:hover {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    background: var(--layer-hover);
   }
 
   .row.selected {
-    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    background: var(--secondary-container);
   }
 
   .when {
     overflow: hidden;
-    font-size: 0.8rem;
+    font-size: var(--type-body-medium-size);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .current {
     padding: 0.05rem 0.3rem;
-    border-radius: 0.2rem;
-    background: color-mix(in srgb, var(--accent) 25%, transparent);
-    color: var(--muted);
+    border-radius: var(--shape-xs);
+    background: var(--secondary-container);
+    color: var(--on-surface-variant);
     font-size: 0.6rem;
     letter-spacing: 0.04em;
     text-transform: uppercase;
@@ -375,8 +375,8 @@
     gap: 0.4rem;
     margin: 0 0.5rem;
     padding: 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--shape-md);
   }
 
   .preview pre {
@@ -386,7 +386,7 @@
     white-space: pre-wrap;
     word-break: break-word;
     font-family: var(--mono);
-    font-size: 0.75rem;
+    font-size: var(--type-body-small-size);
   }
 
   .restore {
@@ -396,8 +396,8 @@
   .empty {
     margin: 0;
     padding: 0 0.5rem;
-    color: var(--muted);
-    font-size: 0.8rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-medium-size);
   }
 
   /* Same shape as the editor's and the backlinks rail's failure notices, so every notice in the
@@ -405,9 +405,9 @@
   .notice {
     margin: 0 0.25rem;
     padding: 0.6rem 0.75rem;
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--accent);
-    border-radius: 0.35rem;
-    font-size: 0.8rem;
+    border: 1px solid var(--outline-variant);
+    border-left: 3px solid var(--primary);
+    border-radius: var(--shape-md);
+    font-size: var(--type-body-medium-size);
   }
 </style>
