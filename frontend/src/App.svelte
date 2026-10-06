@@ -11,6 +11,7 @@
   import NavColumn from './components/NavColumn.svelte'
   import PandanConnect from './components/PandanConnect.svelte'
   import PreviewPane from './components/PreviewPane.svelte'
+  import BottomSheet from './components/BottomSheet.svelte'
   import RightRail from './components/RightRail.svelte'
   import Sidebar from './components/Sidebar.svelte'
   import Settings from './components/Settings.svelte'
@@ -35,7 +36,12 @@
     writeStoredMode,
     type NoteMode,
   } from './lib/noteMode'
-  import { shellRegions } from './lib/shell'
+  import {
+    readStoredPaneOpen,
+    resolvePaneOpen,
+    shellRegions,
+    writeStoredPaneOpen,
+  } from './lib/shell'
 import { type EditorCommands, toolbarShown } from './lib/toolbar'
 import { watchViewport } from './lib/viewport'
   import type { Note } from './lib/types'
@@ -443,32 +449,45 @@ import { watchViewport } from './lib/viewport'
     return () => cancelAnimationFrame(frame)
   })
 
-  /** Compact only: whether the backlinks/history rail is open below the note. Closed on every
-   *  navigation, so opening another note never starts with a stale panel in the way. */
-  let detailsOpen = $state(false)
+  /**
+   * KAN-1827: the backlinks/history surface. `regions.supporting` (`lib/shell.ts`) says which kind
+   * this window class gets; this file owns the open/closed state and nothing else.
+   *
+   * - **sheet** (compact): never remembered, closed on every navigation (a tapped backlink lands on
+   *   the other note with the sheet gone) and when the window leaves compact.
+   * - **pane** (medium, expanded): closed by default so the document keeps the width, and the
+   *   person's choice is remembered per window class in `localStorage` (`lib/shell.ts`).
+   *
+   * The rail is in the grid only while the pane is open, so a grid column and its content always
+   * agree (a column with no rail would be a stripe of empty page).
+   */
+  const supporting = $derived(regions.supporting)
+  let sheetOpen = $state(false)
+  let paneOpen = $derived(
+    resolvePaneOpen(supporting, readStoredPaneOpen(untrack(() => windowClass))),
+  )
 
   $effect(() => {
     void route
-    detailsOpen = false
+    sheetOpen = false
   })
 
-  /**
-   * Whether the backlinks rail is on the screen — which is exactly "a note route is open" (KAN-568).
-   *
-   * Not a preference and deliberately not a toggle: the rail answers one question about one note, so
-   * there is nothing for it to say on `/` or on an unknown path, and a fourth region standing empty
-   * beside the note list reads as a broken app rather than as an idle one. The same call
-   * `.unauthenticated` already makes about the sidebar.
-   *
-   * The `{#if}` in the template and this class have to agree, so they are one expression: a rail
-   * with no grid column would overlap `main`, and a grid column with no rail would be a stripe of
-   * empty page.
-   */
-  const railed = $derived(
-    regions.detail === 'beside' ||
-      regions.detail === 'below' ||
-      (regions.detail === 'on-demand' && detailsOpen),
-  )
+  $effect(() => {
+    if (supporting.kind !== 'sheet') {
+      sheetOpen = false
+    }
+  })
+
+  function toggleSupporting(): void {
+    if (supporting.kind === 'sheet') {
+      sheetOpen = !sheetOpen
+    } else {
+      paneOpen = !paneOpen
+      writeStoredPaneOpen(windowClass, paneOpen)
+    }
+  }
+
+  const railed = $derived(supporting.kind === 'pane' && paneOpen)
 
   $effect(() => onNavigate((next) => (route = next)))
 
@@ -612,15 +631,19 @@ import { watchViewport } from './lib/viewport'
       </a>
     {/if}
     <span class="tagline">markdown for humans and agents</span>
-    {#if regions.detail === 'on-demand'}
+    {#if supporting.kind !== 'none'}
+      <!-- KAN-1827: one button, two surfaces. A sheet is a dialog the button opens; a pane is a
+           region the button shows and hides. -->
       <button
         class="toggle"
-        class:on={detailsOpen}
-        aria-pressed={detailsOpen}
-        onclick={() => (detailsOpen = !detailsOpen)}
+        class:on={supporting.kind === 'sheet' ? sheetOpen : paneOpen}
+        aria-expanded={supporting.kind === 'sheet' ? sheetOpen : paneOpen}
+        aria-haspopup={supporting.kind === 'sheet' ? 'dialog' : undefined}
+        aria-controls={supporting.kind === 'pane' ? 'supporting-pane' : undefined}
+        onclick={toggleSupporting}
         data-testid="toggle-details"
       >
-        Links &amp; history
+        Links
       </button>
     {/if}
   </header>
@@ -713,6 +736,11 @@ import { watchViewport } from './lib/viewport'
         sidebar row (see `noteRestored`).
       -->
       <RightRail {note} onexpired={discard} onrestored={noteRestored} />
+    {/if}
+    {#if supporting.kind === 'sheet' && sheetOpen}
+      <BottomSheet label="Links and history" onclose={() => (sheetOpen = false)}>
+        <RightRail id="sheet-rail" {note} onexpired={discard} onrestored={noteRestored} />
+      </BottomSheet>
     {/if}
   {:else}
     <!-- KAN-555's landing state. KAN-1791 removed its paste form — GitHub sign-in is a full-page
@@ -949,7 +977,6 @@ import { watchViewport } from './lib/viewport'
   @media (max-width: 599.98px) {
     .shell,
     .shell:has(> :global(.sidebar)),
-    .shell.railed,
     .shell.unauthenticated {
       grid-template-areas: 'topbar' 'main' 'rail' 'nav';
       grid-template-columns: minmax(0, 1fr);
@@ -985,10 +1012,6 @@ import { watchViewport } from './lib/viewport'
     .shell > :global(.sidebar) {
       grid-area: main;
       border-right: 0;
-    }
-
-    .shell.railed > :global(.right-rail) {
-      max-height: 45dvh;
     }
 
     .topbar {

@@ -1,6 +1,7 @@
 <script lang="ts">
   import BacklinksPanel from './BacklinksPanel.svelte'
   import HistoryPanel from './HistoryPanel.svelte'
+  import { nextTabIndex } from '../lib/tabs'
   import type { Note } from '../lib/types'
 
   /**
@@ -27,16 +28,34 @@
     note,
     onexpired,
     onrestored,
+    id = 'supporting-pane',
   }: {
+    /** Prefix for the tab and panel ids, and the element id the toggle's `aria-controls` names. */
+    id?: string
     note: Note | null
     onexpired: (reason: string) => void
     onrestored: (stored: Note) => void
   } = $props()
 
-  let tab: 'backlinks' | 'history' = $state('backlinks')
+  const TABS = ['backlinks', 'history'] as const
+  let tab: (typeof TABS)[number] = $state('backlinks')
+
+  /**
+   * KAN-1827, the ARIA tabs pattern: one tab stop (the selected tab), Left/Right/Home/End move
+   * focus and select (automatic activation, so the cheap tab needs no extra Enter).
+   */
+  function onTabKey(event: KeyboardEvent): void {
+    const next = nextTabIndex(event.key, TABS.indexOf(tab), TABS.length)
+    if (next === null) {
+      return
+    }
+    event.preventDefault()
+    tab = TABS[next]
+    document.getElementById(`${id}-tab-${tab}`)?.focus()
+  }
 </script>
 
-<div class="right-rail">
+<div class="right-rail" {id}>
   {#if note?.team_id != null}
     <!-- ADR 0011, R16.7: sits above the tab strip rather than inside either tab's pane, since it
          is a fact about the note itself — not about its backlinks or its history — and stays
@@ -49,6 +68,10 @@
     <button
       type="button"
       role="tab"
+      onkeydown={onTabKey}
+      id="{id}-tab-backlinks"
+      aria-controls="{id}-panel"
+      tabindex={tab === 'backlinks' ? 0 : -1}
       aria-selected={tab === 'backlinks'}
       class:active={tab === 'backlinks'}
       onclick={() => (tab = 'backlinks')}
@@ -59,6 +82,10 @@
     <button
       type="button"
       role="tab"
+      onkeydown={onTabKey}
+      id="{id}-tab-history"
+      aria-controls="{id}-panel"
+      tabindex={tab === 'history' ? 0 : -1}
       aria-selected={tab === 'history'}
       class:active={tab === 'history'}
       onclick={() => (tab = 'history')}
@@ -67,7 +94,7 @@
       History
     </button>
   </div>
-  <div class="pane" role="tabpanel">
+  <div class="pane" role="tabpanel" id="{id}-panel" aria-labelledby="{id}-tab-{tab}">
     {#if tab === 'backlinks'}
       <BacklinksPanel {note} {onexpired} />
     {:else}

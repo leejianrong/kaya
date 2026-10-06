@@ -76,6 +76,9 @@ afterEach(() => {
 })
 
 function renderApp(): void {
+  // KAN-1827: the pane is closed by default; these tests are about the open rail, so they open it
+  // the way a person who had left it open would arrive.
+  localStorage.setItem('kaya.supportPane.expanded', 'open')
   mounted.push(mount(App, { target: host, props: {} }))
   flushSync()
 }

@@ -109,12 +109,12 @@ describe('shellRegions', () => {
     expect(shellRegions('compact', home, true)).toMatchObject({
       list: true,
       main: false,
-      detail: 'none',
+      supporting: { kind: 'none' },
     })
     expect(shellRegions('compact', note, true)).toMatchObject({
       list: false,
       main: true,
-      detail: 'on-demand',
+      supporting: { kind: 'sheet' },
     })
   })
 
@@ -124,21 +124,21 @@ describe('shellRegions', () => {
     }
   })
 
-  it('medium and expanded keep the list beside the note; the rail goes below, then beside', () => {
+  it('medium and expanded keep the list beside the note; the pane goes below, then beside', () => {
     expect(shellRegions('medium', note, true)).toMatchObject({
       list: true,
       main: true,
-      detail: 'below',
+      supporting: { kind: 'pane', placement: 'below' },
     })
     expect(shellRegions('expanded', note, true)).toMatchObject({
       list: true,
       main: true,
-      detail: 'beside',
+      supporting: { kind: 'pane', placement: 'beside' },
     })
     expect(shellRegions('expanded', home, true)).toMatchObject({
       list: true,
       main: true,
-      detail: 'none',
+      supporting: { kind: 'none' },
     })
   })
 
@@ -155,7 +155,7 @@ describe('shellRegions', () => {
         nav: false,
         list: false,
         main: true,
-        detail: 'none',
+        supporting: { kind: 'none', placement: null, defaultOpen: false },
       })
     }
   })
