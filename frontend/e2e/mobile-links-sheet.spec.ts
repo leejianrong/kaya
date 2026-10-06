@@ -40,6 +40,10 @@ test('the Links button opens a sheet with two tabs, and every way out returns fo
 
     // The note stays visible above the sheet, and the sheet sits on the bottom edge.
     const viewport = page.viewportSize()!
+    // The slide-in takes a moment: wait for it to land before measuring.
+    await expect
+      .poll(async () => Math.round((await sheet.boundingBox())!.y + (await sheet.boundingBox())!.height))
+      .toBe(viewport.height)
     const box = (await sheet.boundingBox())!
     expect(box.y).toBeGreaterThanOrEqual(viewport.height * 0.25)
     expect(Math.round(box.y + box.height)).toBe(viewport.height)
@@ -75,9 +79,13 @@ test('the Links button opens a sheet with two tabs, and every way out returns fo
     // Tab stays inside: from the last control it wraps to the first.
     await links.tap()
     await expect(sheet).toBeVisible()
+    await expect(sheet.getByRole('tab', { name: 'Backlinks' })).toBeFocused()
     for (let i = 0; i < 12; i += 1) {
       await page.keyboard.press('Tab')
-      expect(await page.evaluate(() => document.activeElement?.closest('[role="dialog"]') != null)).toBe(true)
+      const where = await page.evaluate(
+        () => `${document.activeElement?.outerHTML.slice(0, 120)} inDialog=${document.activeElement?.closest('[role="dialog"]') != null}`,
+      )
+      expect(where, `after Tab ${i + 1}`).toContain('inDialog=true')
     }
     await page.keyboard.press('Escape')
 
