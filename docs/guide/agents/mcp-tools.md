@@ -14,7 +14,7 @@ makes, and returns through the same `render()` the CLI calls on its own output. 
 behind each tool, the direction that pins them together (`MCP ⊆ CLI`), and the test that proves it
 (`mcp/tests/test_cli_parity.py`).
 
-Your client namespaces the tool names by your `mcpServers` key: with the key `kaya`, `list_notes` is
+Your client namespaces the tool names by the name you gave the server (the `mcpServers` key, or the name in `claude mcp add`): with the name `kaya`, `list_notes` is
 really `mcp__kaya__list_notes`.
 
 ## Reading
@@ -55,8 +55,10 @@ narrow before the request is made.
 Long prose — a note's `body` — is cut at `KAYA_MAX_TEXT_CHARS` (500 characters by default) with a
 hint saying how much was dropped, resolved the same way a CLI session resolves it: environment, then
 the user config file, then the default. There's no per-call `--full` equivalent on any tool; raise
-or disable the limit for the whole server process instead, in the `env` block your host launches it
-with — see [MCP setup](mcp-setup.md#the-three-settings).
+or disable the limit for the whole server process instead. With the stdio server that is the `env`
+block your host launches it with (see [MCP setup](mcp-setup.md#the-three-settings)). On the hosted
+endpoint the limit comes from the environment of the kaya deployment itself, so a client can't
+change it, and a script that needs whole bodies can use the CLI's `--full`.
 
 Applied to every tool, reads and writes alike: a note `edit_note` echoes back can hold exactly as
 much prose as a `get_note` read.

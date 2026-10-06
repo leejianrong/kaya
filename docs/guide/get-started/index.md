@@ -1,43 +1,30 @@
 <!--
 title: "Get started"
-description: Install the kaya CLI, get a pandan token, and write your first note.
+description: Sign in, install the kaya CLI, and write your first note.
 -->
 
 # Get started
 
 kaya is a cloud-hosted markdown notes app, API-first and agent-drivable. The web UI is one client
-among several — a REST API sits underneath it, and this page is about the command-line client on
+among several: a REST API sits underneath it, and this page is about the command-line client on
 top of that API, `kaya`.
 
 By the end of this page `kaya note list` will print your notes.
 
-## Get a token
+## Sign in
 
-kaya has no login of its own. It has no account system, no password, and no token format it mints
-itself — every request is authenticated by forwarding your bearer to
-[pandan](https://github.com/leejianrong/pandan)'s `GET /api/v1/me` and trusting pandan's answer.
-One account and one set of personal access tokens cover both apps, which is the whole point: an
-agent maintaining a note about a card uses the same credential it uses to move the card.
+kaya has its own accounts and its own tokens. You sign in to the web app with GitHub, and kaya
+never needs pandan to do that or anything else on this page. Open your deployment (the hosted one
+is [kaya-jian.fly.dev](https://kaya-jian.fly.dev)) and choose **Sign in with GitHub**. That
+creates your kaya account the first time and starts a browser session after that.
 
-So before you can talk to kaya, you need a pandan account and a pandan personal access token
-(`pandan_pat_…`):
+The web app has three ways to look at a note, switched with the **Read | Edit | Split** control.
+Split puts the editor and the rendered note side by side and only appears on wide screens. On a
+phone the list and the note are separate screens, and a formatting toolbar sits above the keyboard
+while you edit. The CLI and the browser read the same notes.
 
-1. Log in to a pandan board — the hosted one at
-   [simple-kanban-jian.fly.dev](https://simple-kanban-jian.fly.dev), or your own self-hosted
-   instance.
-2. Open the **Tokens** tab in pandan's top bar.
-3. Create a token, name it after the machine or agent that will use it, and copy the
-   `pandan_pat_…` secret. It is shown once.
-
-!!! danger "The secret is shown once"
-
-    pandan stores only a hash of the token, so it cannot show it to you again. Lose it and you
-    revoke it and mint another, from the same Tokens tab.
-
-Hold on to that token — you'll hand it to kaya in a moment. If pandan is ever unreachable, an
-already-cached token keeps working for a short while, but a token kaya has never seen before
-cannot authenticate until pandan answers. That is the one thing in kaya that depends on pandan
-being up.
+The CLI and agents use a `kaya_pat_…` personal access token instead of a browser session. There
+are two ways to get one, and the next sections cover both.
 
 ## Install the CLI
 
@@ -82,7 +69,7 @@ being up.
 
 ```console
 $ kaya --version
-kaya 0.15.0 (b2ce2eff8b9be351660cbc1e79fe114ed5a1a88d)
+kaya 0.22.0 (b2ce2eff8b9be351660cbc1e79fe114ed5a1a88d)
 ```
 
 The parenthesised value is the commit the binary was built from — this is why the release exists
@@ -96,17 +83,42 @@ sha:
 
 ```console
 $ kaya --version
-kaya 0.15.0 (source checkout, not a released build)
+kaya 0.22.0 (source checkout, not a released build)
 ```
 
-## Point it at a deployment and save your token
+## Point it at a deployment and sign in
 
-With nothing configured, kaya talks to `http://localhost:8000` — what `make up` and `make dev`
-serve from a checkout. Point it at a real deployment and save your token in one command:
+With nothing configured, kaya talks to `http://localhost:8000`, which is what `make up` and
+`make dev` serve from a checkout. Point it at a real deployment first:
 
 ```bash
-kaya config set --api-url https://kaya-jian.fly.dev --token 'pandan_pat_…'
+kaya config set --api-url https://kaya-jian.fly.dev
 ```
+
+Then sign in with the device flow:
+
+```bash
+kaya auth login
+```
+
+It prints a link and a short code, tries to open your browser, and waits. Approve the request on
+the page that opens (you sign in with GitHub there if you are not already). The CLI then writes
+the `kaya_pat_…` token it was given straight into the config file. The token is never printed,
+so there is nothing to copy. `--scope read` requests the `read` scope instead of the default `write`.
+
+!!! tip "Prefer to mint a token by hand?"
+
+    Open **Settings > Tokens** in the web app (the page lives at `/tokens`), name a token after
+    the machine or agent that will use it, pick `read` or `write`, and copy the `kaya_pat_…`
+    secret. It is shown once, because kaya stores only a hash. Lose it and you revoke it from the
+    same page and mint another. Then save it with
+    `kaya config set --token 'kaya_pat_…'`. This is also where you revoke a token you no longer
+    trust, including one `kaya auth login` made for you.
+
+Two more auth verbs round it out. `kaya auth check` says whether a token is configured and where
+it comes from (`environment` or `file`), and `kaya auth logout` removes the stored token from the
+config file. Logout cannot revoke a token that came from `KAYA_TOKEN`, and it does not revoke the
+token on the server either, so revoke it under Settings > Tokens if you want it dead.
 
 `config set` is a read-modify-write: it merges the keys you named into
 `$XDG_CONFIG_HOME/kaya/config.json` (or `~/.config/kaya/config.json`) without touching anything
@@ -124,7 +136,7 @@ max_text_chars  500                            default
 
 (There's no header row — `key`/`value`/`source` are the columns, in that order, on every line.)
 
-Notice the token's row: it is `set` or `not set`, never a value or a fragment of one — a truncated
+Notice the token's row: it is `set` or `not set`, never a value or a fragment of one. A truncated
 token is still a token, and the honest way to check *which* one you have is to make a request and
 read the `401` if it's wrong.
 
@@ -136,7 +148,7 @@ read the `401` if it's wrong.
 
     ```bash
     export KAYA_API_URL=https://kaya-jian.fly.dev
-    export KAYA_TOKEN='pandan_pat_…'
+    export KAYA_TOKEN='kaya_pat_…'
     ```
 
 See [Configuration](../cli/configure.md) for the full precedence and every key kaya reads.
@@ -145,7 +157,7 @@ See [Configuration](../cli/configure.md) for the full precedence and every key k
 
 ```console
 $ kaya --version
-kaya 0.15.0 (b2ce2eff8b9be351660cbc1e79fe114ed5a1a88d)
+kaya 0.22.0 (b2ce2eff8b9be351660cbc1e79fe114ed5a1a88d)
 
 $ kaya note create "Groceries" --body $'milk\neggs' --path home/groceries.md
 ref          NOTE-12
@@ -182,20 +194,26 @@ default `human` format, so an agent can find its way around without a manual.
 ## Recap
 
 ```bash
-# 1. mint a pandan_pat_… token in pandan's Tokens tab
-
-# 2. install the CLI
+# 1. install the CLI
+mkdir -p ~/.local/bin
 curl -fsSL -o ~/.local/bin/kaya \
   https://github.com/leejianrong/kaya/releases/latest/download/kaya-linux-x86_64
 chmod +x ~/.local/bin/kaya
 
-# 3. point it at a deployment and save the token
-kaya config set --api-url https://kaya-jian.fly.dev --token 'pandan_pat_…'
+# 2. point it at a deployment and sign in through the browser
+kaya config set --api-url https://kaya-jian.fly.dev
+kaya auth login
 
-# 4. write and read your first note
+# 3. write and read your first note
 kaya note create "Groceries" --body $'milk\neggs' --path home/groceries.md
 kaya note list
 ```
+
+pandan is optional. If you also keep a pandan board, you can link a pandan account under
+**Settings > Pandan connection** so that board embeds and `[[KAN-n]]` wikilinks show live cards.
+Nothing else needs it, and without the link those wikilinks simply render as unresolved. See
+[Agents and MCP](../agents/index.md) if you want an agent to use kaya, over the hosted MCP
+endpoint or the CLI.
 
 From here, [Using the CLI](../cli/index.md) covers every verb, all three output formats, and the
 exit codes a script can branch on.

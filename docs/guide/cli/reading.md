@@ -99,7 +99,8 @@ Each row of `links` is `target_kind`, `target_ref`, `resolved_ref`, `title`, `co
 in the API's own order, with no header line (nothing in kaya's `human` output has one). A row that
 couldn't be resolved — `KAN-591` above, if pandan can't confirm it right now — comes back with the
 last three columns blank rather than as an error: `links` lists what a note points *at*, resolved
-against pandan with your own token when the link names a card or epic
+against pandan with the pandan account you linked under Settings > Pandan connection, when the
+link names a card or epic. With no linked account every card link comes back unresolved
 ([ADR 0003](https://github.com/leejianrong/kaya/blob/main/docs/adr/0003-cross-linking-one-way-soft.md):
 nothing in kaya blocks on pandan being reachable, so an unresolved link degrades rather than fails).
 It gets the summary line every collection does (`2 links`), but no `help:` suggestions — a link

@@ -5,7 +5,7 @@ description: How the CLI resolves its settings, how kaya config set writes the f
 
 # Configuration
 
-The CLI resolves three keys: an API origin, a pandan token, and how much prose a read returns
+The CLI resolves three keys: an API origin, a kaya token, and how much prose a read returns
 before it's cut.
 
 ## Where settings come from
@@ -29,19 +29,40 @@ discard the `api_url` you already wrote to the file, because each key is resolve
 
 ## Setting a token
 
+The usual way is to sign in through the browser, which mints a token and stores it for you:
+
 ```bash
-kaya config set --api-url https://kaya-jian.fly.dev --token 'pandan_pat_…'
+kaya config set --api-url https://kaya-jian.fly.dev
+kaya auth login
+```
+
+`auth login` is an RFC 8628 device flow against kaya's own authorization server. It prints a link
+and a short code, opens your browser, and polls until you approve. The `kaya_pat_…` token it
+receives goes straight into the config file and is never printed. `--scope read` requests the
+`read` scope (the default is `write`). Run it against the deployment you set with
+`--api-url`, since the token is only good there.
+
+`kaya auth check` reports whether a token is configured and whether it comes from the environment
+or the file. `kaya auth logout` deletes the stored token from the file, and is safe to run when
+you are already logged out. It cannot touch `KAYA_TOKEN` in your shell, and it does not revoke
+the token on the server: do that under **Settings > Tokens** in the web app, which is also where
+you can mint a token by hand.
+
+To store a token you minted yourself:
+
+```bash
+kaya config set --token 'kaya_pat_…'
 ```
 
 `--token` puts the secret in argv, which is visible in shell history and briefly to `ps`. It's
-offered anyway because the alternative — hand-editing the JSON file — is a config file people
+offered anyway because the alternative, hand-editing the JSON file, is a config file people
 corrupt, and the file is written `0600` either way. If that trade doesn't suit you, prefer the
 environment variable instead: `KAYA_TOKEN` never touches disk and wins over the file regardless.
 
-!!! danger "There is no other way to clear a value"
+!!! note "`config set` cannot clear a value"
 
-    `config set` only ever adds or overwrites a key. To remove one, edit the JSON file directly —
-    kaya has no `config unset`.
+    `config set` only ever adds or overwrites a key. To remove the token use `kaya auth logout`.
+    To remove any other key, edit the JSON file directly. kaya has no `config unset`.
 
 ### The read-modify-write merge
 
@@ -93,13 +114,13 @@ whose whole job is "which file do I fix?" must never be the verb that refuses to
 
 ```console
 $ kaya note list
-error	no_credential	no kaya token configured — set KAYA_TOKEN to a pandan personal access token, or put one under 'token' in the config file	KAYA_TOKEN
+error	no_credential	no kaya token configured — run `kaya auth login`, or set KAYA_TOKEN to a kaya_pat_… token, or put one under 'token' in the config file	KAYA_TOKEN
 $ echo $?
 1
 ```
 
 That's exit `1`, not `3`. Nothing was refused, because nothing was asked — a script that reacted to
-`3` here would be minting a fresh PAT to fix a missing line of configuration.
+`3` here would be minting a fresh token to fix a missing line of configuration.
 
 ## Truncation limit
 
@@ -119,9 +140,11 @@ that isn't a non-negative whole number is a usage error naming which tier it cam
 
 ```bash
 # one-time setup
-kaya config set --api-url https://kaya-jian.fly.dev --token 'pandan_pat_…'
+kaya config set --api-url https://kaya-jian.fly.dev
+kaya auth login
 
 # check it
+kaya auth check
 kaya config show
 kaya config path
 ```

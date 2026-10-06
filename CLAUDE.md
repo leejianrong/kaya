@@ -17,8 +17,7 @@ transport on the same origin (ADR 0014 argues why).
 onward, `docs/PLAN.md` §Beyond the MVP, shaped in
 [`docs/roadmap/BREADBOARD.md`](docs/roadmap/BREADBOARD.md)) has shipped a graph view, board embeds,
 export/import, version history, attachments, a Fly.io deploy, a Settings page with format-on-save,
-standalone identity (EPIC-283), device-flow login and a hosted remote MCP endpoint (EPIC-284, docs
-pass pending), and a mobile-first shell with a Read/Edit/Split mode switch (EPIC-305). Open: the
+standalone identity (EPIC-283), device-flow login and a hosted remote MCP endpoint (EPIC-284; its docs pass, KAN-1745 with KAN-1825, shipped), and a mobile-first shell with a Read/Edit/Split mode switch (EPIC-305). Open: the
 org/team model (R16, ADR 0011), brand and landing page (EPIC-306), and Fly DNS/TLS (needs-human).
 Pandan board 18 ("kaya - Notes") is the source of truth for what is in flight; read it before
 trusting this paragraph.
@@ -132,9 +131,9 @@ These have tests; you will meet them as a failing build otherwise. Full accounts
   `sessionStorage`, never `localStorage` or a cookie, and `credentialState()` returns `set`/`not set`
   only. It is separate from `lib/identity.ts`'s cookie-session seam on purpose.
 - **A linked pandan PAT is encrypted at rest, never hashed** (`app/identity/pandan_link.py`, Fernet
-  keyed from `KAYA_AUTH_SECRET`): it must be handed back to pandan raw. Known, tracked gap:
-  `app/integrations/card_resolution.py` (wikilink resolution) still forwards the caller's kaya bearer,
-  which is no longer a pandan credential, so it degrades to "unresolved" (ADR 0003).
+  keyed from `KAYA_AUTH_SECRET`): it must be handed back to pandan raw. Wikilink resolution
+  (`app/integrations/card_resolution.py`) uses the same linked credential, and a caller who never linked
+  one degrades to "unresolved" (ADR 0003).
 - **A `PATCH` is guarded only if `if_updated_at` is sent, and only over `body`** (ADR 0009). The CLI's
   only guard flag is `--if-updated-at`; there is no `--force`, and the client never fetches the
   precondition itself.

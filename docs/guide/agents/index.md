@@ -1,12 +1,13 @@
 <!--
 title: "Agents and MCP"
-description: How kaya's MCP server shares kaya-client's payload shaping with the CLI, and how to choose between the two.
+description: The two ways an agent reaches kaya, the hosted MCP endpoint and the CLI, plus the stdio server for self-hosting.
 -->
 
 # Agents and MCP
 
-kaya ships two ways for a program to reach it: the CLI (`kaya`) and an MCP server (`kaya-mcp`). Both
-are adapters over the same package, `kaya-client` — the one place that opens an HTTP session, shapes
+kaya ships two ways for a program to reach it: the CLI (`kaya`) and an MCP server, which runs hosted
+on kaya's own origin or as a local process (`kaya-mcp`). All of them are adapters over the same
+package, `kaya-client`, the one place that opens an HTTP session, shapes
 a response and turns a failure into a structured object
 ([ADR 0004](https://github.com/leejianrong/kaya/blob/main/docs/adr/0004-shaping-lives-in-the-shared-client.md)).
 
@@ -31,55 +32,76 @@ prevent.
 
 ## The direction: `MCP ⊆ CLI`
 
-kaya's MCP server exposes six tools; the CLI has nine verb groups, several with sub-verbs of their
-own. Every MCP tool has a CLI verb behind it, deliberately never the other way round — the full
-argument, the tool-to-verb mapping, and the test that proves it live in one canonical place:
+The relationship between the two surfaces is `MCP ⊆ CLI`. The argument, the tool-to-verb mapping and
+the test that pins it live in one canonical place:
 [`mcp/README.md`](https://github.com/leejianrong/kaya/blob/main/mcp/README.md). Read it before
 assuming MCP can do something the CLI can't. This page and the next three link to it rather than
 restating it.
 
-## Two ways in
+## Your options
 
 <div class="grid cards" markdown>
 
--   **MCP server**
+-   **Hosted MCP endpoint**
 
-    For an agent host that speaks [MCP](https://modelcontextprotocol.io) — Claude Code, Claude
-    Desktop, or anything else with an MCP client. Six tools, one per `KayaClient` read or write.
+    For an agent host that speaks [MCP](https://modelcontextprotocol.io) over HTTP. Point it at
+    `/mcp` on your kaya deployment, approve the connection in a browser once, and there is nothing
+    to install. Six tools, one per `KayaClient` read or write.
 
-    [Set it up](mcp-setup.md)
+    [Connect to it](mcp-setup.md)
 
 -   **The CLI**
 
     For an agent that shells out, or a script. Every verb the API has, not only the six the MCP
-    surface froze.
+    surface froze. `kaya auth login` signs it in through a browser.
 
     [CLI guide](../cli/index.md)
 
+-   **The stdio MCP server**
+
+    A local `kaya-mcp` process the host launches. It is the fallback for self-hosting, offline use
+    and hosts that cannot do remote MCP.
+
+    [Set it up](mcp-setup.md#self-hosting-and-offline-the-stdio-server)
+
 </div>
 
-Both read the same configuration and accept the same pandan token, so nothing about which one you
-use changes what you're allowed to do — only how many of kaya's verbs you can reach without a shell.
-Some setups want both: an agent that mostly calls MCP tools can still shell out to the CLI for the
-handful of verbs that never became one of the six.
+Start with the hosted endpoint if your host supports remote MCP, and with the CLI if your agent can
+run shell commands. All three reach the same notes with the same shaping, so which one you use
+changes how many of kaya's verbs you can reach, not what you're allowed to do. Some setups want
+both: an agent that mostly calls MCP tools can still shell out to the CLI for the handful of verbs
+that never became one of the six.
 
 ## Authentication
 
-An agent authenticates with a pandan personal access token, the same `pandan_pat_…` secret a human
-pastes into `kaya config set --token`. kaya has no login of its own and no agent-specific credential
-type
-([ADR 0002](https://github.com/leejianrong/kaya/blob/main/docs/adr/0002-identity-pandan-as-provider.md))
-— every request is forwarded to pandan's `GET /api/v1/me` and trusted or refused based on pandan's
-answer. Mint a token per agent from pandan's Tokens tab if you want to revoke one independently of
-the others; see [get started](../get-started/index.md#get-a-token) for how.
+kaya mints and checks its own credentials, and pandan is not involved
+([ADR 0012](https://github.com/leejianrong/kaya/blob/main/docs/adr/0012-standalone-identity.md)).
+A person signs in to the web app with GitHub. An agent uses a `kaya_pat_…` personal access token,
+which is account-wide and has a `read` or `write` scope. There are three ways one gets minted:
+
+- `kaya auth login` runs a device flow in your browser and stores the token for the CLI
+  ([ADR 0013](https://github.com/leejianrong/kaya/blob/main/docs/adr/0013-device-flow-and-hosted-mcp.md)).
+- A hosted MCP client runs an OAuth authorization code flow with PKCE and keeps the token it is
+  given ([ADR 0014](https://github.com/leejianrong/kaya/blob/main/docs/adr/0014-oauth-authorization-code-pkce-grant.md)).
+- You create one by hand under **Settings > Tokens** in the web app, which is also where you revoke
+  any of them.
+
+Every one of these is an ordinary long-lived token. There is no refresh token and no expiry, so a
+token you no longer trust has to be revoked under Settings > Tokens. Mint or connect one token per
+agent if you want to revoke them independently. See [get started](../get-started/index.md#sign-in)
+for the sign-in steps.
+
+pandan is optional. If you link a pandan account under Settings > Pandan connection, board embeds
+and `[[KAN-n]]` wikilink resolution use that separate credential. Without it, kaya works the same
+and card links render as unresolved.
 
 ## Next
 
 <div class="grid cards" markdown>
 
--   **[Set up the MCP server](mcp-setup.md)**
+-   **[Connect an agent over MCP](mcp-setup.md)**
 
-    What the server needs to run, and a worked host config.
+    The hosted endpoint first, then the stdio server for self-hosting.
 
 -   **[Tool reference](mcp-tools.md)**
 
