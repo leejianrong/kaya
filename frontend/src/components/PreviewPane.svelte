@@ -1,8 +1,10 @@
 <script lang="ts">
   import { fetchAttachmentBlobUrl } from '../lib/attachments'
   import { fetchBoardEmbed } from '../lib/embeds'
+  import { listLinks } from '../lib/notes'
+  import { readingBody } from '../lib/readingBody'
   import { interceptClick } from '../lib/router'
-  import type { BoardEmbedResponse, Note } from '../lib/types'
+  import type { BoardEmbedResponse, Link, Note } from '../lib/types'
 
   /**
    * `lib/markdown.ts`, named as a **type** so naming it costs nothing.
@@ -128,6 +130,63 @@
     }
   })
 
+  /**
+   * KAN-1824: what `/links` says about this note's wikilinks, or `undefined` while it is unknown.
+   *
+   * Fetched only when the document holds a `[[` at all, and refetched when the note is opened or
+   * saved (`updated_at` moves), never per keystroke: `hasWikilinks` is a boolean, so typing inside a
+   * paragraph does not re-run the effect. A failed fetch leaves it `undefined`, and every wikilink
+   * then renders as unresolved, which is the same answer ADR 0003 gives for pandan being down.
+   */
+  let resolution: readonly Link[] | undefined = $state(undefined)
+  const hasWikilinks = $derived(source.includes('[['))
+  $effect(() => {
+    const ref = note?.ref
+    // A save moves `updated_at`, and that is the cue to ask again.
+    const saved = note?.updated_at
+    if (ref === undefined || saved === undefined || !hasWikilinks) {
+      resolution = undefined
+      return
+    }
+    let live = true
+    listLinks(ref).then(
+      (rows) => {
+        if (live) {
+          resolution = rows
+        }
+      },
+      () => {
+        if (live) {
+          resolution = undefined
+        }
+      },
+    )
+    return () => {
+      live = false
+    }
+  })
+
+  /**
+   * A click on a resolved wikilink goes through the SPA router, which runs the unsaved-work guard.
+   * One delegated listener on the container, because its children belong to `replaceChildren`. A
+   * modified click or a middle click falls through to the browser, and the `href` is a real route.
+   */
+  $effect(() => {
+    const target = rendered
+    if (target === undefined) {
+      return
+    }
+    const onclick = (event: MouseEvent): void => {
+      const anchor = (event.target as Element | null)?.closest?.('a.wikilink')
+      const href = anchor?.getAttribute('href')
+      if (href !== null && href !== undefined) {
+        interceptClick(event, href)
+      }
+    }
+    target.addEventListener('click', onclick)
+    return () => target.removeEventListener('click', onclick)
+  })
+
   $effect(() => {
     // All three reads are **above** the guard, because that is what registers them as dependencies.
     // Returning before the `source` read would leave this effect unsubscribed from the document and
@@ -135,13 +194,16 @@
     // `await` at the top of this effect produces, by moving the read out of the synchronous pass.
     const target = rendered
     const loaded = renderer
-    const markdown = source
+    // Read mode shows the title as the heading, so a body that opens with the same H1 drops it from
+    // the rendering only (KAN-1824). Split and Preview show the body as written.
+    const markdown = reading && note !== null ? readingBody(source, note.title) : source
+    const rows = resolution
     if (target === undefined || loaded === null) {
       return
     }
     // `replaceChildren` and not an incremental patch: the fragment is the whole rendering, and a
     // preview is cheap to rebuild. A diff here would be a second rendering strategy to keep correct.
-    target.replaceChildren(loaded.renderMarkdown(markdown))
+    target.replaceChildren(loaded.renderMarkdown(markdown, { links: rows }))
 
     // KAN-1049: a second pass over the subtree just built, hydrating every `.embed-board`
     // placeholder `lib/markdown.ts` left behind. Not folded into `renderMarkdown` itself — that
@@ -651,5 +713,40 @@
 
   .rendered :global(a) {
     color: var(--accent);
+  }
+
+  /*
+    KAN-1824: wikilinks in Read mode. A resolved note link is an ordinary link, kept apart by a solid
+    underline that only appears on hover and focus. A card chip carries no destination, so it reads
+    as a quiet mono tag. An unresolved one is muted with a dashed underline and an inert cursor.
+  */
+  .rendered :global(a.wikilink) {
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+  }
+
+  .rendered :global(a.wikilink:hover),
+  .rendered :global(a.wikilink:focus-visible) {
+    border-bottom-color: currentColor;
+  }
+
+  .rendered :global(a.wikilink:focus-visible) {
+    border-radius: 2px;
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .rendered :global(span.wikilink.card) {
+    padding: 0 0.3em;
+    border-radius: 4px;
+    background: var(--accent-soft);
+    font-family: var(--mono);
+    font-size: 0.9em;
+  }
+
+  .rendered :global(span.wikilink.unresolved) {
+    border-bottom: 1px dashed var(--muted);
+    color: var(--muted);
+    cursor: help;
   }
 </style>
