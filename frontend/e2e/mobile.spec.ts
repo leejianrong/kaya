@@ -142,7 +142,9 @@ test('Read / Edit on a phone: a saved note opens in Read, Split is absent, Edit 
     await expect(page.getByTestId('mode-read')).toHaveAttribute('aria-pressed', 'true')
     await expect(page.getByTestId('mode-split')).toHaveCount(0)
     await expect(page.getByTestId('toggle-preview')).toHaveCount(0)
-    await expect(page.getByTestId('preview').locator('h1')).toHaveText(title)
+    // KAN-1824: the body's own H1 repeats the title, so Read drops it; the title shows once, above.
+    await expect(page.getByTestId('preview').locator('h1')).toHaveCount(0)
+    await expect(page.getByTestId('preview')).toContainText('Prose.')
     await expect(page.locator('.editor-host')).toBeHidden()
     await expect(page.getByRole('button', { name: 'Save' })).toHaveCount(0)
     await expect(page.getByTestId('delete-button')).toHaveCount(0)
