@@ -239,7 +239,7 @@
 
   h1 {
     margin: 0 0 1rem;
-    font-size: 1.4rem;
+    font-size: var(--type-title-large-size);
   }
 
   .lede {
@@ -259,8 +259,8 @@
   .reveal {
     margin: 1rem 0;
     padding: 0.75rem 1rem;
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--shape-md);
   }
 
   .reveal [data-testid='use-token-now'] {
@@ -283,15 +283,15 @@
   }
 
   form label {
-    color: var(--muted);
-    font-size: 0.85rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-medium-size);
   }
 
   form input,
   form select {
     padding: 0.4rem 0.6rem;
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-xs);
     background: transparent;
     color: inherit;
     font: inherit;
@@ -299,8 +299,8 @@
 
   button {
     padding: 0.4rem 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-full);
     background: transparent;
     color: inherit;
     cursor: pointer;
@@ -318,7 +318,7 @@
     align-items: center;
     gap: 0.6rem;
     padding: 0.5rem 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--outline-variant);
   }
 
   .list code {
@@ -330,12 +330,12 @@
   }
 
   .scope {
-    color: var(--muted);
-    font-size: 0.85rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-medium-size);
   }
 
   .empty {
-    color: var(--muted);
+    color: var(--on-surface-variant);
   }
 
   .refused {

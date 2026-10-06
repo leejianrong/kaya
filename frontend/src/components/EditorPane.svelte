@@ -1097,18 +1097,18 @@ import type { EditorCommands } from '../lib/toolbar'
     width: 100%;
     padding: 0.1rem 0.3rem;
     border: 1px solid transparent;
-    border-radius: 0.3rem;
+    border-radius: var(--shape-xs);
     background: transparent;
     color: inherit;
     font: inherit;
-    font-size: 1.35rem;
+    font-size: var(--type-title-large-size);
     font-weight: 600;
     letter-spacing: -0.01em;
   }
 
   .title-input:hover,
   .title-input:focus {
-    border-color: var(--border);
+    border-color: var(--outline);
     outline: none;
   }
 
@@ -1117,8 +1117,8 @@ import type { EditorCommands } from '../lib/toolbar'
     flex-wrap: wrap;
     gap: 0.75rem;
     margin: 0.35rem 0 0;
-    color: var(--muted);
-    font-size: 0.85rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-medium-size);
   }
 
   .stamp {
@@ -1127,10 +1127,10 @@ import type { EditorCommands } from '../lib/toolbar'
 
   .team-badge {
     padding: 0.05rem 0.45rem;
-    border: 1px solid var(--edge);
-    border-radius: 999px;
-    color: var(--muted);
-    font-size: 0.75rem;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--shape-full);
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-small-size);
     font-weight: 600;
     letter-spacing: 0.02em;
     white-space: nowrap;
@@ -1142,30 +1142,30 @@ import type { EditorCommands } from '../lib/toolbar'
     min-width: 8rem;
     padding: 0.05rem 0.3rem;
     border: 1px solid transparent;
-    border-radius: 0.3rem;
+    border-radius: var(--shape-xs);
     background: transparent;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font: inherit;
     font-family: var(--mono);
-    font-size: 0.85rem;
+    font-size: var(--type-body-medium-size);
   }
 
   .path-input:hover,
   .path-input:focus {
-    border-color: var(--border);
+    border-color: var(--outline);
     outline: none;
   }
 
   .notice {
     margin: 0;
-    color: var(--muted);
+    color: var(--on-surface-variant);
   }
 
   .unsaved {
     margin: 0;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-family: var(--mono);
-    font-size: 0.75rem;
+    font-size: var(--type-body-small-size);
   }
 
   .bar {
@@ -1174,34 +1174,40 @@ import type { EditorCommands } from '../lib/toolbar'
     gap: 0.75rem;
   }
 
+  /* Filled button (M3): the primary action. Save is the only one on this bar. */
   button {
-    padding: 0.35rem 0.9rem;
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
-    color: var(--bg);
-    background: var(--accent);
+    padding: 0 1.25rem;
+    min-height: 2.5rem;
+    border: 0;
+    border-radius: var(--shape-full);
+    color: var(--on-primary);
+    background: var(--primary);
     font: inherit;
-    font-size: 0.85rem;
+    font-size: var(--type-label-large-size);
+    font-weight: var(--type-label-large-weight);
     cursor: pointer;
   }
 
   button:disabled {
-    color: var(--muted);
-    background: transparent;
+    color: color-mix(in srgb, var(--on-surface) calc(var(--state-disabled-content) * 100%), transparent);
+    background: color-mix(in srgb, var(--on-surface) calc(var(--state-disabled-container) * 100%), transparent);
+    opacity: 1;
     cursor: default;
   }
 
   .hint,
   .state {
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-family: var(--mono);
-    font-size: 0.75rem;
+    font-size: var(--type-body-small-size);
   }
 
+  /* Outlined button for the secondary and destructive actions. */
   .delete,
   .delete-cancel {
+    border: 1px solid var(--outline);
     background: transparent;
-    color: var(--muted);
+    color: var(--on-surface-variant);
   }
 
   /* Pushed to the end of the bar, away from Save — a destructive control gets its own end of the
@@ -1211,17 +1217,17 @@ import type { EditorCommands } from '../lib/toolbar'
   }
 
   .delete:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
-    color: var(--danger);
+    border-color: var(--error);
+    color: var(--error);
   }
 
   .conflict {
     margin: 0;
     padding: 0.75rem 1rem;
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--accent);
-    border-radius: 0.35rem;
-    font-size: 0.85rem;
+    border: 1px solid var(--outline-variant);
+    border-left: 3px solid var(--primary);
+    border-radius: var(--shape-md);
+    font-size: var(--type-body-medium-size);
   }
 
   /* KAN-1819, Read: the pane is the document's heading and metadata only. The host is hidden, not
@@ -1244,8 +1250,8 @@ import type { EditorCommands } from '../lib/toolbar'
     min-height: 12rem;
     overflow: auto;
     padding: 0.25rem 0;
-    border: 1px solid var(--border);
-    border-radius: 0.4rem;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--shape-md);
   }
 
   /* KAN-1818, compact: Save/Delete are touch targets. */

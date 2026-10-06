@@ -181,7 +181,7 @@
   .subhead {
     margin: 0 auto;
     max-width: 44ch;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-size: 1.05rem;
     line-height: 1.6;
     text-wrap: pretty;
@@ -201,15 +201,14 @@
     align-items: center;
     gap: 0.55rem;
     padding: 0.65rem 1.15rem;
-    border: 1px solid var(--text);
-    border-radius: var(--radius);
-    background: var(--text);
-    color: var(--bg);
+    border: 0;
+    border-radius: var(--shape-full);
+    background: var(--primary);
+    color: var(--on-primary);
     font: inherit;
     font-weight: 600;
     font-size: 0.95rem;
     cursor: pointer;
-    box-shadow: var(--shadow-sm);
     transition:
       transform 0.12s ease,
       filter 0.12s ease;
@@ -229,7 +228,7 @@
   }
 
   .btn-github:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--primary);
     outline-offset: 2px;
   }
 
@@ -253,9 +252,8 @@
 
   .tile {
     padding: 1.1rem 1.2rem 1.3rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--card-bg);
+    border-radius: var(--shape-md);
+    background: var(--surface-container);
   }
 
   .tile h2 {
@@ -266,8 +264,8 @@
 
   .tile p {
     margin: 0;
-    color: var(--muted);
-    font-size: 0.85rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-medium-size);
     line-height: 1.55;
   }
 
@@ -279,7 +277,7 @@
 
   .refused {
     margin: 1rem 0 0;
-    color: var(--danger);
+    color: var(--error);
   }
 
   /* --- motion ------------------------------------------------------------------------------------

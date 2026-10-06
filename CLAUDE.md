@@ -83,6 +83,10 @@ unit-tested without a browser, decide everything; components only consume them.
   toggle, which is gone. Split exists only at `expanded` and is *hidden*, never disabled, below 840;
   expanded opens in Edit, narrower opens a saved note in Read and a just-created one in Edit. The mode
   changes the layout around `EditorPane`, never its mount.
+- **Colour, type, shape and state layers are Material 3 tokens in `frontend/src/tokens.css`** (seed `#0d9488`, light and
+  dark by `prefers-color-scheme`; the generation command is in its header). Components use role names
+  (`--primary`, `--surface-container-low`, `--shape-full`); `tests/tokens-shape.test.ts` fails on a raw colour
+  outside that file and `tests/tokens-contrast.test.ts` holds WCAG contrast. Old names (`--accent`, `--muted`) are aliases.
 - Tokens, the pandan link and format-on-save live under **Settings** now (routes `/tokens`,
   `/pandan` unchanged); `tokens` and `device` render in `main` alone and are reachable with no
   credential.

@@ -51,12 +51,12 @@
 <style>
   /* Re-themable: the nav bar reads only these tokens (the M3 palette card overrides them). */
   .nav-column {
-    --nav-bg: var(--card-bg);
-    --nav-border: var(--border);
-    --nav-fg: var(--muted);
-    --nav-fg-active: var(--accent);
-    --nav-indicator: var(--accent-soft);
-    --nav-hover: var(--hover);
+    --nav-bg: var(--surface-container);
+    --nav-border: var(--outline-variant);
+    --nav-fg: var(--on-surface-variant);
+    --nav-fg-active: var(--on-secondary-container);
+    --nav-indicator: var(--secondary-container);
+    --nav-hover: var(--layer-hover);
 
     grid-area: nav;
     display: flex;
@@ -74,7 +74,7 @@
     align-items: center;
     gap: 0.15rem;
     padding: 0.4rem 0.2rem;
-    border-radius: 0.5rem;
+    border-radius: var(--shape-md);
     color: var(--nav-fg);
     text-decoration: none;
     font-size: 0.72rem;
@@ -89,11 +89,11 @@
     place-items: center;
     width: 3.25rem;
     height: 1.75rem;
-    border-radius: 0.9rem;
+    border-radius: var(--shape-full);
   }
 
   .nav-item:hover {
-    color: var(--text);
+    color: var(--on-surface);
   }
 
   .nav-item:hover .nav-pill {
@@ -101,12 +101,12 @@
   }
 
   .nav-item:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--primary);
     outline-offset: -2px;
   }
 
   .nav-item.active {
-    color: var(--text);
+    color: var(--on-surface);
     font-weight: 650;
   }
 
@@ -170,7 +170,7 @@
       min-height: 3.5rem;
       padding: 0.35rem 0.25rem;
       border-radius: 0;
-      font-size: 0.75rem;
+      font-size: var(--type-body-small-size);
       font-weight: 500;
     }
 

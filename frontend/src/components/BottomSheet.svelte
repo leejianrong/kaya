@@ -134,7 +134,7 @@
     position: fixed;
     inset: 0;
     z-index: 30;
-    background: rgb(0 0 0 / 0.42);
+    background: color-mix(in srgb, var(--scrim) 40%, transparent);
   }
 
   /* The note stays visible above it: at most 70% of the visible height, less the keyboard. */
@@ -148,9 +148,8 @@
     flex-direction: column;
     max-height: min(70dvh, calc(100dvh - var(--sheet-inset, 0px) - 4rem));
     padding-bottom: env(safe-area-inset-bottom, 0px);
-    border-radius: 28px 28px 0 0;
-    background: var(--surface-2);
-    box-shadow: var(--shadow-md);
+    border-radius: var(--shape-xl) var(--shape-xl) 0 0;
+    background: var(--surface-container-low);
     outline: none;
   }
 
@@ -170,8 +169,8 @@
   .grab span {
     width: 2rem;
     height: 0.25rem;
-    border-radius: 0.125rem;
-    background: var(--muted);
+    border-radius: var(--shape-full);
+    background: var(--on-surface-variant);
     opacity: 0.6;
   }
 
@@ -185,7 +184,7 @@
 
   h2 {
     margin: 0;
-    font-size: 1rem;
+    font-size: var(--type-title-medium-size);
     font-weight: 600;
   }
 
@@ -193,9 +192,9 @@
     min-width: 2.75rem;
     min-height: 2.75rem;
     border: 0;
-    border-radius: 50%;
+    border-radius: var(--shape-full);
     background: transparent;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     cursor: pointer;
     font: inherit;
     font-size: 1.5rem;
@@ -203,7 +202,7 @@
   }
 
   .close:hover {
-    background: var(--hover);
+    background: var(--layer-hover);
   }
 
   .content {

@@ -782,7 +782,7 @@ import { watchViewport } from './lib/viewport'
 
   .shell.railed > :global(.right-rail) {
     max-height: 40dvh;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--outline-variant);
     border-left: 0;
   }
 
@@ -796,23 +796,23 @@ import { watchViewport } from './lib/viewport'
 
   @media (min-width: 840px) {
     .shell {
-      grid-template-columns: 5.5rem minmax(0, 1fr);
+      grid-template-columns: 7rem minmax(0, 1fr);
     }
 
     .shell:has(> :global(.sidebar)) {
-      grid-template-columns: 5.5rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr);
+      grid-template-columns: 7rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr);
     }
 
     .shell.railed {
       grid-template-areas: 'topbar topbar topbar topbar' 'nav sidebar main rail';
-      grid-template-columns: 5.5rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr) clamp(10rem, 16vw, 14rem);
+      grid-template-columns: 7rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr) clamp(10rem, 16vw, 14rem);
       grid-template-rows: auto minmax(0, 1fr);
     }
 
     .shell.railed > :global(.right-rail) {
       max-height: none;
       border-top: 0;
-      border-left: 1px solid var(--border);
+      border-left: 1px solid var(--outline-variant);
     }
 
     .shell.unauthenticated {
@@ -827,8 +827,8 @@ import { watchViewport } from './lib/viewport'
     grid-area: topbar;
     min-width: 0;
     padding: 0.85rem 1.25rem;
-    background: var(--card-bg);
-    border-bottom: 1px solid var(--border);
+    background: var(--surface-container-low);
+    border-bottom: 1px solid var(--outline-variant);
   }
 
   /* The toggles sit at the right edge of the bar. */
@@ -845,15 +845,15 @@ import { watchViewport } from './lib/viewport'
   .brand,
   .back {
     color: inherit;
-    font-size: 1.05rem;
+    font-size: var(--type-title-medium-size);
     font-weight: 600;
     letter-spacing: -0.01em;
     text-decoration: none;
   }
 
   .tagline {
-    color: var(--muted);
-    font-size: 0.85rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-medium-size);
   }
 
   .shell > :global(.sidebar) {
@@ -950,26 +950,26 @@ import { watchViewport } from './lib/viewport'
 
   .toggle {
     padding: 0.2rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-full);
     background: transparent;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     cursor: pointer;
     font: inherit;
-    font-size: 0.75rem;
+    font-size: var(--type-body-small-size);
   }
 
   .toggle.on {
-    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-    color: var(--accent);
+    border-color: transparent;
+    background: var(--secondary-container);
+    color: var(--on-secondary-container);
   }
 
   .notice {
     max-width: 34rem;
     margin: 0;
     padding: 1.5rem;
-    color: var(--muted);
+    color: var(--on-surface-variant);
   }
 
   /* Compact: one screen at a time, the navigation bar along the bottom. The list and `main` never
@@ -1037,7 +1037,7 @@ import { watchViewport } from './lib/viewport'
     .toggle {
       min-height: 2.75rem;
       padding: 0 0.75rem;
-      font-size: 0.8rem;
+      font-size: var(--type-body-medium-size);
     }
 
     .mode-bar {

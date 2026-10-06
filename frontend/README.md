@@ -25,7 +25,8 @@ Each remaining V3 card replaces **one file**, which is the whole reason the layo
 ```
 src/
   App.svelte                 the shell: layout regions, the route, the two reads they need
-  app.css                    design tokens (--ink, --paper, --muted, --edge, --accent, --sans, --mono)
+  tokens.css                 Material 3 role, type, shape, state-layer and motion tokens, light and dark (KAN-1828)
+  app.css                    imports tokens.css; base element rules, the shared focus ring and state layers
   lib/api.ts                 apiPath + apiRequest — the one place a request happens
   lib/auth.ts                the credential seam: the only module that knows what a bearer is
   lib/editor.ts              the editor's two guards + ADR 0009's two versions, as pure functions

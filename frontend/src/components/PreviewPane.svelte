@@ -463,7 +463,7 @@
 
   h2 {
     margin: 0;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-size: 0.7rem;
     font-weight: 600;
     letter-spacing: 0.08em;
@@ -471,7 +471,7 @@
   }
 
   .hint {
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-family: var(--mono);
     font-size: 0.75rem;
   }
@@ -481,9 +481,9 @@
   .notice {
     margin: 0;
     padding: 0.75rem 1rem;
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--accent);
-    border-radius: 0.35rem;
+    border: 1px solid var(--outline-variant);
+    border-left: 3px solid var(--primary);
+    border-radius: var(--shape-md);
     font-size: 0.85rem;
   }
 
@@ -492,8 +492,8 @@
     min-width: 0;
     overflow: auto;
     padding: 0.75rem 1rem;
-    border: 1px solid var(--border);
-    border-radius: 0.4rem;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--shape-md);
     line-height: 1.6;
   }
 
@@ -556,14 +556,14 @@
 
   .rendered :global(blockquote) {
     padding-left: 0.9rem;
-    border-left: 3px solid var(--border);
-    color: var(--muted);
+    border-left: 3px solid var(--outline-variant);
+    color: var(--on-surface-variant);
   }
 
   .rendered :global(code) {
     padding: 0.1em 0.3em;
-    border-radius: 0.2rem;
-    background: color-mix(in srgb, var(--text) 8%, transparent);
+    border-radius: var(--shape-xs);
+    background: var(--surface-container-high);
     font-family: var(--mono);
     font-size: 0.85em;
   }
@@ -571,8 +571,8 @@
   .rendered :global(pre) {
     overflow-x: auto;
     padding: 0.6rem 0.8rem;
-    border-radius: 0.3rem;
-    background: color-mix(in srgb, var(--text) 6%, transparent);
+    border-radius: var(--shape-sm);
+    background: var(--surface-container-high);
   }
 
   .rendered :global(pre code) {
@@ -585,13 +585,13 @@
     element still holds exactly the author's bytes and nothing else — see `lib/markdown.ts`.
   */
   .rendered :global(pre.raw-html) {
-    border-left: 3px solid var(--accent);
+    border-left: 3px solid var(--primary);
   }
 
   .rendered :global(pre.raw-html)::before {
     display: block;
     margin-bottom: 0.3rem;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     content: 'raw HTML, not rendered';
     font-family: var(--mono);
     font-size: 0.7rem;
@@ -605,8 +605,8 @@
     has the argument, and `title` carries the reason for anyone who hovers.
   */
   .rendered :global(span.unlinked) {
-    border-bottom: 1px dotted var(--muted);
-    color: var(--muted);
+    border-bottom: 1px dotted var(--on-surface-variant);
+    color: var(--on-surface-variant);
     font-family: var(--mono);
     font-size: 0.9em;
   }
@@ -615,9 +615,9 @@
      whole of its rendering; nothing hydrates it. */
   .rendered :global(p.embed-board-error) {
     padding: 0.5rem 0.8rem;
-    border: 1px dashed var(--border);
-    border-radius: 0.3rem;
-    color: var(--muted);
+    border: 1px dashed var(--outline-variant);
+    border-radius: var(--shape-sm);
+    color: var(--on-surface-variant);
     font-size: 0.85em;
   }
 
@@ -633,17 +633,17 @@
   */
   .rendered :global(.embed-board) {
     padding: 0.6rem 0.8rem;
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--accent);
-    border-radius: 0.3rem;
-    background: color-mix(in srgb, var(--text) 4%, transparent);
+    border: 1px solid var(--outline-variant);
+    border-left: 3px solid var(--primary);
+    border-radius: var(--shape-md);
+    background: var(--surface-container-low);
     font-size: 0.85em;
   }
 
   .rendered :global(.embed-board-unavailable),
   .rendered :global(.embed-board-empty) {
     margin: 0;
-    color: var(--muted);
+    color: var(--on-surface-variant);
   }
 
   .rendered :global(.embed-board-cards) {
@@ -662,15 +662,15 @@
   }
 
   .rendered :global(.embed-board-ref) {
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-family: var(--mono);
     font-size: 0.85em;
   }
 
   .rendered :global(.embed-board-column) {
     padding: 0.05em 0.4em;
-    border-radius: 0.25rem;
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    border-radius: var(--shape-sm);
+    background: var(--secondary-container);
     font-size: 0.75em;
     text-transform: uppercase;
     letter-spacing: 0.03em;
@@ -688,23 +688,23 @@
   .rendered :global(.embed-attachment-unavailable) {
     display: inline-block;
     padding: 0.1em 0.4em;
-    border: 1px dashed var(--border);
-    border-radius: 0.25rem;
-    color: var(--muted);
+    border: 1px dashed var(--outline-variant);
+    border-radius: var(--shape-sm);
+    color: var(--on-surface-variant);
     font-size: 0.85em;
   }
 
   .rendered :global(th),
   .rendered :global(td) {
     padding: 0.3rem 0.6rem;
-    border: 1px solid var(--border);
+    border: 1px solid var(--outline-variant);
     text-align: left;
   }
 
   .rendered :global(hr) {
     margin: 1.2em 0;
     border: 0;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--outline-variant);
   }
 
   .rendered :global(img) {
@@ -712,7 +712,7 @@
   }
 
   .rendered :global(a) {
-    color: var(--accent);
+    color: var(--primary);
   }
 
   /*
@@ -732,21 +732,21 @@
 
   .rendered :global(a.wikilink:focus-visible) {
     border-radius: 2px;
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--primary);
     outline-offset: 2px;
   }
 
   .rendered :global(span.wikilink.card) {
     padding: 0 0.3em;
     border-radius: 4px;
-    background: var(--accent-soft);
+    background: var(--secondary-container);
     font-family: var(--mono);
     font-size: 0.9em;
   }
 
   .rendered :global(span.wikilink.unresolved) {
-    border-bottom: 1px dashed var(--muted);
-    color: var(--muted);
+    border-bottom: 1px dashed var(--on-surface-variant);
+    color: var(--on-surface-variant);
     cursor: help;
   }
 </style>

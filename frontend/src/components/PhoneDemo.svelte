@@ -153,11 +153,11 @@ kaya note list --limit 5
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    border: 6px solid var(--text);
+    border: 6px solid var(--on-surface);
     border-radius: 2.1rem;
-    background: var(--card-bg);
+    background: var(--surface-container-low);
     box-shadow: var(--shadow-md);
-    color: var(--text);
+    color: var(--on-surface);
     font-size: 0.75rem;
     line-height: 1.4;
     text-align: left;
@@ -178,7 +178,7 @@ kaya note list --limit 5
     width: 2.9rem;
     height: 0.3rem;
     border-radius: 0.2rem;
-    background: var(--text);
+    background: var(--on-surface);
     opacity: 0.8;
   }
 
@@ -208,7 +208,7 @@ kaya note list --limit 5
     flex: none;
     width: 2.3rem;
     height: 2.3rem;
-    color: var(--muted);
+    color: var(--on-surface-variant);
   }
 
   .ib svg {
@@ -222,7 +222,7 @@ kaya note list --limit 5
     display: flex;
     height: 2.1rem;
     margin: 0 0.75rem 0.4rem;
-    border: 1px solid var(--border);
+    border: 1px solid var(--outline-variant);
     border-radius: 1.05rem;
     overflow: hidden;
   }
@@ -230,9 +230,9 @@ kaya note list --limit 5
   .seg button {
     flex: 1;
     border: 0;
-    border-right: 1px solid var(--border);
+    border-right: 1px solid var(--outline-variant);
     background: none;
-    color: var(--text);
+    color: var(--on-surface);
     font: inherit;
     font-size: 0.78rem;
     font-weight: 600;
@@ -244,12 +244,12 @@ kaya note list --limit 5
   }
 
   .seg button[aria-pressed='true'] {
-    background: var(--accent-soft);
+    background: var(--secondary-container);
   }
 
   .seg button:focus-visible,
   .navbar button:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--primary);
     outline-offset: -2px;
   }
 
@@ -292,7 +292,7 @@ kaya note list --limit 5
     margin: 0;
     padding: 0.5rem 0.65rem;
     border-radius: 0.6rem;
-    background: var(--surface-2);
+    background: var(--surface-container);
     font-family: var(--mono);
     font-size: 0.68rem;
     overflow: hidden;
@@ -304,8 +304,8 @@ kaya note list --limit 5
   .w {
     padding: 0 0.15rem;
     border-radius: 0.25rem;
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
-    color: var(--accent);
+    background: color-mix(in srgb, var(--primary) 14%, transparent);
+    color: var(--primary);
   }
 
   .wl {
@@ -323,7 +323,7 @@ kaya note list --limit 5
   }
 
   .src .h {
-    color: var(--accent);
+    color: var(--primary);
     font-weight: 600;
   }
 
@@ -331,7 +331,7 @@ kaya note list --limit 5
     display: inline-block;
     width: 2px;
     height: 1.1em;
-    background: var(--accent);
+    background: var(--primary);
     vertical-align: text-bottom;
   }
 
@@ -341,7 +341,7 @@ kaya note list --limit 5
     align-items: center;
     height: 2.4rem;
     padding: 0 0.4rem;
-    background: var(--surface-2);
+    background: var(--surface-container);
   }
 
   .tool {
@@ -369,20 +369,20 @@ kaya note list --limit 5
   }
 
   .graph line {
-    stroke: var(--border);
+    stroke: var(--outline-variant);
     stroke-width: 1.5;
   }
 
   .graph circle {
-    fill: var(--muted);
+    fill: var(--on-surface-variant);
   }
 
   .graph circle.hub {
-    fill: var(--accent);
+    fill: var(--primary);
   }
 
   .graph text {
-    fill: var(--muted);
+    fill: var(--on-surface-variant);
     font-size: 8.5px;
   }
 
@@ -390,7 +390,7 @@ kaya note list --limit 5
     flex: none;
     display: flex;
     padding: 0.4rem 0.3rem 0.35rem;
-    background: var(--surface-2);
+    background: var(--surface-container);
   }
 
   .navbar button,
@@ -402,7 +402,7 @@ kaya note list --limit 5
     gap: 0.15rem;
     border: 0;
     background: none;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font: inherit;
     font-size: 0.66rem;
     font-weight: 500;
@@ -422,13 +422,13 @@ kaya note list --limit 5
   }
 
   .navbar button[aria-pressed='true'] {
-    color: var(--text);
+    color: var(--on-surface);
     font-weight: 650;
   }
 
   .navbar button[aria-pressed='true'] .pill {
-    background: var(--accent-soft);
-    color: var(--accent);
+    background: var(--secondary-container);
+    color: var(--primary);
   }
 
   @media (prefers-reduced-motion: no-preference) {

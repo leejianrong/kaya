@@ -1,67 +1,16 @@
+@import './tokens.css';
+
 :root {
-  /* Graphite (Zinc & Teal) — mirrors pandan's frontend/src/app.css token-for-token (KAY-E14), so
-     the two apps read as one product. Trimmed to the roles kaya actually has a use for: no --agent
-     (no agent concept here) and no --label-* (no labels). Pandan's own PAN-E35 is a pending "slight
-     edit, not a rebuild" of this same palette for light/dark balance — re-sync when that lands. */
-  --bg: #f6f7f8;
-  --surface-2: #eceef1;
-  --card-bg: #ffffff;
-  --border: #dcdfe4;
-  --text: #1a1d21;
-  --muted: #616870;
-  --accent: #0d9488;
-  --accent-soft: #d5f1ec;
-  --success: #16a34a;
-  --success-soft: #dcf3e3;
-  --warning: #b45309;
-  --warning-soft: #fbeccd;
-  --danger: #dc2626;
-  --danger-soft: #fde4e4;
-  --hover: rgba(20, 25, 30, 0.06);
-  --shadow-sm: 0 1px 0 rgba(20, 25, 30, 0.06);
-  --shadow-md: 0 1px 1px rgba(20, 25, 30, 0.08), 0 8px 20px -12px rgba(20, 25, 30, 0.28);
-  --radius: 8px;
-
-  /* The brand mark's own palette (KAN-1823, Logo.svelte). Independent of the UI tokens on purpose. */
-  --logo-k: #33403d;
-  --logo-toast: #d98a1f;
-  --logo-kaya: #1fa37a;
-  --logo-lt: #d5f7ea;
-
   --sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --mono: ui-monospace, 'SF Mono', 'Cascadia Code', monospace;
 
   color-scheme: light dark;
+  accent-color: var(--primary);
   font-family: var(--sans);
-  line-height: 1.55;
-  color: var(--text);
-  background: var(--bg);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #101315;
-    --surface-2: #15191c;
-    --card-bg: #1a1f23;
-    --border: #2b3238;
-    --text: #e8ebed;
-    --muted: #99a2ab;
-    --accent: #2dd4bf;
-    --accent-soft: #0f312d;
-    --success: #4ade80;
-    --success-soft: #14301f;
-    --warning: #fbbf24;
-    --warning-soft: #3a2c10;
-    --danger: #f87171;
-    --danger-soft: #3a1717;
-    --hover: rgba(255, 255, 255, 0.06);
-    --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.5);
-    --shadow-md: 0 10px 28px -14px rgba(0, 0, 0, 0.8);
-    --logo-k: #e3ebe8;
-    --logo-toast: #f2b45c;
-    --logo-kaya: #34c79a;
-    --logo-lt: #d5f7ea;
-  }
+  font-size: 100%;
+  line-height: var(--type-body-large-line);
+  color: var(--on-surface);
+  background: var(--surface);
 }
 
 * {
@@ -71,11 +20,55 @@
 body {
   margin: 0;
   min-height: 100dvh;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--surface);
+  color: var(--on-surface);
+  font-size: var(--type-body-large-size);
+  line-height: 1.55;
 }
 
 code {
   font-family: var(--mono);
   font-size: 0.9em;
+}
+
+/* Interactive states, once for the whole app (KAN-1828). A state layer is an overlay of the
+   element's own text colour: hover 8%, pressed 10%. Components that paint their own hover/active
+   background shorthand still win, because they are more specific. */
+button:not(:disabled):hover,
+summary:hover,
+[role='tab']:hover,
+[role='button']:hover {
+  background-image: linear-gradient(var(--layer-hover), var(--layer-hover));
+}
+
+button:not(:disabled):active,
+[role='button']:active,
+[role='tab']:active {
+  background-image: linear-gradient(var(--layer-pressed), var(--layer-pressed));
+}
+
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: var(--state-disabled-content);
+  cursor: default;
+}
+
+/* One focus ring for every interactive element; the old per-component outlines still apply where a
+   component sets its own. */
+:is(button, a[href], input, select, textarea, summary, [role='button'], [role='tab'], [tabindex]):focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

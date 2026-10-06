@@ -154,7 +154,7 @@
 
   h1 {
     margin: 0 0 1rem;
-    font-size: 1.4rem;
+    font-size: var(--type-title-large-size);
   }
 
   .setting label {
@@ -166,8 +166,8 @@
 
   .help {
     margin: 0.4rem 0 0 1.6rem;
-    color: var(--muted);
-    font-size: 0.85rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-medium-size);
     line-height: 1.5;
   }
 
@@ -175,9 +175,9 @@
     display: flex;
     flex-direction: column;
     margin-top: 2rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--card-bg);
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--shape-md);
+    background: var(--surface-container-low);
   }
 
   .links a {
@@ -191,11 +191,11 @@
   }
 
   .links a + a {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--outline-variant);
   }
 
   .links a:hover {
-    background: var(--hover);
+    background: var(--layer-hover);
   }
 
   .links .name {
@@ -203,8 +203,8 @@
   }
 
   .links .hint {
-    color: var(--muted);
-    font-size: 0.8rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-medium-size);
   }
 
   @media (max-width: 599.98px) {

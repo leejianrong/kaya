@@ -339,8 +339,8 @@
     min-width: 0;
     overflow-y: auto;
     padding: 1rem 0.5rem 1.5rem;
-    background: var(--surface-2);
-    border-right: 1px solid var(--border);
+    background: var(--surface-container);
+    border-right: 1px solid var(--outline-variant);
   }
 
   .create {
@@ -349,19 +349,19 @@
 
   .new-note {
     width: 100%;
-    padding: 0.35rem 0.5rem;
-    border: 1px dashed var(--border);
-    border-radius: 0.3rem;
-    background: transparent;
-    color: var(--accent);
+    padding: 0.5rem 0.9rem;
+    border: 0;
+    border-radius: var(--shape-full);
+    background: var(--secondary-container);
+    color: var(--on-secondary-container);
     cursor: pointer;
     font: inherit;
-    font-size: 0.8rem;
+    font-size: var(--type-body-medium-size);
     text-align: left;
   }
 
   .new-note:hover {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    background: var(--layer-hover);
   }
 
   .create-form {
@@ -373,24 +373,24 @@
     flex: 1;
     min-width: 0;
     padding: 0.3rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-xs);
     background: transparent;
     color: inherit;
     font: inherit;
-    font-size: 0.8rem;
+    font-size: var(--type-body-medium-size);
   }
 
   .create-form button {
     flex: none;
     padding: 0.2rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-full);
     background: transparent;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     cursor: pointer;
     font: inherit;
-    font-size: 0.7rem;
+    font-size: var(--type-label-medium-size);
   }
 
   .search {
@@ -403,24 +403,24 @@
     flex: 1;
     min-width: 0;
     padding: 0.3rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-full);
     background: transparent;
     color: inherit;
     font: inherit;
-    font-size: 0.8rem;
+    font-size: var(--type-body-medium-size);
   }
 
   .clear-search {
     flex: none;
     padding: 0.2rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-full);
     background: transparent;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     cursor: pointer;
     font: inherit;
-    font-size: 0.7rem;
+    font-size: var(--type-label-medium-size);
   }
 
   /* The ordering notice sits exactly where the toggle was, so the swap reads as one control saying
@@ -428,8 +428,8 @@
   .ordering {
     margin: 0;
     padding: 0 0.5rem;
-    color: var(--muted);
-    font-size: 0.7rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-label-medium-size);
     line-height: 1.35;
   }
 
@@ -441,21 +441,21 @@
 
   .views button {
     padding: 0.2rem 0.55rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-full);
     background: transparent;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     cursor: pointer;
     font: inherit;
-    font-size: 0.7rem;
+    font-size: var(--type-label-medium-size);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
 
   .views button.active {
-    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-    color: var(--accent);
+    border-color: transparent;
+    background: var(--secondary-container);
+    color: var(--on-secondary-container);
   }
 
   ul {
@@ -471,7 +471,7 @@
     min-width: 0;
     padding: 0.3rem 0.5rem;
     border: 0;
-    border-radius: 0.3rem;
+    border-radius: var(--shape-md);
     background: transparent;
     color: inherit;
     font: inherit;
@@ -480,26 +480,26 @@
   }
 
   .row:hover {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    background: var(--layer-hover);
   }
 
   .row.folder {
     display: flex;
     align-items: baseline;
     gap: 0.35rem;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     cursor: pointer;
-    font-size: 0.85rem;
+    font-size: var(--type-body-medium-size);
   }
 
   .twist {
     flex: none;
-    font-size: 0.65rem;
+    font-size: var(--type-label-small-size);
   }
 
   a.row.open {
-    background: color-mix(in srgb, var(--accent) 16%, transparent);
-    color: var(--accent);
+    background: var(--secondary-container);
+    color: var(--on-secondary-container);
   }
 
   .title {
@@ -512,9 +512,9 @@
   .sub {
     display: block;
     overflow: hidden;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-family: var(--mono);
-    font-size: 0.7rem;
+    font-size: var(--type-label-medium-size);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -522,7 +522,7 @@
   .unpathed {
     margin-top: 0.5rem;
     padding-top: 0.5rem;
-    border-top: 1px dashed var(--border);
+    border-top: 1px dashed var(--outline-variant);
   }
 
   .unpathed h3 {
@@ -531,8 +531,8 @@
     align-items: baseline;
     margin: 0 0 0.15rem;
     padding: 0 0.5rem;
-    color: var(--muted);
-    font-size: 0.7rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-label-medium-size);
     font-style: italic;
     font-weight: 600;
     letter-spacing: 0.06em;
@@ -547,7 +547,7 @@
   .empty {
     margin: 0;
     padding: 0 0.5rem;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-size: 0.9rem;
   }
 
@@ -566,7 +566,7 @@
 
     .views button {
       padding: 0 1rem;
-      font-size: 0.8rem;
+      font-size: var(--type-body-medium-size);
     }
 
     .row {
