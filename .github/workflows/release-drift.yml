@@ -1,0 +1,82 @@
+name: Release drift
+
+# KAN-1763. Keeps ONE open issue, "Release needed: main is N commits ahead of vX.Y.Z", up to date
+# while main has drifted past the latest v* tag in a way that matters, and closes it once a tag
+# catches up. On 2026-09-27 main sat 14 commits and three weeks ahead of the last tag, so the live
+# deploy ran pre-cutover code and nothing said so.
+#
+# THIS WORKFLOW NEVER TAGS AND NEVER DEPLOYS. A tag is a human decision (release.yml's header says
+# the same); this only reports. The decision itself is `scripts/lib/release_drift.py`, a pure
+# function pinned by kaya-client/tests/test_release_drift.py. Rules: open when a commit since the
+# tag touched the deploy-sensitive surface, or when the tag is over 7 days old and a commit changed
+# shipped code. Docs-only drift does not count.
+#
+# Scheduled workflows run only from the default branch, so the issue-writing path is first proven
+# by a `workflow_dispatch` after this lands on main.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  schedule:
+    # Mondays, 22:23 UTC. The weekly run is what catches a quiet repo that crosses the 7-day line
+    # with no push to trigger it.
+    - cron: "23 22 * * 0"
+  workflow_dispatch:
+
+# issues: write is the whole point and the only write. Nothing here can push, tag or deploy.
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: release-drift
+  cancel-in-progress: false
+
+env:
+  # The issue is found by label, not title: the title carries the commit count and changes.
+  ISSUE_LABEL: release-drift
+
+jobs:
+  drift:
+    name: Compare main with the latest tag
+    runs-on: ubuntu-latest
+    steps:
+      # Full history and tags: the script counts commits since the latest v* tag.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Decide
+        run: python3 scripts/lib/release_drift.py | tee "$RUNNER_TEMP/decision.json"
+
+      - name: Open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          action=$(jq -r .action "$RUNNER_TEMP/decision.json")
+          title=$(jq -r .title "$RUNNER_TEMP/decision.json")
+          jq -r .body "$RUNNER_TEMP/decision.json" > "$RUNNER_TEMP/body.md"
+          number=$(gh issue list --label "$ISSUE_LABEL" --state open --json number --jq '.[0].number // empty')
+
+          case "$action" in
+            open)
+              gh label create "$ISSUE_LABEL" --color FBCA04 \
+                --description "Raised by .github/workflows/release-drift.yml" 2>/dev/null || true
+              if [ -n "$number" ]; then
+                gh issue edit "$number" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+              else
+                gh issue create --title "$title" --label "$ISSUE_LABEL" --body-file "$RUNNER_TEMP/body.md"
+              fi
+              ;;
+            close)
+              if [ -n "$number" ]; then
+                gh issue close "$number" --comment "A tag has caught up with main."
+              fi
+              ;;
+            *)
+              echo "No release due; leaving any open issue as it is."
+              ;;
+          esac

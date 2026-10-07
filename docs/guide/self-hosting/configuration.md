@@ -19,8 +19,8 @@ fixtures already use. Every other application setting carries a `KAYA_` prefix.
 | `DATABASE_URL` | `postgresql+psycopg://kaya:kaya@localhost:5432/kaya` | Point this at your own Postgres. The `+psycopg` suffix selects psycopg v3 — [ADR 0001](https://github.com/leejianrong/kaya/blob/main/docs/adr/0001-stack-inherited-from-pandan.md) pins it, and it is not interchangeable with `+psycopg2`. |
 | `KAYA_GITHUB_OAUTH_CLIENT_ID` | unset | Client id of your own GitHub OAuth App. Its callback URL is `<origin>/auth/github/callback`. Not shared with pandan's App. Unset means the GitHub sign-in routes don't register and nobody can sign in through the browser. |
 | `KAYA_GITHUB_OAUTH_CLIENT_SECRET` | unset | Paired with the id above. A credential, never logged. Both must be set to enable sign-in. |
-| `KAYA_AUTH_SECRET` | an insecure development value | Signs the OAuth state token and session cookies, and peppers the hash of every `kaya_pat_…` token. Set a long random value in production. Rotating it invalidates every cookie session and every token. |
-| `KAYA_COOKIE_SECURE` | off | `1` or `true` marks the session cookie `Secure`. Set it when you serve over HTTPS. |
+| `KAYA_AUTH_SECRET` | an insecure development value | Signs the OAuth state token and session cookies, and peppers the hash of every `kaya_pat_…` token. Set a long random value (at least 32 characters, for example `openssl rand -hex 32`) in production. Rotating it invalidates every cookie session and every token. |
+| `KAYA_COOKIE_SECURE` | off | `1` or `true` marks the session cookie `Secure`. Set it when you serve over HTTPS. It also marks the deployment as production: with it on, kaya refuses to start while `KAYA_AUTH_SECRET` is the insecure default or shorter than 32 characters, and logs a CRITICAL line (never the value) when the GitHub OAuth id or secret is unset. |
 
 kaya mints its own tokens and verifies them against its own tables
 ([ADR 0012](https://github.com/leejianrong/kaya/blob/main/docs/adr/0012-standalone-identity.md)),

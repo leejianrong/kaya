@@ -513,6 +513,8 @@ password).
 
 ## Part 3 — release process detail
 
+Deploy guards (release drift issue, Settings dispositions table, boot-time secret check, KAN-1763) and the post-merge and post-deploy checklists: [`docs/runbooks/deploy-checklist.md`](runbooks/deploy-checklist.md).
+
 **The GLIBC floor (KAN-719).** PyInstaller copies the interpreter uv resolved rather than compiling
 one, so the asset's glibc floor is the floor of the frozen `libpython`. `ubuntu-latest`'s preinstalled
 CPython 3.12 requires `GLIBC_2.38`, which died on Ubuntu 22.04/Debian 12/RHEL 9/Amazon Linux 2023 —

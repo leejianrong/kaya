@@ -33,6 +33,11 @@ primary_region = "iad"
   # KAYA_PANDAN_URL is not (app/config.py's own docstring: it appears verbatim in a 503 body), so
   # it lives here in plain sight rather than in `fly secrets`.
   KAYA_PANDAN_URL = "https://simple-kanban-jian.fly.dev"
+  # Production serves HTTPS only, so the session cookie is Secure. This is also the signal that
+  # arms the boot guard (backend/app/boot_guard.py): with it set, the app refuses to start on the
+  # default or a short KAYA_AUTH_SECRET. Every Settings field's disposition is in
+  # backend/tests/unit/settings_dispositions.py.
+  KAYA_COOKIE_SECURE = "true"
 
 [http_service]
   internal_port = 8000
