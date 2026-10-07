@@ -1,6 +1,10 @@
 # ADR 0002 — Pandan is the identity provider; kaya resolves tokens by introspection
 
-- **Status:** Accepted
+- **Status:** **Superseded by [ADR 0012](0012-standalone-identity.md)** (2026-09-25, EPIC-283).
+  Kaya now mints and verifies its own credentials; the introspection path this ADR describes was
+  fully retired in KAN-1740 (`app/auth/resolver.py`, `cache.py`, `upstream.py`, and the JIT
+  pandan-mirror `user` table are all deleted, not left dormant). Kept below verbatim as the
+  historical record of why the original decision was made — read ADR 0012 for the current design.
 - **Date:** 2026-08-01
 - **Deciders:** Jian (fork F1, decided from a written options brief)
 - **Context source:** [`kaya-vision.md`](../kaya-vision.md) §"The integration contract (settle this

@@ -69,8 +69,6 @@ describe('the component harness', () => {
 
     expect(target.querySelector('nav')).not.toBeNull()
     expect(target.textContent).toContain('Weekly review')
-    // Not `querySelector('a')`: KAN-1050's "Graph" link is the first anchor in the sidebar now, so
-    // this asks for the note row specifically.
     expect(target.querySelector('a[href^="/notes/"]')?.getAttribute('href')).toBe('/notes/NOTE-6')
   })
 
@@ -240,11 +238,16 @@ describe("PLAN §S9's editor container", () => {
 })
 
 describe('the shell', () => {
-  it('says whether a credential is set, and never a fragment of one', () => {
+  it('never leaks a fragment of a set credential into the rendered shell', () => {
+    // KAN-1791 deleted the header's own `token set`/`token not set` readout along with "Clear
+    // token" — `lib/auth.ts`'s `credentialState()` is still the only thing allowed to describe a
+    // credential to a person, and `tests/auth.test.ts` already sweeps everything *it* exposes. What
+    // is still this file's job is the same sweep run over the shell's own rendered output, so a
+    // future surface that renders the token into a `<p>` (the trap KAN-555 met once already) is
+    // still caught here rather than only at the seam.
     auth.setToken(FAKE_TOKEN)
-    const target = render(App, {})
+    render(App, {})
 
-    expect(target.querySelector('[data-testid="credential-state"]')?.textContent).toBe('token set')
     for (let start = 0; start + 4 <= FAKE_TOKEN.length; start += 1) {
       expect(document.body.innerHTML).not.toContain(FAKE_TOKEN.slice(start, start + 4))
     }
@@ -253,11 +256,12 @@ describe('the shell', () => {
   it('shows the landing state instead of the note list when there is no credential', () => {
     // KAN-555 replaced the one honest paragraph this used to assert with the real landing state.
     // What is asserted here is the *shell's* half only — no sidebar, and a landing region present —
-    // because everything about the paste form, the pandan link and the `401` recovery lives in
-    // `tests/landing.test.ts`, which is also where the fragment sweep over those surfaces lives.
+    // because everything about the GitHub sign-in button, the pandan link and the `401` recovery
+    // lives in `tests/landing.test.ts`. KAN-1791 removed the paste form this used to also check for;
+    // there is no credential-typing surface left in the shell at all.
     const target = render(App, {})
     expect(target.querySelector('.landing')).not.toBeNull()
-    expect(target.querySelector('[data-testid="paste-form"]')).not.toBeNull()
+    expect(target.querySelector('[data-testid="github-signin"]')).not.toBeNull()
     expect(target.querySelector('nav')).toBeNull()
   })
 
@@ -275,8 +279,60 @@ describe('the shell', () => {
 })
 
 /**
- * KAN-1157: the authenticated topbar's link to pandan, resolved through the same
- * `resolvePandanHref` (KAN-1156) `Landing.svelte` already uses. `App.svelte` reaches the network
+ * KAN-1739: `/tokens` is reachable with **no** pasted credential — the one deliberate exception to
+ * "everything but the shell needs one" the rest of this file's `authed` assertions establish.
+ * `Tokens.svelte`'s own network calls are exercised fully in `tests/tokens-page.test.ts`; what's
+ * asserted here is only the routing claim `App.svelte` itself is responsible for.
+ */
+describe('the /tokens route (KAN-1739)', () => {
+  const realFetch = globalThis.fetch
+  const realPathname = window.location.pathname
+
+  beforeEach(() => {
+    // Answered generically so this describe block is about routing, not about `Tokens.svelte`'s
+    // own fetch shapes (already covered in `tests/tokens-page.test.ts`).
+    globalThis.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ error: { code: 'unauthorized', message: 'no' } }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    ) as unknown as typeof fetch
+    window.history.pushState({}, '', '/tokens')
+  })
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    window.history.pushState({}, '', realPathname)
+  })
+
+  it('renders the tokens page instead of the landing state, with no credential set', () => {
+    const target = render(App, {})
+
+    expect(target.querySelector('.landing')).toBeNull()
+    expect(target.querySelector('[data-testid="paste-form"]')).toBeNull()
+    expect(target.textContent).toContain('Tokens')
+  })
+
+  it('still renders the tokens page for a visitor who does have a pasted credential', () => {
+    auth.setToken(FAKE_TOKEN)
+    const target = render(App, {})
+
+    expect(target.querySelector('.landing')).toBeNull()
+    expect(target.textContent).toContain('Tokens')
+  })
+
+  it('the header no longer carries a Tokens link (KAN-1818: it lives under Settings)', () => {
+    const withoutCredential = render(App, {})
+    expect(withoutCredential.querySelector('.tokens-link')).toBeNull()
+    expect(withoutCredential.querySelector('.topbar a[href="/tokens"]')).toBeNull()
+  })
+})
+
+/**
+ * KAN-1157: the link to pandan, resolved through the same `resolvePandanHref` (KAN-1156)
+ * `Landing.svelte` uses. KAN-1818 moved it from the topbar to the Settings page, so these tests
+ * open `/settings`; the claims (hidden when unset/unsafe/unreachable, never for a visitor with no
+ * credential) are unchanged. The `App` reaches the network
  * through the ambient `fetch` with no injected seam, the same reason `tests/landing.test.ts` stubs
  * `globalThis.fetch` rather than mocking `lib/meta.ts` directly — a mock of the module would not
  * notice a change to the request URL or shape.
@@ -295,7 +351,10 @@ describe('the pandan nav link (KAN-1157)', () => {
   /** Every request this describe block's App instances make, other than `/api/v1/meta`, answered
    * with an empty note list — nothing here is about the sidebar, and an unmocked `/api/v1/notes`
    * would just be a second, unrelated failure logged into `failure`. */
+  const realPathname = window.location.pathname
+
   function stubFetch(meta: () => Response | Promise<Response>): void {
+    window.history.pushState({}, '', '/settings')
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url === '/api/v1/meta') {
@@ -310,6 +369,7 @@ describe('the pandan nav link (KAN-1157)', () => {
 
   afterEach(() => {
     globalThis.fetch = realFetch
+    window.history.pushState({}, '', realPathname)
   })
 
   /** Poll until `predicate` holds, flushing Svelte between attempts — `resolvePandanHref` resolves
@@ -354,7 +414,7 @@ describe('the pandan nav link (KAN-1157)', () => {
     // Matches `Landing.svelte`'s own pandan link (`tests/landing.test.ts`), rather than the bare
     // `noopener` the card's one-line description names — one convention for one destination.
     expect(link.getAttribute('rel')).toBe('noopener noreferrer')
-    expect(link.textContent?.trim()).toBe('pandan')
+    expect(link.textContent?.trim()).toMatch(/^pandan/)
   })
 
   it('is hidden entirely, not shown-and-disabled, when meta resolves to no pandan', async () => {
@@ -437,5 +497,250 @@ describe('the pandan nav link (KAN-1157)', () => {
     await settle()
 
     expect(host.querySelector('[data-testid="pandan-link"]')).toBeNull()
+  })
+})
+
+describe('the nav column', () => {
+  const realFetch = globalThis.fetch
+  const realPathname = window.location.pathname
+
+  function jsonResponse(status: number, body: unknown): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  /** `/api/v1/meta` and `/users/me` both answered emptily — nothing in this block is about the
+   * pandan link or `Tokens.svelte`'s own cookie session, both already covered elsewhere. */
+  beforeEach(() => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/v1/notes') {
+        return jsonResponse(200, { notes: [] })
+      }
+      if (url === '/api/v1/meta') {
+        return jsonResponse(200, { pandan_url: null })
+      }
+      return jsonResponse(404, { error: { code: 'not_found', message: `nothing fake at ${url}` } })
+    }) as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+    window.history.pushState({}, '', realPathname)
+  })
+
+  async function until(predicate: () => boolean, label: string): Promise<void> {
+    for (let turn = 0; turn < 400; turn += 1) {
+      flushSync()
+      if (predicate()) {
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    throw new Error(`timed out waiting for ${label}`)
+  }
+
+  it('is absent with no credential — nothing to switch between beside a sign-in page', () => {
+    const target = render(App, {})
+    expect(target.querySelector('[data-testid="nav-column"]')).toBeNull()
+  })
+
+  it('renders once authenticated, with Notes active on the home route', async () => {
+    auth.setToken(FAKE_TOKEN)
+    const target = render(App, {})
+    await until(() => target.querySelector('[data-testid="nav-column"]') !== null, 'the nav column')
+
+    expect(target.querySelector('[data-testid="nav-item-notes"]')?.getAttribute('aria-current')).toBe(
+      'page',
+    )
+    expect(target.querySelector('[data-testid="nav-item-graph"]')?.getAttribute('aria-current')).toBeNull()
+    expect(target.querySelector('[data-testid="nav-item-settings"]')?.getAttribute('aria-current')).toBeNull()
+    expect(target.querySelector('[data-testid="nav-item-tokens"]')).toBeNull()
+  })
+
+  it('marks Graph active on the /graph route', async () => {
+    window.history.pushState({}, '', '/graph')
+    auth.setToken(FAKE_TOKEN)
+    const target = render(App, {})
+    await until(() => target.querySelector('[data-testid="nav-column"]') !== null, 'the nav column')
+
+    expect(target.querySelector('[data-testid="nav-item-graph"]')?.getAttribute('aria-current')).toBe(
+      'page',
+    )
+    expect(target.querySelector('[data-testid="nav-item-notes"]')?.getAttribute('aria-current')).toBeNull()
+  })
+
+  it('still renders, with Settings active, on the /tokens route — no sidebar there to anchor to', async () => {
+    window.history.pushState({}, '', '/tokens')
+    auth.setToken(FAKE_TOKEN)
+    const target = render(App, {})
+    await until(() => target.querySelector('[data-testid="nav-column"]') !== null, 'the nav column')
+
+    expect(target.querySelector('[data-testid="nav-item-settings"]')?.getAttribute('aria-current')).toBe(
+      'page',
+    )
+    expect(target.querySelector('.sidebar')).toBeNull()
+  })
+
+  it('navigates to /graph without a reload when clicked', async () => {
+    auth.setToken(FAKE_TOKEN)
+    const target = render(App, {})
+    await until(() => target.querySelector('[data-testid="nav-column"]') !== null, 'the nav column')
+
+    target.querySelector<HTMLAnchorElement>('[data-testid="nav-item-graph"]')!.click()
+    await until(() => window.location.pathname === '/graph', 'the route to change')
+
+    expect(target.querySelector('[data-testid="nav-item-graph"]')?.getAttribute('aria-current')).toBe(
+      'page',
+    )
+  })
+})
+
+describe('the mount-time session check (KAN-1791)', () => {
+  // Replaces the silent cookie-to-bearer bootstrap PR #178 (`86e6e1a`) added: `apiRequest` now
+  // trusts a live `kayaauth` cookie directly for every note-API call (ADR 0012), so there is no
+  // longer any need to mint and stash a `kaya_pat_…` bearer just to satisfy a precheck that no
+  // longer exists. What is still needed is a way to tell "cookie-only session, reached by reload"
+  // apart from "genuinely logged out" — that's `fetchCurrentUser()` (`lib/identity.ts`), asked once.
+  const realFetch = globalThis.fetch
+
+  function jsonResponse(status: number, body: unknown): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  afterEach(() => {
+    globalThis.fetch = realFetch
+  })
+
+  async function until(predicate: () => boolean, label: string): Promise<void> {
+    for (let turn = 0; turn < 400; turn += 1) {
+      flushSync()
+      if (predicate()) {
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    throw new Error(`timed out waiting for ${label}`)
+  }
+
+  async function settle(): Promise<void> {
+    for (let turn = 0; turn < 12; turn += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      flushSync()
+    }
+  }
+
+  it('reaches the note list from a live cookie session alone, with no bearer ever minted', async () => {
+    let tokenPosts = 0
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      if (url === '/api/v1/tokens' && method === 'POST') {
+        // Must never be reached: minting a bearer is exactly what this fix removes.
+        tokenPosts += 1
+        return jsonResponse(201, { error: { code: 'should_not_happen', message: 'unexpected' } })
+      }
+      if (url === '/users/me' && method === 'GET') {
+        return jsonResponse(200, { id: 'u1', email: 'jian@example.test' })
+      }
+      if (url === '/api/v1/notes') {
+        return jsonResponse(200, { notes: [note()] })
+      }
+      if (url === '/api/v1/meta') {
+        return jsonResponse(200, { pandan_url: null })
+      }
+      return jsonResponse(404, { error: { code: 'not_found', message: `nothing fake at ${url}` } })
+    }) as unknown as typeof fetch
+
+    expect(auth.credentialState()).toBe('not set')
+    const target = render(App, {})
+
+    await until(() => (target.textContent ?? '').includes('Weekly review'), 'the note list')
+
+    // The whole point: the note list is reachable and `sessionStorage` was never touched to get
+    // there — a cookie-only session stays cookie-only.
+    expect(auth.credentialState()).toBe('not set')
+    expect(tokenPosts).toBe(0)
+    expect(target.querySelector('.landing')).toBeNull()
+    expect(target.querySelector('[data-testid="nav-column"]')).not.toBeNull()
+  })
+
+  it('renders directly from an existing bearer, with no /users/me round trip at all', async () => {
+    let usersMeCalls = 0
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/users/me') {
+        usersMeCalls += 1
+        return jsonResponse(200, { id: 'u1', email: 'jian@example.test' })
+      }
+      if (url === '/api/v1/notes') {
+        return jsonResponse(200, { notes: [note()] })
+      }
+      if (url === '/api/v1/meta') {
+        return jsonResponse(200, { pandan_url: null })
+      }
+      return jsonResponse(404, { error: { code: 'not_found', message: `nothing fake at ${url}` } })
+    }) as unknown as typeof fetch
+
+    auth.setToken(FAKE_TOKEN)
+    const target = render(App, {})
+
+    await until(() => (target.textContent ?? '').includes('Weekly review'), 'the note list')
+    await settle()
+
+    // A bearer already in the tab is a known-good signal on its own — asking `/users/me` about it
+    // too would be a redundant round trip on every single page load.
+    expect(usersMeCalls).toBe(0)
+  })
+
+  it('stays on the landing state when there is no live cookie session either', async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/users/me') {
+        return jsonResponse(401, { error: { code: 'unauthorized', message: 'not signed in' } })
+      }
+      return jsonResponse(404, { error: { code: 'not_found', message: `nothing fake at ${url}` } })
+    }) as unknown as typeof fetch
+
+    const target = render(App, {})
+    await settle()
+
+    expect(auth.credentialState()).toBe('not set')
+    expect(target.querySelector('.landing')).not.toBeNull()
+  })
+
+  it('asks /users/me exactly once per mount, even once a later 401 flips `authed` back', async () => {
+    // The guard this test pins: an effect keyed on `authed` alone would refire the moment a real
+    // `401` (`discard()`, `App.svelte`) flips it back to `false`, and a rerun at that exact moment
+    // would re-ask a session check that has nothing to do with the request that just failed.
+    let usersMeCalls = 0
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/users/me') {
+        usersMeCalls += 1
+        return jsonResponse(200, { id: 'u1', email: 'jian@example.test' })
+      }
+      if (url === '/api/v1/notes') {
+        return jsonResponse(401, { error: { code: 'invalid_token', message: 'no longer valid' } })
+      }
+      if (url === '/api/v1/meta') {
+        return jsonResponse(200, { pandan_url: null })
+      }
+      return jsonResponse(404, { error: { code: 'not_found', message: `nothing fake at ${url}` } })
+    }) as unknown as typeof fetch
+
+    const target = render(App, {})
+    // The cookie session check succeeds (authed flips true), then the note list's own request comes
+    // back 401 and `discard()` flips it straight back to false.
+    await until(() => target.querySelector('.landing') !== null, 'the landing state to return')
+
+    expect(usersMeCalls).toBe(1)
+    await settle()
+    expect(usersMeCalls).toBe(1)
   })
 })

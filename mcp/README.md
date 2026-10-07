@@ -12,6 +12,24 @@ layer. KAN-964 deleted it: KAN-566 landed all three layers, so the refusal was n
 sequencing gap. **This package now invents no failure of its own**, which is what ADR 0004's arrow
 predicts of a thin adapter — every failure a tool can raise is a `kaya_client` one.
 
+## Two transports, one tool registry, since KAN-1744
+
+`src/kaya_mcp/server.py`'s `server` instance is served over **stdio** (`kaya-mcp`, one local
+subprocess per user, `__main__.py`'s only job) and, since ADR 0013/0014, over **Streamable HTTP** —
+mounted at `/mcp` on kaya's own backend (`backend/app/identity/mcp_host.py`), reachable from a
+hosted client (Claude.ai, ChatGPT, Cursor) that cannot spawn a local subprocess. It is the *same*
+six tools either way; nothing here forked for the hosted case.
+
+The one thing that does differ is how a tool call gets its `KayaClient`: the stdio transport is one
+process per user, so `tools.py`'s `_client()` falls back to `open_client()`'s env-var-configured
+singleton exactly as before KAN-1744. The hosted transport is one process serving every caller, so
+`mcp_host.py`'s bearer-auth middleware stashes the validated caller's own token in a per-request
+contextvar (`src/kaya_mcp/request_auth.py`) before a tool ever runs, and `_client()` builds a fresh
+`KayaClient` from that instead — see that module's own docstring for the full bridge. Auth itself is
+kaya's backend's job, not this package's or the MCP SDK's: `mcp_host.py` validates a bearer against
+`personal_access_token` directly, never standing up a second, parallel authorization server inside
+the SDK.
+
 ## The direction: `MCP ⊆ CLI`
 
 **This is the one place that states it.** Every other document in this repo links here rather than
@@ -55,9 +73,13 @@ marked ¹ for why that is not a shortcut:
 | `list_notes` | `list_notes()` | `kaya note list` |
 | `get_note` | `get_note(ref)` | `kaya note get <ref>` |
 | `create_note` | `create_note(...)` | `kaya note create <title>` |
-| `edit_note` | `update_note(...)` | `kaya note edit <ref>` |
+| `edit_note` | `update_note(...)` | `kaya note edit <ref>`² |
 | `search_notes` | `list_notes(q)` | `kaya note list --q <term>`¹ |
 | `get_backlinks` | `backlinks(ref)` | `kaya backlinks <ref>` |
+
+² `edit_note(format=True)` is `kaya note format <ref>` (KAN-1816): the same `PATCH` with the server's
+formatter on, never implicit. `tests/test_cli_parity.py` pins that the argument exists and the verb
+does. The format operation folds into ADR 0015's operation list when that lands (see its amendment).
 
 ¹ The only row where the tool name and the CLI word differ, and the only one where two tools share a
 client method: there is no separate search call, because `GET /api/v1/notes?q=` answers with the same
@@ -129,6 +151,10 @@ Measured on these six tools, `o200k_base`, re-runnable with
 | input schemas only | 1,633 → 1,022 (−37.4%) | 428 → 265 (−38.1%) |
 | whole `tools/list` reply | 3,701 → 3,090 (−16.5%) | 948 → 785 (−17.2%) |
 
+KAN-1816 added one boolean (`edit_note.format`) and one docstring line, still six tools. Same script,
+`o200k_base`: input schemas 428 → 275 (−35.7%), whole reply 4,037 → 3,227 bytes, **948 → 819
+tokens (−13.6%)**, i.e. **+34 resident tokens** over the 785 above, which is the new ceiling.
+
 **Read the second row, and read it beside the other number.** The first row is the biggest honest
 percentage and the narrower thing — it is what changed, not what a host holds. The second is the
 whole reply a host keeps resident, tool descriptions included, which compaction does not touch; it
@@ -146,15 +172,15 @@ real kaya tool *call* costs through kaya's own MCP server against kaya's own not
 which is the number this section reports.
 
 Unlike schema compaction, a tool call needs I/O a static `tools/list` does not: a live kaya backend,
-a real pandan PAT, and a real `kaya-mcp` subprocess talked to over stdio — the same transport
+a real `kaya_pat_…` token, and a real `kaya-mcp` subprocess talked to over stdio — the same transport
 `scripts/verify_stdio_image.py` drives against a built image, here against `python -m kaya_mcp` so
 no image is needed. `scripts/measure_read_payload.py` is that script, and its own docstring is why
 it is a script and not a test: there is no hosted kaya (ADR 0010) to run it against in CI, and no
 committed fixture corpus realistic enough to make truncation's effect honest, so wiring it into
 `make check` would mean either standing up a stack on every push for a number that does not move
 between runs, or teaching CI a secret it does not otherwise need. It follows `make measure-auth`'s
-contract instead: reads a credential (`KAYA_MCP_MEASURE_PAT`, falling back to
-`~/.config/pandan/config.toml`), never prints it, and exits 0 having done nothing when the target
+contract instead: reads a credential (`KAYA_MCP_MEASURE_PAT`; the script's fallback of
+`~/.config/pandan/config.toml` predates ADR 0012 and no longer authenticates, so set the variable), never prints it, and exits 0 having done nothing when the target
 backend or the credential is absent.
 
 Measured 2026-08-20 against an isolated stack (`COMPOSE_PROJECT_NAME=kaya-measure KAYA_DB_PORT=5443
@@ -162,10 +188,10 @@ KAYA_APP_PORT=8023 make up` — never the shared dev stack on :8010/:5434) seede
 realistic, non-uniform multi-paragraph markdown (`--seed-notes 40`; corpus shape: mean body 1,382
 chars, range 630–2,221 — close to `kaya-client/scripts/measure_toon_delta.py`'s own 40-note, 1,351-
 mean corpus, so the percentage below is not an artifact of one-line placeholders), driven with a
-real pandan PAT and re-runnable with:
+real `kaya_pat_…` token and re-runnable with:
 
 ```bash
-KAYA_MCP_MEASURE_URL=http://localhost:8023 KAYA_MCP_MEASURE_PAT=<a real pandan PAT> \
+KAYA_MCP_MEASURE_URL=http://localhost:8023 KAYA_MCP_MEASURE_PAT=<a real kaya_pat_… token> \
   uv run --with tiktoken python scripts/measure_read_payload.py --markdown
 ```
 

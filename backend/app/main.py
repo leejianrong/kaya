@@ -9,9 +9,13 @@ the observability layer and the SPA are all installable onto a bare ``FastAPI()`
 stand up the real surface without the real settings.
 """
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.routing import Route
 
 from app import __version__
 from app.api import (
@@ -22,10 +26,48 @@ from app.api import (
     links_router,
     meta_router,
     note_claim_router,
+    pandan_link_router,
+    preferences_router,
+    tokens_router,
 )
 from app.api import router as api_router
-from app.observability import install_observability
+from app.boot_guard import credential_problems
+from app.config import get_settings
+from app.identity import (
+    device_auth_router,
+    install_identity_routes,
+    oauth_authorize_router,
+    oauth_metadata_router,
+    oauth_register_router,
+    oauth_server_metadata_router,
+)
+
+# Imported directly, not via `app.identity`'s own `__init__.py` — see that file's comment on
+# `mcp_host` for the circular-import reason this one line has to come after every other
+# `app.identity`/`app.api` import above has already run.
+from app.identity.mcp_host import hosted_mcp_app, hosted_mcp_lifespan
+from app.observability import get_logger, install_observability
 from app.spa import mount_spa
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Enters `hosted_mcp_lifespan` (ADR 0014, KAN-1744) for the duration of this app's own — see
+    `app/identity/mcp_host.py`'s module docstring for why the hosted MCP transport needs its own
+    lifespan entered explicitly rather than inheriting this one for free.
+
+    Also runs the credential guard (KAN-1763, `app/boot_guard.py`) before anything serves: a fatal
+    problem logs CRITICAL naming the setting (never its value) and raises, so a production deploy
+    on a default secret fails its health check instead of running."""
+    problems = credential_problems(get_settings())
+    for problem in problems:
+        get_logger("startup").critical(problem.message, extra={"setting": problem.setting})
+    fatal = [p.setting for p in problems if p.fatal]
+    if fatal:
+        raise RuntimeError(f"refusing to boot: insecure production settings: {', '.join(fatal)}")
+    async with hosted_mcp_lifespan():
+        yield
+
 
 app = FastAPI(
     title="kaya",
@@ -33,6 +75,7 @@ app = FastAPI(
     version=__version__,
     docs_url="/docs",
     openapi_url="/openapi.json",
+    lifespan=_lifespan,
 )
 
 # KAN-963. Every bundle figure this project has ever quoted (ADR 0001 §2's obligation, and every
@@ -94,8 +137,9 @@ app.include_router(api_router)
 app.include_router(links_router)
 
 # KAN-1049's `/embeds/board`. A third router under `/api/v1` for the reason `app/api/embeds.py`
-# argues: it is authenticated but, unlike every route on `api_router` and unlike `links_router`,
-# it holds no database session at all.
+# argues: since `KAN-1741` it resolves the caller's kaya identity to look up their linked pandan
+# PAT, so it reads as itself in its own module rather than growing a conditional inside
+# `notes.py`/`links.py`.
 app.include_router(embeds_router)
 
 # KAN-1050's `/graph`. A fourth router under `/api/v1` for the reason `app/api/graph.py` argues: it
@@ -121,6 +165,58 @@ app.include_router(note_claim_router)
 # in front of it, and that difference should be visible where the surface is composed rather than
 # only inside the module — `app/api/meta.py` has the argument for why it is safe.
 app.include_router(meta_router)
+
+# ADR 0012 (KAN-1738): kaya's own `/auth/*` + `/users/*`, unversioned like `/health` — see
+# `app/identity/router.py` for why (session/identity plumbing, not a versioned API resource,
+# mirroring pandan ADR 0011's placement). Graceful boot without credentials: unset
+# `KAYA_GITHUB_OAUTH_CLIENT_ID`/`_SECRET` and the GitHub routes simply don't register, same as
+# every other optional integration this module composes.
+install_identity_routes(app)
+
+# ADR 0013 (KAN-1743): `/auth/device/*`, RFC 8628 device-flow login. Unversioned like every other
+# `/auth/*` route, for the same reason `install_identity_routes` is — see
+# `app/identity/device_auth.py`'s module docstring. Registration order is immaterial against every
+# other router: no other route matches `/auth/device` or `/auth/device/{user_code}`.
+app.include_router(device_auth_router)
+
+# ADR 0012 (KAN-1739): `/api/v1/tokens`. A seventh router under `/api/v1` for the reason
+# `app/api/tokens.py` argues: it is the one route group here gated on kaya's own cookie-session
+# identity specifically, rather than `get_principal`'s cookie-or-`kaya_pat_…` pair every other route
+# under `api_router` resolves through since `KAN-1740`. Registration order is immaterial against
+# every other router — no other route matches `/tokens` or `/tokens/{token_id}`.
+app.include_router(tokens_router)
+
+# ADR 0012's amendment (KAN-1741): `/api/v1/pandan-link`. An eighth router under `/api/v1` for the
+# same reason `tokens_router` is its own — `app/api/pandan_link.py`'s module docstring has the
+# argument. Registration order is immaterial against every other router — no other route matches
+# `/pandan-link`.
+app.include_router(pandan_link_router)
+
+# KAN-1815: `/api/v1/preferences` — per-account settings. No other route matches `/preferences`.
+app.include_router(preferences_router)
+
+# ADR 0014 (KAN-1744): RFC 7591 DCR (`/auth/register`) and the authorization_code+PKCE grant
+# (`/auth/authorize*`) — the browser-redirect flow a hosted MCP client completes, sharing
+# `device_auth_router`'s token endpoint (`POST /auth/device/token`, extended for
+# `grant_type=authorization_code`) rather than adding a second one. Registration order is
+# immaterial against every other router — no other route matches `/auth/register` or
+# `/auth/authorize`.
+app.include_router(oauth_register_router)
+app.include_router(oauth_authorize_router)
+
+# ADR 0013/0014 (KAN-1744): RFC 9728 protected-resource metadata and RFC 8414 authorization-server
+# metadata — the two discovery documents a cold MCP client reads before it can even start the
+# authorization_code grant above. Unversioned `.well-known` paths, not `/api/v1`.
+app.include_router(oauth_metadata_router)
+app.include_router(oauth_server_metadata_router)
+
+# ADR 0013/0014 (KAN-1744): the hosted MCP endpoint itself. A plain `Route`, not `include_router`
+# or `app.mount` — see `app/identity/mcp_host.py`'s module docstring for why a `Mount` breaks a
+# bare `POST /mcp`, and why this ASGI app (not a FastAPI dependency) is the auth chokepoint for
+# everything under this one path. Registered before `mount_spa` below, so a request to exactly
+# `/mcp` reaches this rather than the SPA's catch-all — `app/spa.py`'s own `RESERVED_PREFIXES`
+# is the structural guard that a sub-path under `/mcp` still 404s instead of becoming a deep link.
+app.router.routes.append(Route("/mcp", hosted_mcp_app))
 
 
 class Health(BaseModel):

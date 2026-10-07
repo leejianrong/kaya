@@ -1,14 +1,15 @@
-"""``/api/v1/notes`` end to end: real routes, real Postgres, real HTTP. Only pandan is faked.
+"""``/api/v1/notes`` end to end: real routes, real Postgres, real HTTP.
 
 This is SLICES §V1's end-to-end list, minus the one row another card owns (`k3d` is KAN-538).
 Everything reaches the app the way a caller does — through Starlette's `Authorization` parsing, the
-principal resolver, the ref resolver and a JSON body — so what is asserted is the wire contract
-rather than a function's return value.
+ref resolver and a JSON body — so what is asserted is the wire contract rather than a function's
+return value. Identity resolution itself is faked (`auth_helpers.override_get_principal`, KAN-1740)
+since KAN-1740 retired the only seam worth mocking there — see that module's docstring — so what
+this file actually exercises is note *authorization*, unaffected by that cutover.
 
-**No real PAT, and CI never needs one.** ADR 0002 made the upstream a Protocol so pandan could be
-faked at exactly this seam; the fixtures below inject a dict. The token strings are deliberately
-shapeless, because kaya has no token format and a PAT-shaped fixture would quietly assert the
-opposite (and trip ``scripts/secret-scan.sh``, correctly).
+**No real PAT, and CI never needs one.** The token strings are deliberately shapeless, because a
+PAT-shaped fixture would quietly assert kaya verifies a bearer by its *shape*, which it does not —
+and would trip ``scripts/secret-scan.sh``, correctly.
 
 **No ``import app.*`` at module top** — see the package docstring, and pandan's PR #17 trap.
 """
@@ -23,6 +24,8 @@ from urllib.parse import quote
 import pytest
 from sqlalchemy import text
 
+from tests.integration.auth_helpers import override_get_principal, seed_kaya_account
+
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 ALICE_TOKEN = "a-caller-supplied-string-kaya-does-not-parse"
@@ -31,16 +34,6 @@ ALICE_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
 BOB_ID = uuid.UUID("22222222-2222-4222-8222-222222222222")
 
 NOTES = "/api/v1/notes"
-
-
-class FakeUpstream:
-    """Pandan, faked at the HTTP boundary. Kaya still holds no credential of its own."""
-
-    def __init__(self) -> None:
-        self.known: dict[str, Any] = {}
-
-    def introspect(self, bearer: str) -> Any:
-        return self.known.get(bearer)
 
 
 def _alembic_config() -> Any:
@@ -52,80 +45,63 @@ def _alembic_config() -> Any:
 
 
 @pytest.fixture
-def upstream() -> FakeUpstream:
-    return FakeUpstream()
+def known_principals() -> dict[str, Any]:
+    return {}
 
 
 @pytest.fixture
-def client(database_url: str, upstream: FakeUpstream) -> Iterator[Any]:
-    """The **real** app — ``app.main.app``, router and error handlers — with pandan swapped out.
-
-    Only ``get_resolver`` is overridden, and only so the fake upstream and a *fresh* cache get in.
-    Fresh matters: the principal cache is process-wide by design, and a cache surviving a test that
-    truncated the ``user`` table would serve a principal whose mirror row no longer exists, so the
-    next INSERT would fail on the foreign key. That is the classic "passes alone, fails in a full
-    run" auth flake ``reset_auth`` exists for.
-    """
-    from typing import Annotated
-
+def client(database_url: str, known_principals: dict[str, Any]) -> Iterator[Any]:
+    """The **real** app — ``app.main.app``, router and error handlers — with only "who is calling"
+    faked (``auth_helpers.override_get_principal``)."""
     from alembic import command
-    from fastapi import Depends
     from fastapi.testclient import TestClient
-    from sqlalchemy.orm import Session
 
-    from app.auth.cache import PrincipalCache
-    from app.auth.dependencies import get_resolver, reset_auth
-    from app.auth.mirror import SqlAlchemyPrincipalMirror
-    from app.auth.resolver import PrincipalResolver
-    from app.auth.single_flight import SingleFlight
-    from app.db import get_session, get_sessionmaker
+    from app.db import get_sessionmaker
     from app.main import app
 
     command.upgrade(_alembic_config(), "head")
 
     def empty() -> None:
         with get_sessionmaker()() as session:
-            session.execute(text('TRUNCATE TABLE note, "user" CASCADE'))
+            session.execute(text("TRUNCATE TABLE note, kaya_account CASCADE"))
             session.commit()
 
     empty()
-    reset_auth()
-    cache = PrincipalCache(positive_ttl=60.0, negative_ttl=10.0)
-    single_flight = SingleFlight()
-
-    def resolver(session: Annotated[Session, Depends(get_session)]) -> PrincipalResolver:
-        return PrincipalResolver(
-            upstream=upstream,
-            mirror=SqlAlchemyPrincipalMirror(session),
-            cache=cache,
-            single_flight=single_flight,
-        )
-
-    app.dependency_overrides[get_resolver] = resolver
+    override_get_principal(app, known_principals)
     try:
         with TestClient(app) as test_client:
             yield test_client
     finally:
         app.dependency_overrides.clear()
-        reset_auth()
         empty()
 
 
 @pytest.fixture
-def alice(upstream: FakeUpstream) -> Any:
+def alice(client: Any, known_principals: dict[str, Any]) -> Any:
+    """Depends on ``client`` — not for the client itself, but so its ``empty()`` truncation has
+    already run before this inserts a row: `known_principals` alone races the fixture order,
+    `kaya_account` does not, and this is the one fixture that can't afford to lose."""
     from app.auth.principal import Principal
+    from app.db import get_sessionmaker
+
+    with get_sessionmaker()() as session:
+        seed_kaya_account(session, id=ALICE_ID, email="alice@example.com")
 
     principal = Principal(id=ALICE_ID, email="alice@example.com")
-    upstream.known[ALICE_TOKEN] = principal
+    known_principals[ALICE_TOKEN] = principal
     return principal
 
 
 @pytest.fixture
-def bob(upstream: FakeUpstream) -> Any:
+def bob(client: Any, known_principals: dict[str, Any]) -> Any:
     from app.auth.principal import Principal
+    from app.db import get_sessionmaker
+
+    with get_sessionmaker()() as session:
+        seed_kaya_account(session, id=BOB_ID, email="bob@example.com")
 
     principal = Principal(id=BOB_ID, email="bob@example.com")
-    upstream.known[BOB_TOKEN] = principal
+    known_principals[BOB_TOKEN] = principal
     return principal
 
 
@@ -144,12 +120,12 @@ def create(client: Any, token: str, **fields: str) -> dict[str, Any]:
 
 
 @pytest.mark.usefixtures("alice")
-def test_a_pat_creates_reads_edits_and_deletes_with_no_kaya_side_credential(client: Any) -> None:
+def test_a_pat_creates_reads_edits_and_deletes(client: Any) -> None:
     """SLICES §V1's first end-to-end row, and V1's demo without the `curl`.
 
-    The only credential anywhere in this test is the caller's, forwarded to a pandan that kaya does
-    not authenticate against (ADR 0002). Kaya mints nothing, stores nothing, and needs nothing
-    configured.
+    Identity resolution itself is faked here (`alice`, `auth_helpers.override_get_principal`) —
+    this file is about the note CRUD contract, not about kaya's own identity server, which has its
+    own dedicated coverage (`test_identity_manager.py`, `test_tokens_api.py`).
     """
     created = create(client, ALICE_TOKEN, title="runbook", body="# steps", path="ops/runbook.md")
 

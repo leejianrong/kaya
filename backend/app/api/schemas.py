@@ -144,6 +144,14 @@ class NoteUpdate(BaseModel):
     body: str | None = None
     path: str | None = Field(default=None, max_length=PATH_MAX)
 
+    format: bool = False
+    """KAN-1814: run the markdown formatter over the body before saving. ``body`` may be omitted,
+    which formats the *stored* body — the agent's "second pass" and the editor's save are the same
+    call. Not a content field: it is an instruction, so it is not in ``CONTENT_FIELDS`` and
+    ``changes()`` never ``setattr``'s it onto the note. The formatter may decline (``X-Kaya-Format:
+    skipped``) and the body is then saved exactly as sent, because refusing a save over a cosmetic
+    pass is the wrong trade."""
+
     if_updated_at: AwareDatetime | None = None
     """The ``updated_at`` this caller read, echoed back. ADR 0009's optimistic-concurrency token.
 
@@ -208,8 +216,11 @@ class NoteUpdate(BaseModel):
         dismiss the banner that matters. A write touching ``title`` **and** ``body`` is guarded, and
         is rejected whole: applying the metadata half of a refused write would be a second silent
         edit, in the opposite direction.
+
+        ``format: true`` counts as touching the body even when none is sent (KAN-1814): it rewrites
+        the stored body, which is exactly the prose this guard exists to protect.
         """
-        return self.if_updated_at is not None and "body" in self.model_fields_set
+        return self.if_updated_at is not None and ("body" in self.model_fields_set or self.format)
 
 
 class LinkRead(BaseModel):
@@ -307,17 +318,23 @@ class EmbedCard(BaseModel):
 class BoardEmbedResponse(BaseModel):
     """`GET /api/v1/embeds/board`'s body. Always a `200`, even when pandan could not be asked —
     the same "degrade, never fail the render" contract Q26 already set for `LinkRead`
-    (`resolved_ref`/`title`/`column` all going `null`), spelled here as one boolean instead of three
-    nullable fields because there is no partial answer to preserve: either pandan answered with a
-    card list, or it did not, and a caller cannot act differently on "pandan is down" versus "the
-    caller cannot see this board" (ADR 0003, `app/integrations/board_embed.py`'s
-    `BoardEmbedResult` docstring).
+    (`resolved_ref`/`title`/`column` all going `null`), spelled here as booleans instead of nullable
+    fields because there is no partial answer to preserve: either pandan answered with a card list,
+    or it did not, and a caller cannot act differently on "pandan is down" versus "the caller cannot
+    see this board" (ADR 0003, `app/integrations/board_embed.py`'s `BoardEmbedResult` docstring).
 
-    `cards` is `[]` for both `unavailable=True` and a legitimately empty result — a saved view with
-    no matching cards renders identically to a decoration nobody could reach on the wire, and that
-    is deliberate: a caller cannot and should not act differently on either."""
+    `not_connected` (KAN-1741) is the one thing a caller *can* act on: `true` means kaya has no
+    pandan credential to forward on this caller's behalf at all, and `PreviewPane.svelte` renders a
+    distinct "connect your pandan account" prompt rather than the generic `unavailable` message —
+    the two never both `true` at once (`BoardEmbedResult`'s own docstring).
+
+    `cards` is `[]` for `unavailable=True`, `not_connected=True`, and a legitimately empty result
+    alike — a saved view with no matching cards renders identically to a decoration nobody could
+    reach on the wire, and that is deliberate: a caller cannot and should not act differently on
+    any of the three."""
 
     unavailable: bool
+    not_connected: bool
     cards: list[EmbedCard]
 
 
@@ -459,3 +476,16 @@ class NoteVersionList(BaseModel):
     reason (PLAN §Implementation decisions: a list verb returns `{"noun": [...]}`)."""
 
     versions: list[NoteVersionRead]
+
+
+class FormatCheck(BaseModel):
+    """``GET /api/v1/notes/{ref}/format-check`` (KAN-1814): would formatting change this note?
+
+    Writes nothing. ``changed_lines`` is lines added plus lines removed — a size for a hint, not an
+    edit distance. ``reason`` is set only when the formatter declined, in which case ``changed`` is
+    ``false`` because a skipped format changes nothing.
+    """
+
+    changed: bool
+    changed_lines: int
+    reason: str | None = None

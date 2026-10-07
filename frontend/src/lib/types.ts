@@ -118,6 +118,11 @@ export interface NoteUpdate {
   path?: string
   /** The `updated_at` you read, echoed back verbatim. Omitting it is a plain overwrite. */
   if_updated_at?: string
+  /**
+   * Ask the server to format the body before saving (KAN-1814). The response is the stored,
+   * formatted note. Sent only by the browser save path, and only while the Settings toggle is ON.
+   */
+  format?: boolean
 }
 
 /**
@@ -162,9 +167,15 @@ export interface EmbedCard {
  * `GET /api/v1/embeds/board`'s body. Always a `200` from the backend, `unavailable: true` covering
  * every reason pandan could not answer (down, the board/view does not exist, or the caller cannot
  * see it) — a caller cannot and should not act differently on any of them (ADR 0003).
+ *
+ * `not_connected: true` (ADR 0012's amendment, KAN-1741) is a distinct, third outcome: the caller
+ * has no linked pandan account at all (`lib/pandanLink.ts`), and `PreviewPane.svelte` renders a
+ * "connect your pandan account" prompt for it rather than the generic `unavailable` message. Never
+ * both `true` at once — `backend/app/integrations/board_embed.py`'s `BoardEmbedResult` docstring.
  */
 export interface BoardEmbedResponse {
   unavailable: boolean
+  not_connected: boolean
   cards: EmbedCard[]
 }
 

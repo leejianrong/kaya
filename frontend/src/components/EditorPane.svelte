@@ -6,8 +6,10 @@
   import { ApiError } from '../lib/api'
   import { needsFetch } from '../lib/backlinks'
   import { type ConflictVersions, keepMinePatch } from '../lib/conflict'
-  import { conflictVersions, needsRemount, syncDocument } from '../lib/editor'
+  import { conflictVersions, needsRemount, syncDocument, syncFormatted } from '../lib/editor'
   import { deleteNote, listLinks, updateNote } from '../lib/notes'
+  import { formatOnSave, primePreferences } from '../lib/preferences'
+import type { EditorCommands } from '../lib/toolbar'
   import type { Link, Note, NoteUpdate } from '../lib/types'
   import ConflictBanner from './ConflictBanner.svelte'
 
@@ -27,6 +29,9 @@
     ondirty,
     ondeleted,
     onupdated,
+    oncommands,
+    onfocuschange,
+    mode = 'edit',
   }: {
     note: Note | null
     error: string | null
@@ -88,7 +93,34 @@
      * rename or move until the next full reload.
      */
     onupdated?: (stored: Note) => void
+    /**
+     * KAN-1819: how the shell is showing this note. **A styling input only** — it is read by the
+     * template and by nothing in the mount effect, so changing it can never remount the view or
+     * re-run the effect that owns it. `read` keeps the title and path as the document's heading and
+     * metadata and hides the editor (`display: none` on the host, so it is out of the tab order and
+     * the accessibility tree) and the Delete button, while `ondocument` keeps flowing so the
+     * preview shows unsaved text.
+     */
+    mode?: 'read' | 'edit' | 'split'
+    /**
+     * KAN-1826: the live editor's toolbar commands, handed up when a view is built and `null` when
+     * it is torn down. The mobile toolbar is rendered by the layout around this pane and drives the
+     * editor only through this interface (`lib/toolbar.ts`), so it never imports CodeMirror and this
+     * component still owns nothing but its container. Read through `untrack`, like every other
+     * callback here: the mount effect must not depend on what its own output does downstream.
+     */
+    oncommands?: (commands: EditorCommands | null) => void
+    /** KAN-1826: the editor gained or lost focus; same untracked-callback rule as `oncommands`. */
+    onfocuschange?: (focused: boolean) => void
   } = $props()
+
+  function publishCommands(commands: EditorCommands | null): void {
+    untrack(() => oncommands)?.(commands)
+  }
+
+  function publishFocus(focused: boolean): void {
+    untrack(() => onfocuschange)?.(focused)
+  }
 
   /**
    * Hand the current document to {@link ondocument}, if anyone asked for it.
@@ -342,6 +374,15 @@
   }
 
   /**
+   * KAN-1815: read the "format on save" choice once, at mount, so a save never has to (see
+   * `lib/preferences.ts`). Reads nothing reactive, so it runs exactly once; the shared promise
+   * means a remount or a second pane joins the same request rather than repeating it.
+   */
+  $effect(() => {
+    void primePreferences()
+  })
+
+  /**
    * Fetch `/links` when the **note** changes, and never when its content does — `BacklinksPanel`'s
    * `needsFetch` one component over, reused rather than duplicated because the comparison it makes
    * (identity of the ref, not of the object) is exactly the same question asked about the same prop.
@@ -442,7 +483,10 @@
     }
 
     view?.destroy()
+    publishCommands(null)
+    publishFocus(false)
     view = build(loaded, parent, opened, currentLinks)
+    publishCommands(loaded.commandsFor(view))
     mountedRef = incomingRef
     appliedBody = incomingBody
     appliedLinks = currentLinks
@@ -546,6 +590,8 @@
       view?.destroy()
       view = undefined
       mountedRef = null
+      publishCommands(null)
+      publishFocus(false)
     }
   })
 
@@ -577,6 +623,7 @@
       onAttachmentError: (message) => {
         attachmentError = message
       },
+      onFocusChange: publishFocus,
       onSave: onSaveKey,
       onChange: (document) => {
         dirty = true
@@ -700,15 +747,29 @@
     saved = null
     resolution = null
     try {
-      const stored = await updateNote(opened.ref, update)
+      // KAN-1815: "format on save", a per-account preference (`lib/preferences.ts`), asked of the
+      // server in the *same* `PATCH` — one save, one `if_updated_at`, the server formats and stores
+      // once. Only a write that carries a body is formattable, and a path- or title-only `PATCH`
+      // never reaches this function.
+      const format = update.body !== undefined && (await formatOnSave())
+      const stored = await updateNote(opened.ref, format ? { ...update, format: true } : update)
       // The next edit is based on the version the server just wrote. Straight off the response, still
       // an opaque string.
       basedOn = stored.updated_at
-      // Against the body that was **sent**, not a flat `false`. A save is a round trip and you can
+      // The server may have stored a *different* body than the one sent (it formatted it). Apply it
+      // through the echo guard as a transaction — never a remount — and only if the editor still
+      // holds exactly what was sent (`syncFormatted`). One undo step, so ⌘/Ctrl-Z gives back the
+      // text as typed. No loop: this dispatch re-enters `onChange` once and sends nothing.
+      if (update.body !== undefined && kit !== null) {
+        syncFormatted(current, update.body, stored.body, kit.HISTORY_ISOLATION)
+      }
+      // Against the body that was **stored**, not a flat `false`. A save is a round trip and you can
       // type during it; clearing the flag unconditionally would mark those keystrokes saved when the
       // request that finished had never seen them, and the next `409` would be a mystery. It is also
-      // what leaves the pane honest after a "keep mine" the user typed past.
-      dirty = current.state.doc.toString() !== update.body
+      // what leaves the pane honest after a "keep mine" the user typed past. Stored rather than sent
+      // because the two differ exactly when the server formatted: after `syncFormatted` the document
+      // *is* the stored body (clean), and if the user typed past the save it is not (still dirty).
+      dirty = current.state.doc.toString() !== stored.body
       saved = `saved · now at ${stored.updated_at}`
       conflict = null
       movedAgain = false
@@ -857,7 +918,7 @@
   }
 </script>
 
-<section class="pane" aria-label="Editor">
+<section class="pane" class:reading={mode === 'read'} aria-label="Editor">
   {#if error}
     <p class="notice">{error}</p>
   {:else if note}
@@ -916,6 +977,13 @@
       {/if}
     </header>
 
+    <!-- KAN-1826: Save and Delete belong to editing, so Read has neither. Unsaved text is still
+         never silent there (KAN-1819's trap): a line says so and where the Save is. -->
+    {#if mode === 'read'}
+      {#if dirty}
+        <p class="unsaved" data-testid="read-unsaved">Unsaved changes. Switch to Edit to save.</p>
+      {/if}
+    {:else}
     <div class="bar">
       <button type="button" onclick={() => void save()} disabled={saving || !dirty}>
         {saving ? 'Saving…' : 'Save'}
@@ -959,6 +1027,7 @@
         </button>
       {/if}
     </div>
+    {/if}
 
     {#if deleteError}
       <p class="conflict" data-testid="delete-error">{deleteError}</p>
@@ -1028,18 +1097,18 @@
     width: 100%;
     padding: 0.1rem 0.3rem;
     border: 1px solid transparent;
-    border-radius: 0.3rem;
+    border-radius: var(--shape-xs);
     background: transparent;
     color: inherit;
     font: inherit;
-    font-size: 1.35rem;
+    font-size: var(--type-title-large-size);
     font-weight: 600;
     letter-spacing: -0.01em;
   }
 
   .title-input:hover,
   .title-input:focus {
-    border-color: var(--border);
+    border-color: var(--outline);
     outline: none;
   }
 
@@ -1048,8 +1117,8 @@
     flex-wrap: wrap;
     gap: 0.75rem;
     margin: 0.35rem 0 0;
-    color: var(--muted);
-    font-size: 0.85rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-medium-size);
   }
 
   .stamp {
@@ -1058,10 +1127,10 @@
 
   .team-badge {
     padding: 0.05rem 0.45rem;
-    border: 1px solid var(--edge);
-    border-radius: 999px;
-    color: var(--muted);
-    font-size: 0.75rem;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--shape-full);
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-small-size);
     font-weight: 600;
     letter-spacing: 0.02em;
     white-space: nowrap;
@@ -1073,23 +1142,30 @@
     min-width: 8rem;
     padding: 0.05rem 0.3rem;
     border: 1px solid transparent;
-    border-radius: 0.3rem;
+    border-radius: var(--shape-xs);
     background: transparent;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font: inherit;
     font-family: var(--mono);
-    font-size: 0.85rem;
+    font-size: var(--type-body-medium-size);
   }
 
   .path-input:hover,
   .path-input:focus {
-    border-color: var(--border);
+    border-color: var(--outline);
     outline: none;
   }
 
   .notice {
     margin: 0;
-    color: var(--muted);
+    color: var(--on-surface-variant);
+  }
+
+  .unsaved {
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-family: var(--mono);
+    font-size: var(--type-body-small-size);
   }
 
   .bar {
@@ -1098,34 +1174,40 @@
     gap: 0.75rem;
   }
 
+  /* Filled button (M3): the primary action. Save is the only one on this bar. */
   button {
-    padding: 0.35rem 0.9rem;
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
-    color: var(--bg);
-    background: var(--accent);
+    padding: 0 1.25rem;
+    min-height: 2.5rem;
+    border: 0;
+    border-radius: var(--shape-full);
+    color: var(--on-primary);
+    background: var(--primary);
     font: inherit;
-    font-size: 0.85rem;
+    font-size: var(--type-label-large-size);
+    font-weight: var(--type-label-large-weight);
     cursor: pointer;
   }
 
   button:disabled {
-    color: var(--muted);
-    background: transparent;
+    color: color-mix(in srgb, var(--on-surface) calc(var(--state-disabled-content) * 100%), transparent);
+    background: color-mix(in srgb, var(--on-surface) calc(var(--state-disabled-container) * 100%), transparent);
+    opacity: 1;
     cursor: default;
   }
 
   .hint,
   .state {
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-family: var(--mono);
-    font-size: 0.75rem;
+    font-size: var(--type-body-small-size);
   }
 
+  /* Outlined button for the secondary and destructive actions. */
   .delete,
   .delete-cancel {
+    border: 1px solid var(--outline);
     background: transparent;
-    color: var(--muted);
+    color: var(--on-surface-variant);
   }
 
   /* Pushed to the end of the bar, away from Save — a destructive control gets its own end of the
@@ -1135,17 +1217,32 @@
   }
 
   .delete:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
-    color: var(--danger);
+    border-color: var(--error);
+    color: var(--error);
   }
 
   .conflict {
     margin: 0;
     padding: 0.75rem 1rem;
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--accent);
-    border-radius: 0.35rem;
-    font-size: 0.85rem;
+    border: 1px solid var(--outline-variant);
+    border-left: 3px solid var(--primary);
+    border-radius: var(--shape-md);
+    font-size: var(--type-body-medium-size);
+  }
+
+  /* KAN-1819, Read: the pane is the document's heading and metadata only. The host is hidden, not
+     removed — the view stays mounted so the live document keeps flowing and a switch back to Edit
+     keeps the caret and the undo history. `display: none` takes it out of the tab order and the
+     accessibility tree too. */
+  .pane.reading {
+    height: auto;
+    gap: 0.5rem;
+    padding-bottom: 0.5rem;
+  }
+
+  .pane.reading .editor-host,
+  .pane.reading .stamp {
+    display: none;
   }
 
   .editor-host {
@@ -1153,7 +1250,27 @@
     min-height: 12rem;
     overflow: auto;
     padding: 0.25rem 0;
-    border: 1px solid var(--border);
-    border-radius: 0.4rem;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--shape-md);
+  }
+
+  /* KAN-1818, compact: Save/Delete are touch targets. */
+  @media (max-width: 599.98px) {
+    .bar button {
+      min-height: 2.75rem;
+    }
+
+    /* A keyboard shortcut hint means nothing on a phone, and the room matters with the keyboard up. */
+    .hint {
+      display: none;
+    }
+
+    /* KAN-1826: iOS zooms the page when a field under 16px takes focus, and does not zoom back.
+       The editor's own theme sets 0.9rem; this wins on specificity, and only on a phone, so the
+       desktop editor keeps its size. The path field is the other focusable text on this screen. */
+    .editor-host :global(.cm-editor),
+    .path-input {
+      font-size: 16px;
+    }
   }
 </style>

@@ -78,12 +78,13 @@ from pathlib import Path
 from kaya_client import BLOCK_GAP, Format, KayaError, overview, render, version_line
 from kaya_client import DESCRIPTION as PRODUCT
 
-from kaya_cli import __version__, verbs
+from kaya_cli import __version__, context, verbs
 from kaya_cli.failures import EXIT_OK, report
 from kaya_cli.parsing import (
     API_URL_FLAG,
     BODY_FILE_FLAG,
     BODY_FLAG,
+    CHECK_FLAG,
     NO_TEXT_LIMIT,
     OUT_FLAG,
     PATH_FLAG,
@@ -112,18 +113,29 @@ typed a command — the worst way for a product description to be inconsistent."
 EPILOGUE = (
     "Bare `kaya` prints this build, where it is installed, and your five most recently updated\n"
     "notes. Notes: `note list`, `note get <ref>`, `note create <title>`, `note edit <ref>`,\n"
-    "`note move <ref> <path>`, `note delete <ref>`. Links: `links <ref>` for what a note points\n"
-    "at, `backlinks <ref>` for what points at it. Export/import (R12): `note export <ref>`,\n"
+    "`note move <ref> <path>`, `note format <ref> [--check]`, `note delete <ref>`. Links:\n"
+    "`links <ref>` for what a note points at, `backlinks <ref>` for what points at it.\n"
+    "Export/import (R12): `note export <ref>`,\n"
     "`note import <file>`, `export-all <dir>`, `import-all <dir>`. Configuration:\n"
-    "`config show`, `config set`, `config path`. `note list --q TERM` searches title and body;\n"
-    "`--fields a,b,c` selects columns on a list, and prose is cut to KAYA_MAX_TEXT_CHARS\n"
-    "(default 500) unless `--full`. A note is addressed as NOTE-12, note-12 or 12, never by its\n"
-    "path. See docs/SLICES.md and docs/roadmap/BREADBOARD.md."
+    "`config show`, `config set`, `config path`. Sign in (R20): `auth login` (device flow),\n"
+    "`auth logout`, `auth check`. Ambient session context (R18): `context install`\n"
+    "wires a Claude Code SessionStart hook so an agent session starts with your recent notes;\n"
+    "`context uninstall`, `context status`, `context print [--hook]`. `note list --q TERM`\n"
+    "searches title and body; `--fields a,b,c` selects columns on a list, and prose is cut to\n"
+    "KAYA_MAX_TEXT_CHARS (default 500) unless `--full`. A note is addressed as NOTE-12, note-12\n"
+    "or 12, never by its path. See docs/SLICES.md and docs/roadmap/BREADBOARD.md."
 )
 
 NOTE_HELP = "create, read, change and delete the notes you own"
 
 CONFIG_HELP = "read and write the local kaya configuration"
+
+AUTH_HELP = "sign in with a device-flow login, sign out, or check whether a token is configured"
+
+CONTEXT_HELP = (
+    "install/uninstall the Claude Code SessionStart hook that gives an agent session your "
+    "recent notes (R18/KAN-1198)"
+)
 
 REF_HELP = "the note, as NOTE-12, note-12 or 12"
 
@@ -225,6 +237,12 @@ def build_parser() -> StructuredParser:
     config = commands.add_parser(verbs.CONFIG, help=CONFIG_HELP, description=CONFIG_HELP)
     _add_config_verbs(config.add_subparsers(dest="subcommand", required=True), flags)
 
+    auth = commands.add_parser(verbs.AUTH, help=AUTH_HELP, description=AUTH_HELP)
+    _add_auth_verbs(auth.add_subparsers(dest="subcommand", required=True), flags)
+
+    context_group = commands.add_parser(verbs.CONTEXT, help=CONTEXT_HELP, description=CONTEXT_HELP)
+    _add_context_verbs(context_group.add_subparsers(dest="subcommand", required=True), flags)
+
     _add_link_verbs(commands, flags)
     _add_corpus_export_import_verbs(commands, flags)
 
@@ -232,7 +250,7 @@ def build_parser() -> StructuredParser:
 
 
 def _add_note_verbs(note_commands, flags: argparse.ArgumentParser) -> None:
-    """`note {list,get,create,edit,move,delete}`: one subparser each, all with the output flags.
+    """`note {list,get,create,edit,move,format,delete}`: one subparser each, all with output flags.
 
     ``dest="subcommand"`` is shared with the `config` group so `verbs.run` dispatches on one pair
     of attributes rather than on a per-group name it would have to know in advance.
@@ -317,6 +335,33 @@ def _add_note_verbs(note_commands, flags: argparse.ArgumentParser) -> None:
     )
     move.add_argument("ref", help=REF_HELP)
     move.add_argument("path", help="where to file it, e.g. archive/2026/groceries.md")
+
+    format_ = note_commands.add_parser(
+        verbs.FORMAT,
+        parents=[flags],
+        help="format a note's body (explicit; no write is ever formatted implicitly)",
+        description=(
+            "Format a note's markdown body. The same PATCH as `note edit`, with the server's "
+            "formatter switched on (KAN-1816); no endpoint of its own, like `note move`. "
+            "--check reports whether the body would change and by how many lines, and writes "
+            "nothing."
+        ),
+    )
+    format_.add_argument("ref", help=REF_HELP)
+    format_.add_argument(
+        CHECK_FLAG,
+        action="store_true",
+        help="report {changed, changed_lines} and write nothing",
+    )
+    format_.add_argument(
+        PRECONDITION_FLAG,
+        default=None,
+        metavar="TIMESTAMP",
+        help=(
+            "the updated_at you read, echoed back: the write is refused with a 409 if the note "
+            "has changed since (ADR 0009). Not valid with --check"
+        ),
+    )
 
     delete = note_commands.add_parser(
         verbs.DELETE,
@@ -497,7 +542,10 @@ def _add_config_verbs(config_commands, flags: argparse.ArgumentParser) -> None:
     setting.add_argument(
         TOKEN_FLAG,
         default=None,
-        help="a pandan personal access token; stored in a 0600 file and never printed back",
+        help=(
+            "a kaya_pat_… token (or use `kaya auth login`); "
+            "stored in a 0600 file and never printed back"
+        ),
     )
 
     config_commands.add_parser(
@@ -513,6 +561,183 @@ def _add_config_verbs(config_commands, flags: argparse.ArgumentParser) -> None:
         parents=[flags],
         help="print the config file's path, whether or not it exists yet",
         description="Print the config file's path, and whether it exists.",
+    )
+
+
+def _add_auth_verbs(auth_commands, flags: argparse.ArgumentParser) -> None:
+    """`auth {login,logout,check}` (ADR 0013, KAN-1743): RFC 8628 device-flow login against kaya's
+    own authorization server (ADR 0012), so onboarding an agent needs no hand-carried secret and no
+    Tokens UI visit at all. **Not `auth status`**, despite ADR 0013's own wording — see
+    `kaya_cli.verbs.CHECK`'s docstring for the word collision that forced the rename.
+
+    `login` is the one verb here with a flag of its own: `--scope`, the same `read`/`write` choice
+    `config set --token` has no opinion about but `POST /api/v1/tokens` already accepts (ADR 0012,
+    KAN-1739) — mirrored here because a device-flow-minted token is still a token, and the consent
+    screen shows exactly what was requested before a human approves it.
+    """
+    login = auth_commands.add_parser(
+        verbs.LOGIN,
+        parents=[flags],
+        help="sign in via a browser (RFC 8628 device flow) and store the minted token",
+        description=(
+            "Start a device-flow login: prints a link and a short code, opens a browser, and "
+            "polls until a human approves or denies it there. On approval the minted kaya_pat_… "
+            "is written straight to the config file and never printed."
+        ),
+    )
+    login.add_argument(
+        "--scope",
+        choices=("read", "write"),
+        default="write",
+        help="the access level to request (default: write)",
+    )
+
+    auth_commands.add_parser(
+        verbs.LOGOUT,
+        parents=[flags],
+        help="remove the stored token from the config file",
+        description=(
+            "Remove the stored token from the config file. Safe to run when already logged out; "
+            "cannot revoke a token set via KAYA_TOKEN in the environment."
+        ),
+    )
+
+    auth_commands.add_parser(
+        verbs.CHECK,
+        parents=[flags],
+        help="report whether a token is configured, and where it would come from",
+        description="Read-only: is a token configured, and from the environment or the file?",
+    )
+
+
+def _add_context_verbs(context_commands, flags: argparse.ArgumentParser) -> None:
+    """`context {install,uninstall,status,print}` — R18/KAN-1198's ambient `SessionStart` hook, plus
+    KAN-1200's packaged skill riding along on `install`/`uninstall`/`status`.
+
+    See `kaya_cli.context`'s module docstring for the hook mechanism (mirroring pandan V48/KAN-431's
+    `pandan_cli/context.py`) and for why the fourth word is `print` rather than pandan's own `show`
+    (kaya already has `config show`, and `mcp/tests/test_cli_parity.py`'s reader refuses two verbs
+    sharing a bare word). `--no-skill`/`--force-skill` (on `install`) and `--keep-skill` (on
+    `uninstall`) mirror pandan's own flags of the same names, over `kaya_cli.context`'s
+    `compare_skill`/`_install_skill`/`_uninstall_skill`.
+
+    All four carry the output flags like every other verb (ADR 0005 §contract 1), including
+    `print --hook` — whose parser still accepts `--format`/`--fields`/`--full`, even though `--hook`
+    mode ignores them entirely, because the parser cannot know which mode a caller chose until
+    `main` reads `args.hook`. See `context.run_hook`'s docstring for why that mode bypasses
+    `render()` regardless of what was asked for.
+    """
+    install = context_commands.add_parser(
+        verbs.INSTALL,
+        parents=[flags],
+        help=f"add the {context.HOOK_EVENT} hook to settings.json (idempotent)",
+        description=(
+            "Add (or update) a Claude Code SessionStart hook that runs `kaya context print "
+            "--hook` at the start of every session, giving an agent your recent notes before it "
+            "has to ask. Refuses to touch settings.json at all if KAYA_TOKEN is not configured."
+        ),
+    )
+    _add_context_settings_arg(install)
+    install.add_argument(
+        "--exec",
+        metavar="PATH",
+        help=(
+            "the kaya executable the hook should run (default: the one running this command — "
+            "never a `kaya` found on $PATH, which may be stale)"
+        ),
+    )
+    install.add_argument(
+        "--timeout",
+        type=context.positive_seconds,
+        default=context.HOOK_TIMEOUT_SECONDS,
+        metavar="SECONDS",
+        help=(
+            f"wall-clock budget for the hook's own API call (default "
+            f"{context.HOOK_TIMEOUT_SECONDS:g}s). Kept small on purpose: a session hook is "
+            "awaited, and kaya's own client timeout is tuned for a cold backend, not for a hook "
+            "(see kaya_cli.context's module docstring)"
+        ),
+    )
+    install.add_argument(
+        "--limit",
+        type=context.positive_limit,
+        default=context.DEFAULT_NOTE_LIMIT,
+        metavar="N",
+        help=f"max notes in the ambient block (default {context.DEFAULT_NOTE_LIMIT})",
+    )
+    install.add_argument(
+        "--no-skill",
+        action="store_true",
+        help="install the hook only; don't lay down the packaged kaya skill (KAN-1200)",
+    )
+    install.add_argument(
+        "--force-skill",
+        action="store_true",
+        help="overwrite a locally modified ~/.claude/skills/kaya/SKILL.md",
+    )
+
+    uninstall = context_commands.add_parser(
+        verbs.UNINSTALL,
+        parents=[flags],
+        help="remove the hook (and the skill, if unmodified) — idempotent, needs no configuration",
+        description="Remove the SessionStart hook. Safe to run whether or not kaya is configured.",
+    )
+    _add_context_settings_arg(uninstall)
+    uninstall.add_argument(
+        "--keep-skill", action="store_true", help="leave the installed skill in place"
+    )
+
+    status = context_commands.add_parser(
+        verbs.STATUS,
+        parents=[flags],
+        help="report whether the hook is installed and whether kaya is configured",
+        description="Read-only: is the hook installed, and is a token configured?",
+    )
+    _add_context_settings_arg(status)
+
+    print_ = context_commands.add_parser(
+        verbs.PRINT,
+        parents=[flags],
+        help="print the ambient block (plain), or the hook's JSON envelope with --hook",
+        description=(
+            "Print the caller's recent notes as the SessionStart hook would see them. Without "
+            "--hook this goes through the normal --format/--fields/--full pipeline; with --hook "
+            "it always exits 0 and prints exactly one JSON envelope, whatever else failed."
+        ),
+    )
+    print_.add_argument(
+        "--hook",
+        action="store_true",
+        help=(
+            f"emit the {context.HOOK_EVENT} JSON envelope and soft-fail: always exit 0, never "
+            "print anything but a valid envelope on stdout"
+        ),
+    )
+    print_.add_argument(
+        "--timeout",
+        type=context.positive_seconds,
+        default=context.HOOK_TIMEOUT_SECONDS,
+        metavar="SECONDS",
+        help="wall-clock budget for --hook's own API call (ignored without --hook)",
+    )
+    print_.add_argument(
+        "--limit",
+        type=context.positive_limit,
+        default=context.DEFAULT_NOTE_LIMIT,
+        metavar="N",
+        help=f"max notes shown (default {context.DEFAULT_NOTE_LIMIT})",
+    )
+
+
+def _add_context_settings_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--settings",
+        metavar="PATH",
+        help=(
+            "settings.json to operate on (default: ~/.claude/settings.json, or "
+            "$CLAUDE_CONFIG_DIR/settings.json). Use .claude/settings.json for a project-scoped "
+            "install"
+        ),
     )
 
 
@@ -536,6 +761,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.version:
             print(version_string())
             return EXIT_OK
+
+        # `kaya context print --hook` (R18/KAN-1198) is handled here, before `verbs.run`/`render`,
+        # the same place `--version` is — and for the same reason: it is not a payload this
+        # package's one `render()` call formats. `getattr` rather than `args.hook` because only
+        # `context print`'s subparser declares the flag at all; every other invocation's namespace
+        # simply lacks it, and `False` is the correct default for "this could not possibly be hook
+        # mode". `context.run_hook` never raises and never returns non-zero — see its own
+        # docstring for why bypassing `report()`'s exit-code table here is the point, not a bug.
+        if getattr(args, "hook", False):
+            return context.run_hook(args)
 
         # KAN-549's banner, built **before** the request and printed **after** it — the only two
         # things about these two lines that matter.

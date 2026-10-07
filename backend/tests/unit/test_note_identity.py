@@ -5,15 +5,14 @@ The behavioural half — that the sequence really does allocate atomically, and 
 really does round-trip — is in ``tests/integration/test_migration_0001.py``.
 
 What these tests defend is the set of things that look like harmless tidying and are not:
-renaming the prefix, adding a unique index on ``path``, giving ``User.id`` a default, or letting
-the model and the migration drift apart on the SQL that mints a ref.
+renaming the prefix, adding a unique index on ``path``, or letting the model and the migration
+drift apart on the SQL that mints a ref.
 """
 
 import re
 from pathlib import Path
 
 import pytest
-from sqlalchemy import Uuid
 
 from app.models import (
     NOTE_REF_PREFIX,
@@ -21,7 +20,6 @@ from app.models import (
     NOTE_REF_SEQUENCE_NAME,
     Base,
     Note,
-    User,
 )
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -31,39 +29,12 @@ MIGRATION_0001 = (
 NOTE_MODEL = BACKEND_ROOT / "app" / "models" / "note.py"
 
 
-# --- the user mirror ---------------------------------------------------------------------------
-
-
-def test_user_id_is_a_uuid_primary_key_with_no_default() -> None:
-    """The value is pandan's, not kaya's (ADR 0002).
-
-    A ``default`` or ``server_default`` here would hand a brand-new UUID to a user who already has
-    one upstream, and the two identities would never converge — every note filed under the local
-    id would be invisible to the real account.
-    """
-    column = User.__table__.c.id
-
-    assert isinstance(column.type, Uuid)
-    assert column.primary_key
-    assert column.default is None, "User.id must take pandan's UUID, not generate one"
-    assert column.server_default is None, "User.id must take pandan's UUID, not generate one"
-
-
-def test_the_user_mirror_stays_a_mirror() -> None:
-    """Only what a foreign key and a display need. Anything else goes stale against pandan."""
-    assert set(User.__table__.c.keys()) == {"id", "email", "created_at", "updated_at"}
-    assert User.__tablename__ == "user"
-
-
-def test_email_is_not_unique() -> None:
-    """Uniqueness is pandan's rule to enforce. Mirroring it means that if pandan ever reassigns a
-    freed address, the resolver's just-in-time insert fails on a column that is not this table's
-    identity — a login broken by a copy of a constraint kaya does not own."""
-    assert User.__table__.c.email.unique is not True
-    assert [c.name for c in User.__table__.constraints if c.name and "email" in c.name] == []
-
-
 # --- the note ----------------------------------------------------------------------------------
+#
+# The "user mirror" section this file used to carry here (ADR 0002's pandan-mirror `User` model)
+# was deleted in KAN-1740: migration `0009` drops the `user` table entirely and `app/models/user.py`
+# is gone. `note.owner_id` now points at `app.identity.models.KayaAccount` instead — see
+# `test_owner_points_at_kaya_account_and_will_not_cascade` below.
 
 
 def test_the_ref_is_unique_and_allocated_by_the_database() -> None:
@@ -97,12 +68,14 @@ def test_path_carries_no_uniqueness_and_no_index() -> None:
     assert ("path",) not in indexed
 
 
-def test_owner_points_at_the_user_mirror_and_will_not_cascade() -> None:
+def test_owner_points_at_kaya_account_and_will_not_cascade() -> None:
+    """Since KAN-1740's cutover (ADR 0012) — before it, this pointed at `user.id`, the pandan-mirror
+    table migration `0009` dropped."""
     (foreign_key,) = list(Note.__table__.c.owner_id.foreign_keys)
 
-    assert foreign_key.target_fullname == "user.id"
+    assert foreign_key.target_fullname == "kaya_account.id"
     assert foreign_key.ondelete == "RESTRICT", (
-        "CASCADE would let a job that prunes stale mirror rows delete a user's prose with them"
+        "CASCADE would let deleting someone's account silently delete their notes with it"
     )
     assert Note.__table__.c.owner_id.index is True, "every read is scoped by owner"
 

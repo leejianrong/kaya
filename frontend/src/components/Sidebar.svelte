@@ -243,23 +243,6 @@
   </div>
 
   <!--
-    KAN-1050's graph view: the only reachable link to it in the app. A row rather than a button —
-    it is a navigation, the same as every other `<a>` in this component — placed beside "+ New
-    note" because that is where a person already looks for "what can I do with my notes as a
-    whole" rather than with one of them.
-  -->
-  <a
-    href={routeHref({ name: 'graph' })}
-    class="graph-link"
-    class:open={route.name === 'graph'}
-    aria-current={route.name === 'graph' ? 'page' : undefined}
-    onclick={(event) => interceptClick(event, '/graph')}
-    data-testid="graph-link"
-  >
-    Graph
-  </a>
-
-  <!--
     KAN-559's search box. `--q` on the client is one flag and one input here, and it stays that
     shape: submitting sends `draft.trim()` up to `onsearch`, which is App's request to make, not
     this component's — a `Sidebar` that fetched would be a second network caller for the one list
@@ -307,7 +290,7 @@
     <!-- Presentation over the same empty array either way (ADR 0004: no aggregate to read a
          count from here) — only the wording tells a "you own nothing yet" apart from a search
          that matched nothing. -->
-    <p class="empty">{query === '' ? 'No notes yet.' : `No notes match "${query}".`}</p>
+    <p class="empty">{query === '' ? 'No notes yet. Create one, or ask your agent to.' : `No notes match "${query}".`}</p>
   {:else if view === 'list'}
     <!-- Every note, in the order `GET /api/v1/notes` returned them: `updated_at DESC, id DESC` for
          the corpus, `ts_rank DESC, id DESC` for a search (KAN-558). Nothing is grouped, sorted or
@@ -356,8 +339,8 @@
     min-width: 0;
     overflow-y: auto;
     padding: 1rem 0.5rem 1.5rem;
-    background: var(--surface-2);
-    border-right: 1px solid var(--border);
+    background: var(--surface-container);
+    border-right: 1px solid var(--outline-variant);
   }
 
   .create {
@@ -366,40 +349,19 @@
 
   .new-note {
     width: 100%;
-    padding: 0.35rem 0.5rem;
-    border: 1px dashed var(--border);
-    border-radius: 0.3rem;
-    background: transparent;
-    color: var(--accent);
+    padding: 0.5rem 0.9rem;
+    border: 0;
+    border-radius: var(--shape-full);
+    background: var(--secondary-container);
+    color: var(--on-secondary-container);
     cursor: pointer;
     font: inherit;
-    font-size: 0.8rem;
+    font-size: var(--type-body-medium-size);
     text-align: left;
   }
 
   .new-note:hover {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-  }
-
-  .graph-link {
-    display: block;
-    margin: 0 0.5rem;
-    padding: 0.3rem 0.5rem;
-    border-radius: 0.3rem;
-    color: var(--muted);
-    font-size: 0.8rem;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    text-decoration: none;
-  }
-
-  .graph-link:hover {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-  }
-
-  a.graph-link.open {
-    background: color-mix(in srgb, var(--accent) 16%, transparent);
-    color: var(--accent);
+    background: var(--layer-hover);
   }
 
   .create-form {
@@ -411,24 +373,24 @@
     flex: 1;
     min-width: 0;
     padding: 0.3rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-xs);
     background: transparent;
     color: inherit;
     font: inherit;
-    font-size: 0.8rem;
+    font-size: var(--type-body-medium-size);
   }
 
   .create-form button {
     flex: none;
     padding: 0.2rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-full);
     background: transparent;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     cursor: pointer;
     font: inherit;
-    font-size: 0.7rem;
+    font-size: var(--type-label-medium-size);
   }
 
   .search {
@@ -441,24 +403,24 @@
     flex: 1;
     min-width: 0;
     padding: 0.3rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-full);
     background: transparent;
     color: inherit;
     font: inherit;
-    font-size: 0.8rem;
+    font-size: var(--type-body-medium-size);
   }
 
   .clear-search {
     flex: none;
     padding: 0.2rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-full);
     background: transparent;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     cursor: pointer;
     font: inherit;
-    font-size: 0.7rem;
+    font-size: var(--type-label-medium-size);
   }
 
   /* The ordering notice sits exactly where the toggle was, so the swap reads as one control saying
@@ -466,8 +428,8 @@
   .ordering {
     margin: 0;
     padding: 0 0.5rem;
-    color: var(--muted);
-    font-size: 0.7rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-label-medium-size);
     line-height: 1.35;
   }
 
@@ -479,21 +441,21 @@
 
   .views button {
     padding: 0.2rem 0.55rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-full);
     background: transparent;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     cursor: pointer;
     font: inherit;
-    font-size: 0.7rem;
+    font-size: var(--type-label-medium-size);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
 
   .views button.active {
-    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-    color: var(--accent);
+    border-color: transparent;
+    background: var(--secondary-container);
+    color: var(--on-secondary-container);
   }
 
   ul {
@@ -509,7 +471,7 @@
     min-width: 0;
     padding: 0.3rem 0.5rem;
     border: 0;
-    border-radius: 0.3rem;
+    border-radius: var(--shape-md);
     background: transparent;
     color: inherit;
     font: inherit;
@@ -518,26 +480,26 @@
   }
 
   .row:hover {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    background: var(--layer-hover);
   }
 
   .row.folder {
     display: flex;
     align-items: baseline;
     gap: 0.35rem;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     cursor: pointer;
-    font-size: 0.85rem;
+    font-size: var(--type-body-medium-size);
   }
 
   .twist {
     flex: none;
-    font-size: 0.65rem;
+    font-size: var(--type-label-small-size);
   }
 
   a.row.open {
-    background: color-mix(in srgb, var(--accent) 16%, transparent);
-    color: var(--accent);
+    background: var(--secondary-container);
+    color: var(--on-secondary-container);
   }
 
   .title {
@@ -550,9 +512,9 @@
   .sub {
     display: block;
     overflow: hidden;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-family: var(--mono);
-    font-size: 0.7rem;
+    font-size: var(--type-label-medium-size);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -560,7 +522,7 @@
   .unpathed {
     margin-top: 0.5rem;
     padding-top: 0.5rem;
-    border-top: 1px dashed var(--border);
+    border-top: 1px dashed var(--outline-variant);
   }
 
   .unpathed h3 {
@@ -569,8 +531,8 @@
     align-items: baseline;
     margin: 0 0 0.15rem;
     padding: 0 0.5rem;
-    color: var(--muted);
-    font-size: 0.7rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-label-medium-size);
     font-style: italic;
     font-weight: 600;
     letter-spacing: 0.06em;
@@ -585,7 +547,38 @@
   .empty {
     margin: 0;
     padding: 0 0.5rem;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-size: 0.9rem;
+  }
+
+  /* KAN-1818, compact: the list is its own full-width screen, so its controls and rows are touch
+     targets (48px; the M3 minimum is 44). */
+  @media (max-width: 599.98px) {
+    .new-note,
+    .search-input,
+    .create-input,
+    .create-form button,
+    .clear-search,
+    .views button {
+      min-height: 3rem;
+      font-size: 1rem;
+    }
+
+    .views button {
+      padding: 0 1rem;
+      font-size: var(--type-body-medium-size);
+    }
+
+    .row {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-height: 3rem;
+    }
+
+    .row.folder {
+      flex-direction: row;
+      align-items: center;
+    }
   }
 </style>

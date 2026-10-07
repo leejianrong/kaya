@@ -64,16 +64,33 @@ ENV UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/opt/kaya/venv
 
 WORKDIR /src
+# backend/pyproject.toml's [tool.uv.sources] names kaya-mcp by a *relative* path, `../mcp` (ADR
+# 0014's narrow exception to ADR 0001), which itself names kaya-client by `../kaya-client` (ADR
+# 0004) — so both have to sit at those paths in this stage's filesystem, with their own source
+# rather than just their manifests, the same reasoning mcp/Dockerfile's own deps stage already
+# applies to kaya-client for the identical reason: a path dependency is a regular dependency uv
+# builds a wheel for, not the "current project" `--no-install-project` skips below.
+COPY kaya-client/pyproject.toml kaya-client/README.md ./kaya-client/
+COPY kaya-client/src ./kaya-client/src
+COPY mcp/pyproject.toml mcp/README.md ./mcp/
+COPY mcp/src ./mcp/src
+
+WORKDIR /src/backend
 # README.md is here because pyproject.toml names it as the project readme; without it uv refuses to
 # read the metadata at all.
 COPY backend/pyproject.toml backend/uv.lock backend/README.md ./
 
 # Two syncs, and the split is the layer boundary: this one resolves and installs *dependencies*
-# and is invalidated by uv.lock alone, so editing a route does not re-download SQLAlchemy.
+# and is invalidated by uv.lock (and kaya-mcp/kaya-client's own sources) alone, so editing a route
+# does not re-download SQLAlchemy.
 #
 # --frozen: fail if uv.lock disagrees with pyproject.toml rather than silently re-resolving, the
 #   same promise `npm ci` makes above and the same one CI makes.
-RUN uv sync --frozen --no-dev --no-install-project
+# --no-editable: kaya-mcp and kaya-client mark themselves `editable = true` for local development
+#   (`uv sync` from a checkout), but an editable install is a reference back to this build stage's
+#   /src, which will not exist in the runtime image — the same correction mcp/Dockerfile's own deps
+#   stage makes for kaya-client.
+RUN uv sync --frozen --no-dev --no-install-project --no-editable
 
 COPY backend/app ./app
 # And this one installs kaya itself, non-editable, so `app` lands in site-packages **with its
@@ -155,7 +172,15 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=6 \
 # "the schema is current" is a visible step with its own exit code, rather than something the web
 # server does on the way up and swallows.
 #
-# Proxy headers are left at uvicorn's default. Under an Ingress that is not yet right, and ADR 0010
-# §Consequences names this exact class of bug as one the MVP knowingly leaves unproven until the
-# homelab. Nothing kaya returns today is an absolute URL, so it does not bite yet.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# `--forwarded-allow-ips=*`: ADR 0010 §Consequences flagged proxy headers as "left at uvicorn's
+# default... this class of bug is unproven until the homelab, because nothing kaya returns today is
+# an absolute URL, so it does not bite yet" — KAN-1738/1744 are the first features that build one
+# (`request.base_url` in `app/identity/oauth_metadata.py`, `oauth_server_metadata.py`,
+# `oauth_authorize.py`), and it bit: fronted by Fly's edge (or any Ingress), the container's peer is
+# never `127.0.0.1` (uvicorn's own `--forwarded-allow-ips` default), so `X-Forwarded-Proto` was
+# never trusted and every derived URL came back `http://` against an `https://`-only GitHub OAuth
+# callback and RFC 9728/8414 metadata. `*` trusts every peer's forwarded headers rather than listing
+# one platform's proxy IPs, because the container's own network topology (Fly's `[http_service]`,
+# the k8s `Service` in front of `deploy/k8s/`) is the only path in either way — there is no direct
+# route to this port that isn't already through one of them.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--forwarded-allow-ips=*"]

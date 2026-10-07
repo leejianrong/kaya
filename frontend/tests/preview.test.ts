@@ -67,6 +67,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  localStorage.clear()
   for (const instance of mounted.splice(0)) {
     unmount(instance as never)
   }
@@ -447,6 +448,7 @@ describe('a pandan-board embed hydrates after render (KAN-1049)', () => {
 
     resolve(EMBED_URL('board=18&column=todo'), {
       unavailable: false,
+      not_connected: false,
       cards: [{ ref: 'KAN-1', title: 'Fix the bug', column: 'todo' }],
     })
     await settle()
@@ -465,11 +467,35 @@ describe('a pandan-board embed hydrates after render (KAN-1049)', () => {
     mounted.push(mount(PreviewPane, { target: host, props: { note: note(), source: body } }))
     await previewRendered(host)
 
-    resolve(EMBED_URL('board=18&view=3'), { unavailable: true, cards: [] })
+    resolve(EMBED_URL('board=18&view=3'), { unavailable: true, not_connected: false, cards: [] })
     await settle()
 
     expect(host.querySelector('[data-testid="embed-board-unavailable"]')).not.toBeNull()
     expect(host.querySelector('[data-testid="embed-board-cards"]')).toBeNull()
+  })
+
+  it('shows a distinct "connect your pandan account" notice, not the generic unavailable one, '
+    + 'when not_connected is true (ADR 0012, KAN-1741)', async () => {
+    const { resolve } = deferredFetch()
+    const body = '```pandan-board\nboard: 18\ncolumn: todo\n```\n'
+    mounted.push(mount(PreviewPane, { target: host, props: { note: note(), source: body } }))
+    await previewRendered(host)
+
+    resolve(EMBED_URL('board=18&column=todo'), {
+      unavailable: false,
+      not_connected: true,
+      cards: [],
+    })
+    await settle()
+
+    const notice = host.querySelector('[data-testid="embed-board-not-connected"]')
+    expect(notice).not.toBeNull()
+    expect(notice!.textContent).toContain('Connect your pandan account')
+    expect(host.querySelector('[data-testid="embed-board-unavailable"]')).toBeNull()
+
+    const link = notice!.querySelector('a')
+    expect(link).not.toBeNull()
+    expect(link!.getAttribute('href')).toBe('/pandan')
   })
 
   it('shows the same unavailable notice when the fetch fails outright, not an error', async () => {
@@ -531,6 +557,7 @@ describe('a pandan-board embed hydrates after render (KAN-1049)', () => {
 
     resolve(EMBED_URL('board=2&column=b'), {
       unavailable: false,
+      not_connected: false,
       cards: [{ ref: 'KAN-2', title: 'Second board', column: 'b' }],
     })
     await settle()
@@ -538,6 +565,7 @@ describe('a pandan-board embed hydrates after render (KAN-1049)', () => {
     // The stale answer, for a board no longer on screen, arrives last.
     resolve(EMBED_URL('board=1&column=a'), {
       unavailable: false,
+      not_connected: false,
       cards: [{ ref: 'KAN-1', title: 'STALE FIRST BOARD', column: 'a' }],
     })
     await settle()
@@ -575,8 +603,20 @@ describe('a note attachment image hydrates after render (R14, KAN-1067/1068)', (
 
   const ATTACHMENT_URL = '/api/v1/notes/NOTE-6/attachments/34'
 
+  const realCreateObjectURL = URL.createObjectURL
+  let blobUrls = 0
+
   beforeEach(() => {
     auth.setToken(FAKE_TOKEN)
+    // jsdom >= 30.1 ships its own `URL.createObjectURL`, which only accepts a jsdom-internal
+    // `Blob`; under vitest the global `Blob` (and `Response#blob()`) is Node's, so the real call
+    // throws inside `fetchAttachmentBlobUrl` (-> null -> no <img>). What these tests pin is the
+    // hydration wiring, not blob minting, so stand in a unique `blob:` URL per call.
+    URL.createObjectURL = () => `blob:test/${(blobUrls += 1)}`
+  })
+
+  afterEach(() => {
+    URL.createObjectURL = realCreateObjectURL
   })
 
   it('replaces the placeholder with a real <img> pointing at a blob: URL on success', async () => {
@@ -671,7 +711,7 @@ describe('a note attachment image hydrates after render (R14, KAN-1067/1068)', (
   })
 })
 
-describe('the preview toggle', () => {
+describe('the mode switch', () => {
   const NOTE = note()
 
   beforeEach(() => {
@@ -710,12 +750,17 @@ describe('the preview toggle', () => {
     const element = host.querySelector('.cm-editor')
     typeInto(view, '# Typed before hiding')
 
-    click('toggle-preview')
-    expect(host.querySelector('[data-testid="preview"]')).toBeNull()
-    click('toggle-preview')
+    click('mode-split')
     await settle()
     // The re-shown preview is a *new* component instance, so it loads the chunk again (from the
     // registry) before it can render.
+    await previewRendered(host)
+
+    // The preview is *added* beside the editor, then dropped again; the editor never notices.
+    click('mode-edit')
+    expect(host.querySelector('[data-testid="preview"]')).toBeNull()
+    click('mode-split')
+    await settle()
     await previewRendered(host)
 
     expect(editor(host)).toBe(view)
@@ -729,6 +774,9 @@ describe('the preview toggle', () => {
     mounted.push(mount(App, { target: host, props: {} }))
     await settle()
     await editorArrived(host)
+    click('mode-split')
+    await settle()
+    await previewRendered(host)
 
     const rendered = preview(host)
     expect(rendered.closest('.editor-host')).toBeNull()

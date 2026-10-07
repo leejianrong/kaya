@@ -1,13 +1,13 @@
-"""In-memory stand-ins for the resolver's three collaborators.
+"""In-memory stand-ins used across the unit layer.
 
-Each one fakes at a *seam that already existed for its own reasons* rather than at a boundary
-invented to make testing easier: the upstream is a Protocol because ADR 0002 makes pandan a
-runtime dependency worth isolating, the mirror is a Protocol because "this UUID must be
-addressable as a foreign key" is a separate job from "who is calling", and the clock is injected
-because a TTL test that sleeps for a real 60 seconds is a slow test today and a flaky one later.
-
-Together they make the whole of ADR 0002's resolver runnable with no network, no database and —
-importantly — no real PAT anywhere near this repository.
+Before ADR 0012's cutover (KAN-1740) this module also held `FakeUpstream`/`FakeMirror`, the two
+collaborators ADR 0002's `PrincipalResolver` was built to run against with no network. That
+resolver is gone — `app/auth/kaya_principal.py`'s lookup is a plain database read a unit test fakes
+by overriding `get_principal` directly with a fixed `Principal`, not by faking a collaborator three
+layers down — so what remains here is the still-generically-useful part: fixed `Principal`s for
+"alice"/"bob", opaque bearer strings that assert nothing about kaya's own token shape, an injectable
+clock, and `FakeTeamUpstream` for the unrelated (and unaffected) team-default-access stack (ADR
+0011), which still calls pandan and still needs its seam faked at the HTTP boundary.
 """
 
 import uuid
@@ -35,40 +35,6 @@ class FakeClock:
 
     def advance(self, seconds: float) -> None:
         self.now += seconds
-
-
-class FakeUpstream:
-    """An ``IdentityUpstream`` backed by a dict, counting every call it receives.
-
-    The call count is the assertion that matters for the cache: a resolver that re-introspects on
-    every request still returns the right principal, so every result-shaped assertion passes while
-    the cache does nothing at all.
-    """
-
-    def __init__(self, known: dict[str, Principal] | None = None) -> None:
-        self.known = dict(known or {})
-        self.available = True
-        self.calls: list[str] = []
-
-    def introspect(self, bearer: str) -> Principal | None:
-        self.calls.append(bearer)
-        if not self.available:
-            raise UpstreamUnavailable("https://pandan.invalid/api/v1/me is unreachable")
-        return self.known.get(bearer)
-
-    @property
-    def call_count(self) -> int:
-        return len(self.calls)
-
-
-class FakeMirror:
-    """A ``PrincipalMirror`` that remembers what it was asked to ensure."""
-
-    def __init__(self) -> None:
-        self.ensured: list[Principal] = []
-
-    def ensure(self, principal: Principal) -> None:
-        self.ensured.append(principal)
 
 
 class FakeTeamUpstream:

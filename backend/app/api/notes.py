@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session
 from app.api.concurrency import enforce_precondition
 from app.api.refs import NoteFromRef
 from app.api.schemas import (
+    FormatCheck,
     NoteCreate,
     NoteList,
     NoteRead,
@@ -61,7 +62,8 @@ from app.auth import (
     notes_owned_by,
 )
 from app.db import get_session
-from app.integrations.dependencies import CallerBearer
+from app.integrations.dependencies import PandanBearer
+from app.markdown_format import format_markdown
 from app.models import Note
 from app.note_links import reconcile_note_links, resolve_pending_note_links
 from app.note_versions import cut_version, note_versions
@@ -83,7 +85,7 @@ def create_note(
     principal: CurrentPrincipal,
     session: DbSession,
     response: Response,
-    bearer: CallerBearer,
+    bearer: PandanBearer,
     team_resolver: CurrentTeamResolver,
 ) -> NoteRead:
     """Create a note owned by the caller.
@@ -123,7 +125,8 @@ def create_note(
     heuristic" (BREADBOARD.md's R13) draws no exception for a body that happens to be ``""``.
     """
     if payload.team_id is not None:
-        team_ids = team_resolver.member_of(bearer) if bearer is not None else frozenset()
+        pandan_pat = bearer()
+        team_ids = team_resolver.member_of(pandan_pat) if pandan_pat is not None else frozenset()
         if payload.team_id not in team_ids:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -150,7 +153,7 @@ def list_notes(
     principal: CurrentPrincipal,
     session: DbSession,
     term: SearchTerm,
-    bearer: CallerBearer,
+    bearer: PandanBearer,
     team_resolver: CurrentTeamResolver,
 ) -> NoteList:
     """Every note the caller owns, newest first — or, with ``?q=``, the ones that match it.
@@ -189,7 +192,8 @@ def list_notes(
     when one does. It is deliberately not added *with* search either — a `limit` would need a
     documented interaction with ranking, and that is a second undiscussed contract.
     """
-    team_ids = team_resolver.member_of(bearer) if bearer is not None else frozenset()
+    pandan_pat = bearer()
+    team_ids = team_resolver.member_of(pandan_pat) if pandan_pat is not None else frozenset()
     statement = (
         notes_owned_by(principal, team_ids).order_by(Note.updated_at.desc(), Note.id.desc())
         if term is None
@@ -237,7 +241,9 @@ def list_note_versions(note: NoteFromRef, session: DbSession) -> NoteVersionList
 
 
 @router.patch("/notes/{ref}", summary="Edit a note, or move it")
-def update_note(note: NoteFromRef, payload: NoteUpdate, session: DbSession) -> NoteRead:
+def update_note(
+    note: NoteFromRef, payload: NoteUpdate, session: DbSession, response: Response
+) -> NoteRead:
     """Change ``title``, ``body`` and/or ``path``. Omitted fields are left alone.
 
     Moving a note between folders is this route with ``{"path": "…"}`` and nothing else — one
@@ -279,6 +285,17 @@ def update_note(note: NoteFromRef, payload: NoteUpdate, session: DbSession) -> N
     enforce_precondition(session, note, payload)
 
     changes = payload.changes()
+    if payload.format:
+        # KAN-1814. After the guard, before anything is applied: a refused write formats nothing,
+        # and a formatted one is still ONE write — the same transaction, version and link
+        # reconcile as any other body change. With no body sent, the *stored* one is formatted, and
+        # a result identical to what is stored is no change at all (no restamp, no version cut).
+        formatted = format_markdown(changes.get("body", note.body))
+        response.headers["X-Kaya-Format"] = (
+            f"skipped; {formatted.reason}" if formatted.outcome == "skipped" else formatted.outcome
+        )
+        if "body" in changes or formatted.text != note.body:
+            changes["body"] = formatted.text
     for field, value in changes.items():
         setattr(note, field, value)
 
@@ -296,6 +313,21 @@ def update_note(note: NoteFromRef, payload: NoteUpdate, session: DbSession) -> N
         session.refresh(note)
 
     return NoteRead.of(note)
+
+
+@router.get("/notes/{ref}/format-check", summary="Would formatting change this note?")
+def check_format(note: NoteFromRef) -> FormatCheck:
+    """KAN-1814: report whether ``PATCH`` with ``format: true`` would change the stored body.
+
+    Read-only — nothing is written, ``updated_at`` does not move. The agent hint ("run `kaya note
+    format`") and ``--check`` are both this call.
+    """
+    result = format_markdown(note.body)
+    return FormatCheck(
+        changed=result.outcome == "formatted",
+        changed_lines=result.changed_lines,
+        reason=result.reason,
+    )
 
 
 @router.delete(

@@ -78,13 +78,13 @@ def test_a_changed_field_is_named_with_its_new_value() -> None:
 def test_several_changed_fields_are_all_named() -> None:
     settings = Settings.model_construct(
         card_resolution_connect_timeout_seconds=1.0,
-        pandan_read_timeout_seconds=99.0,
+        team_access_read_timeout_seconds=99.0,
         log_level="DEBUG",
     )
 
     assert effective_overrides(settings) == {
         "card_resolution_connect_timeout_seconds": 1.0,
-        "pandan_read_timeout_seconds": 99.0,
+        "team_access_read_timeout_seconds": 99.0,
         "log_level": "DEBUG",
     }
 
@@ -139,7 +139,7 @@ def test_settings_left_at_their_default_are_not_claimed_as_overrides(
         _log_effective_settings()
 
         line = captured_lines(capsys)[-1]
-        assert "pandan_read_timeout_seconds" not in line["settings_overrides"]
+        assert "team_access_read_timeout_seconds" not in line["settings_overrides"]
     finally:
         settings.card_resolution_connect_timeout_seconds = original
 

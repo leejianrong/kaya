@@ -1,7 +1,10 @@
 <script lang="ts">
   import { fetchAttachmentBlobUrl } from '../lib/attachments'
   import { fetchBoardEmbed } from '../lib/embeds'
-  import type { BoardEmbedResponse, Note } from '../lib/types'
+  import { listLinks } from '../lib/notes'
+  import { readingBody } from '../lib/readingBody'
+  import { interceptClick } from '../lib/router'
+  import type { BoardEmbedResponse, Link, Note } from '../lib/types'
 
   /**
    * `lib/markdown.ts`, named as a **type** so naming it costs nothing.
@@ -45,7 +48,17 @@
    * **The renderer arrives on its own chunk (KAN-836), and the loader is deliberately not in the
    * effect that renders.** See {@link renderer} for the whole of that argument.
    */
-  const { note, source }: { note: Note | null; source: string } = $props()
+  const {
+    note,
+    source,
+    reading = false,
+  }: {
+    note: Note | null
+    source: string
+    /** KAN-1819, Read mode: the pane is the document itself, so it drops its "Preview" label and its
+     *  box. A styling input only — nothing in the render effect reads it. */
+    reading?: boolean
+  } = $props()
 
   /** The element `replaceChildren` owns. No template children — see the docstring above. */
   let rendered: HTMLDivElement | undefined = $state()
@@ -117,6 +130,63 @@
     }
   })
 
+  /**
+   * KAN-1824: what `/links` says about this note's wikilinks, or `undefined` while it is unknown.
+   *
+   * Fetched only when the document holds a `[[` at all, and refetched when the note is opened or
+   * saved (`updated_at` moves), never per keystroke: `hasWikilinks` is a boolean, so typing inside a
+   * paragraph does not re-run the effect. A failed fetch leaves it `undefined`, and every wikilink
+   * then renders as unresolved, which is the same answer ADR 0003 gives for pandan being down.
+   */
+  let resolution: readonly Link[] | undefined = $state(undefined)
+  const hasWikilinks = $derived(source.includes('[['))
+  $effect(() => {
+    const ref = note?.ref
+    // A save moves `updated_at`, and that is the cue to ask again.
+    const saved = note?.updated_at
+    if (ref === undefined || saved === undefined || !hasWikilinks) {
+      resolution = undefined
+      return
+    }
+    let live = true
+    listLinks(ref).then(
+      (rows) => {
+        if (live) {
+          resolution = rows
+        }
+      },
+      () => {
+        if (live) {
+          resolution = undefined
+        }
+      },
+    )
+    return () => {
+      live = false
+    }
+  })
+
+  /**
+   * A click on a resolved wikilink goes through the SPA router, which runs the unsaved-work guard.
+   * One delegated listener on the container, because its children belong to `replaceChildren`. A
+   * modified click or a middle click falls through to the browser, and the `href` is a real route.
+   */
+  $effect(() => {
+    const target = rendered
+    if (target === undefined) {
+      return
+    }
+    const onclick = (event: MouseEvent): void => {
+      const anchor = (event.target as Element | null)?.closest?.('a.wikilink')
+      const href = anchor?.getAttribute('href')
+      if (href !== null && href !== undefined) {
+        interceptClick(event, href)
+      }
+    }
+    target.addEventListener('click', onclick)
+    return () => target.removeEventListener('click', onclick)
+  })
+
   $effect(() => {
     // All three reads are **above** the guard, because that is what registers them as dependencies.
     // Returning before the `source` read would leave this effect unsubscribed from the document and
@@ -124,13 +194,16 @@
     // `await` at the top of this effect produces, by moving the read out of the synchronous pass.
     const target = rendered
     const loaded = renderer
-    const markdown = source
+    // Read mode shows the title as the heading, so a body that opens with the same H1 drops it from
+    // the rendering only (KAN-1824). Split and Preview show the body as written.
+    const markdown = reading && note !== null ? readingBody(source, note.title) : source
+    const rows = resolution
     if (target === undefined || loaded === null) {
       return
     }
     // `replaceChildren` and not an incremental patch: the fragment is the whole rendering, and a
     // preview is cheap to rebuild. A diff here would be a second rendering strategy to keep correct.
-    target.replaceChildren(loaded.renderMarkdown(markdown))
+    target.replaceChildren(loaded.renderMarkdown(markdown, { links: rows }))
 
     // KAN-1049: a second pass over the subtree just built, hydrating every `.embed-board`
     // placeholder `lib/markdown.ts` left behind. Not folded into `renderMarkdown` itself — that
@@ -191,6 +264,12 @@
    * identically: a caller of this component cannot and should not act differently on either, the
    * same argument `Link.resolved_ref` already makes for wikilink pills (Q26, ADR 0003).
    *
+   * `{ not_connected: true }` (ADR 0012's amendment, KAN-1741) is deliberately a **third**,
+   * distinct rendering: unlike `unavailable`, this is a case the caller can do something about, so
+   * it gets its own message and a link to `/pandan` rather than the generic "could not be reached"
+   * — see `lib/types.ts`'s `BoardEmbedResponse` docstring for why the two flags never mean the same
+   * thing.
+   *
    * Every element is `document.createElement`, every value a `.textContent` assignment — the same
    * two safe primitives `lib/markdown.ts` uses, for the same reason: a card's `title` is another
    * author's prose (pandan's, not this note's, but no less arbitrary), and it must become a `Text`
@@ -198,6 +277,22 @@
    */
   function applyBoardEmbedResult(el: HTMLElement, result: BoardEmbedResponse | null): void {
     el.replaceChildren()
+
+    if (result !== null && result.not_connected) {
+      const notice = document.createElement('p')
+      notice.className = 'embed-board-unavailable'
+      notice.dataset.testid = 'embed-board-not-connected'
+      notice.textContent = 'Connect your pandan account to see this board. '
+
+      const link = document.createElement('a')
+      link.href = '/pandan'
+      link.textContent = 'Connect pandan'
+      link.addEventListener('click', (event) => interceptClick(event, '/pandan'))
+      notice.append(link)
+
+      el.append(notice)
+      return
+    }
 
     if (result === null || result.unavailable) {
       const notice = document.createElement('p')
@@ -311,7 +406,7 @@
   }
 </script>
 
-<section class="preview" aria-label="Preview">
+<section class="preview" class:reading aria-label="Preview">
   <header>
     <h2>Preview</h2>
     {#if note === null}
@@ -344,6 +439,22 @@
     padding: 1.5rem 1.5rem 1.5rem 0;
   }
 
+  /* KAN-1819, Read: no label, no box, symmetric gutters; the page (not the box) scrolls. */
+  .preview.reading {
+    height: auto;
+    padding: 0 1.5rem 1.5rem;
+  }
+
+  .preview.reading header {
+    display: none;
+  }
+
+  .preview.reading .rendered {
+    overflow: visible;
+    padding: 0;
+    border: 0;
+  }
+
   header {
     display: flex;
     align-items: baseline;
@@ -352,7 +463,7 @@
 
   h2 {
     margin: 0;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-size: 0.7rem;
     font-weight: 600;
     letter-spacing: 0.08em;
@@ -360,7 +471,7 @@
   }
 
   .hint {
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-family: var(--mono);
     font-size: 0.75rem;
   }
@@ -370,9 +481,9 @@
   .notice {
     margin: 0;
     padding: 0.75rem 1rem;
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--accent);
-    border-radius: 0.35rem;
+    border: 1px solid var(--outline-variant);
+    border-left: 3px solid var(--primary);
+    border-radius: var(--shape-md);
     font-size: 0.85rem;
   }
 
@@ -381,8 +492,8 @@
     min-width: 0;
     overflow: auto;
     padding: 0.75rem 1rem;
-    border: 1px solid var(--border);
-    border-radius: 0.4rem;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--shape-md);
     line-height: 1.6;
   }
 
@@ -445,14 +556,14 @@
 
   .rendered :global(blockquote) {
     padding-left: 0.9rem;
-    border-left: 3px solid var(--border);
-    color: var(--muted);
+    border-left: 3px solid var(--outline-variant);
+    color: var(--on-surface-variant);
   }
 
   .rendered :global(code) {
     padding: 0.1em 0.3em;
-    border-radius: 0.2rem;
-    background: color-mix(in srgb, var(--text) 8%, transparent);
+    border-radius: var(--shape-xs);
+    background: var(--surface-container-high);
     font-family: var(--mono);
     font-size: 0.85em;
   }
@@ -460,8 +571,8 @@
   .rendered :global(pre) {
     overflow-x: auto;
     padding: 0.6rem 0.8rem;
-    border-radius: 0.3rem;
-    background: color-mix(in srgb, var(--text) 6%, transparent);
+    border-radius: var(--shape-sm);
+    background: var(--surface-container-high);
   }
 
   .rendered :global(pre code) {
@@ -474,13 +585,13 @@
     element still holds exactly the author's bytes and nothing else — see `lib/markdown.ts`.
   */
   .rendered :global(pre.raw-html) {
-    border-left: 3px solid var(--accent);
+    border-left: 3px solid var(--primary);
   }
 
   .rendered :global(pre.raw-html)::before {
     display: block;
     margin-bottom: 0.3rem;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     content: 'raw HTML, not rendered';
     font-family: var(--mono);
     font-size: 0.7rem;
@@ -494,8 +605,8 @@
     has the argument, and `title` carries the reason for anyone who hovers.
   */
   .rendered :global(span.unlinked) {
-    border-bottom: 1px dotted var(--muted);
-    color: var(--muted);
+    border-bottom: 1px dotted var(--on-surface-variant);
+    color: var(--on-surface-variant);
     font-family: var(--mono);
     font-size: 0.9em;
   }
@@ -504,9 +615,9 @@
      whole of its rendering; nothing hydrates it. */
   .rendered :global(p.embed-board-error) {
     padding: 0.5rem 0.8rem;
-    border: 1px dashed var(--border);
-    border-radius: 0.3rem;
-    color: var(--muted);
+    border: 1px dashed var(--outline-variant);
+    border-radius: var(--shape-sm);
+    color: var(--on-surface-variant);
     font-size: 0.85em;
   }
 
@@ -522,17 +633,17 @@
   */
   .rendered :global(.embed-board) {
     padding: 0.6rem 0.8rem;
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--accent);
-    border-radius: 0.3rem;
-    background: color-mix(in srgb, var(--text) 4%, transparent);
+    border: 1px solid var(--outline-variant);
+    border-left: 3px solid var(--primary);
+    border-radius: var(--shape-md);
+    background: var(--surface-container-low);
     font-size: 0.85em;
   }
 
   .rendered :global(.embed-board-unavailable),
   .rendered :global(.embed-board-empty) {
     margin: 0;
-    color: var(--muted);
+    color: var(--on-surface-variant);
   }
 
   .rendered :global(.embed-board-cards) {
@@ -551,15 +662,15 @@
   }
 
   .rendered :global(.embed-board-ref) {
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-family: var(--mono);
     font-size: 0.85em;
   }
 
   .rendered :global(.embed-board-column) {
     padding: 0.05em 0.4em;
-    border-radius: 0.25rem;
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    border-radius: var(--shape-sm);
+    background: var(--secondary-container);
     font-size: 0.75em;
     text-transform: uppercase;
     letter-spacing: 0.03em;
@@ -577,23 +688,23 @@
   .rendered :global(.embed-attachment-unavailable) {
     display: inline-block;
     padding: 0.1em 0.4em;
-    border: 1px dashed var(--border);
-    border-radius: 0.25rem;
-    color: var(--muted);
+    border: 1px dashed var(--outline-variant);
+    border-radius: var(--shape-sm);
+    color: var(--on-surface-variant);
     font-size: 0.85em;
   }
 
   .rendered :global(th),
   .rendered :global(td) {
     padding: 0.3rem 0.6rem;
-    border: 1px solid var(--border);
+    border: 1px solid var(--outline-variant);
     text-align: left;
   }
 
   .rendered :global(hr) {
     margin: 1.2em 0;
     border: 0;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--outline-variant);
   }
 
   .rendered :global(img) {
@@ -601,6 +712,41 @@
   }
 
   .rendered :global(a) {
-    color: var(--accent);
+    color: var(--primary);
+  }
+
+  /*
+    KAN-1824: wikilinks in Read mode. A resolved note link is an ordinary link, kept apart by a solid
+    underline that only appears on hover and focus. A card chip carries no destination, so it reads
+    as a quiet mono tag. An unresolved one is muted with a dashed underline and an inert cursor.
+  */
+  .rendered :global(a.wikilink) {
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+  }
+
+  .rendered :global(a.wikilink:hover),
+  .rendered :global(a.wikilink:focus-visible) {
+    border-bottom-color: currentColor;
+  }
+
+  .rendered :global(a.wikilink:focus-visible) {
+    border-radius: 2px;
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+
+  .rendered :global(span.wikilink.card) {
+    padding: 0 0.3em;
+    border-radius: 4px;
+    background: var(--secondary-container);
+    font-family: var(--mono);
+    font-size: 0.9em;
+  }
+
+  .rendered :global(span.wikilink.unresolved) {
+    border-bottom: 1px dashed var(--on-surface-variant);
+    color: var(--on-surface-variant);
+    cursor: help;
   }
 </style>

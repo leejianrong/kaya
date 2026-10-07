@@ -225,3 +225,190 @@ ship independently: kaya's half being done here does not block or require pandan
 
 **Cards:** `KAN-1156` (shared `resolvePandanHref`), `KAN-1157` (the nav link + its own test coverage),
 `KAN-1158` (this discovery: coverage audit + this section). All under `EPIC-161` (`KAY-E12`).
+
+## Shaping pass: R17+ (EPIC-163, KAY-E13)
+
+Board 18 was fully drained on 2026-09-05 (1 `todo` blocked on pandan's own unshipped work, 1
+`in_progress` parked needs-human, everything else `done`). `EPIC-163`'s own description named the
+Discovery pair above as "an easy first R17 slice" — by shaping time that pair had already shipped
+under its own unnumbered heading, so it wasn't available to claim. This section is the shaping pass
+`EPIC-163` exists for: cross-referencing `docs/PLAN.md` §Scope, `docs/SLICES.md` §Out of scope, and
+`docs/QUESTIONS.md` turned up exactly two items marked genuinely open (not permanently rejected, not
+parked by explicit maintainer choice): **a published docs site** (Q34) and **ambient session context**
+(ADR 0005, ¶"Ambient session context (pandan V48) is not in the MVP... Post-MVP", deferred specifically
+until kaya held "enough notes for ambient state to be worth injecting" — now true, since kaya dogfoods
+its own retro notes and design-decision artifacts). Both have a working, documented precedent in the
+pandan repo to mirror rather than invent: `zensical.toml` + `docs-tooling/` + `.github/workflows/
+docs.yml` for the site, `pandan_cli/context.py` + `pandan_cli/skills/pandan/SKILL.md` for ambient
+context.
+
+## R17: A published docs site (Q34)
+
+**Requirement.** kaya's planning corpus (`PLAN.md`, the ADR chain, `ENGINEERING_NOTES.md`, this file,
+`QUESTIONS.md`, `SLICES.md`) is the MVP's documentation and stays exactly where it is — engineering
+history, not user-facing. What's missing is the other half: install, CLI usage, agent/MCP setup and
+self-hosting, reachable as a browsable site rather than only as files in the repo. Same requirement
+pandan settled at its own Q34-equivalent (`KAN-173`), same answer.
+
+**Key finding that shrinks the scope.** Zensical builds *everything* under `docs_dir` and has no
+`exclude_docs` option — an unlisted file is unlisted-but-reachable, not excluded. Pandan's fix was
+pointing `docs_dir` at a subtree (`docs/guide`) rather than the repo's whole `docs/`, leaving every
+planning file exactly where it is and every existing `docs/adr/...` link in `CLAUDE.md` and elsewhere
+untouched. Kaya copies that shape exactly: new content lives under `docs/guide/`, nothing under
+`docs/{PLAN.md,SLICES.md,QUESTIONS.md,ENGINEERING_NOTES.md,adr/,roadmap/}` moves. A link from a guide
+page to a planning doc must be an absolute GitHub URL — a relative `.md` link out of the build tree
+fails `--strict`, same constraint pandan's own config documents.
+
+**Shape**
+
+| Part | Mechanism |
+|------|-----------|
+| Toolchain | A new `docs-tooling/` uv project (`tool.uv.package = false`, mirroring pandan's), pinning `zensical` in its own lockfile so the docs build doesn't touch `backend`/`frontend`/`kaya-client`/`kaya-cli`/`mcp`'s environments. |
+| Config | `zensical.toml` at the repo root: `docs_dir = "docs/guide"`, `site_dir = "site"` (gitignored, CI rebuilds fresh every run), `site_url = "https://leejianrong.github.io/kaya/"`. Palette pinned to kaya's Zinc/Teal tokens (KAN-1169) via `extra_css`, `primary`/`accent` = `"custom"` so no built-in Material color fights `frontend/src/app.css`. Two `[[project.theme.palette]]` blocks keyed by `media` (light/dark), matching `app.css`'s own `prefers-color-scheme` default. |
+| Nav | Explicit `nav` list sized to kaya's actual five-package surface — Get started, CLI, Agents & MCP, Self-hosting, Reference, About — not pandan's eleven-section nav copied wholesale; kaya has no boards/cards/dashboard tutorial to write. |
+| CI: build check | A new `docs.yml` workflow, `Docs build check` job running `uv run --project docs-tooling --frozen zensical build --strict --clean` from the repo root on every PR and every push — gate-safe, same philosophy as `check`'s other jobs: it always runs and reports so a required check never hangs at "Expected". |
+| CI: publish | A second job, `Deploy docs to GitHub Pages`, gated on `github.event_name != 'pull_request'`, `needs: build`, using `actions/upload-pages-artifact` + `actions/deploy-pages`. `permissions: pages: write, id-token: write` added to the workflow only (least-privilege, unchanged everywhere else). |
+| One-time setup | GitHub repo setting (Settings → Pages → Source = "GitHub Actions") — a maintainer action outside CI, confirmed with the maintainer before flipping (it makes the docs site publicly reachable). Until it's set, the build-check job still runs and gates PRs; only the deploy step needs it. |
+
+**Affordances**
+
+| Affordance | Place | Wires to |
+|------------|-------|----------|
+| Browsable docs site | `https://leejianrong.github.io/kaya/` | Static, built from `docs/guide/**` |
+| Docs build-check | Every PR | `docs.yml`'s `build` job |
+
+**Fit-check.** No new backend route, no new package's worth of runtime code — this is a CI/docs-only
+addition, so ADR 0007's version-bump guard does not apply (no `[project]` table changes) and no
+package directory's CI jobs turn on by the "new directory" convention, because `docs-tooling/` isn't a
+shipped package (mirrors pandan's own `tool.uv.package = false` reasoning).
+
+**Cards:** `KAN-1194` (toolchain + config + nav skeleton + CI build-check job), `KAN-1195` (Get-started
++ CLI guide pages), `KAN-1196` (Agents & MCP guide pages), `KAN-1197` (Self-hosting + Reference + About
+pages + GitHub Pages publish job, pending the maintainer's one-time repo setting). All under
+`EPIC-172` (`KAY-E16`).
+
+## R18: Ambient session context (pandan V48, ADR 0005)
+
+**Requirement.** An agent session that starts inside kaya's repo, or configured to work against a
+kaya deployment, should already know the caller's recent notes and how many they hold — the same
+value pandan's `V48`/`KAN-431` shipped for board state — instead of needing to call for it as its
+first action.
+
+**Key finding that shrinks the scope.** The payload half of this already shipped, incidentally, as
+part of V2b: bare `kaya` (`kaya_client/overview.py`, KAN-549) already prints the executable, a
+one-line description, `RECENT_NOTES` recent notes and the count aggregate, and exits `0`. This epic
+does not build that payload again — it wires an existing, tested output into a session's start rather
+than requiring the agent to invoke it. What's actually missing, mirroring the gap `pandan_cli/
+context.py` + `pandan_cli/skills/pandan/SKILL.md` closed on the pandan side, is (1) a hook that runs
+`kaya` at `SessionStart` and (2) a packaged skill documenting how an agent drives kaya at all — kaya
+ships no skill today, unlike pandan.
+
+**Shape**
+
+| Part | Mechanism |
+|------|-----------|
+| Hook command | `kaya install-context` / `kaya uninstall-context` (new `kaya-cli` verbs, `verbs.py` → `kaya-client`, no new client payload — both idempotent, a no-op with a clear message when no credential/API URL is configured). Installs a Claude Code `SessionStart` hook entry (project `.claude/settings.json`-shaped, written the way `update-config`-style tooling writes one) that runs bare `kaya` and feeds its stdout into the session. |
+| Soft-fail | Bounded timeout on the hook's own invocation (mirrors `KAYA_PANDAN_*_TIMEOUT_SECONDS`'s existing pattern — a new, small `Settings`-free constant local to the hook script, since this runs client-side, not through the backend) — kaya unreachable, no token set, or a slow cold start must never block session start. A soft-fail here is a **new** guarantee, not a reuse of ADR 0003's (that ADR covers kaya-the-server tolerating pandan being down; this is kaya-the-client-side-hook tolerating kaya itself being down). |
+| Packaged skill | `kaya-cli/skills/kaya/SKILL.md`, checked in (mirrors `pandan_cli/skills/pandan/SKILL.md`'s in-repo placement) — how an agent authenticates, reads/writes/searches notes, and reads wikilinks/backlinks through the CLI, with an honest "known gaps" section if any MCP-only or CLI-only asymmetry exists (`mcp/README.md`'s MCP ⊆ CLI direction says which way to check). |
+| Guardrail proof | `[mutate]`: break the hook's soft-fail path (point it at an unreachable API URL, or truncate its timeout to 0), confirm session start is not blocked and the failure is visible but non-fatal, restore. Same mutation-testing discipline as R16.4/KAN-1085. |
+
+**Affordances**
+
+| Affordance | Place | Wires to |
+|------------|-------|----------|
+| `kaya install-context` / `kaya uninstall-context` | CLI | writes/removes a `SessionStart` hook entry |
+| Packaged skill | `kaya-cli/skills/kaya/SKILL.md` | read by any agent harness that discovers skills, same as pandan's |
+
+**Fit-check.** No `render()` signature change (ADR 0005 frozen contract untouched) — the hook shells
+out to the existing bare-invocation path rather than adding a fifth `render()` step. No new backend
+route, no new `kaya-client` payload shape. `kaya-cli` version bumps (ADR 0007) for the two new verbs.
+
+**Cards:** `KAN-1198` (`install-context`/`uninstall-context` verbs + hook-writing logic), `KAN-1199`
+(bounded-timeout soft-fail wiring, client-side), `KAN-1200` (packaged skill,
+`kaya-cli/skills/kaya/SKILL.md`), `KAN-1201` (`[mutate]` guardrail proof). All under `EPIC-173`
+(`KAY-E17`).
+
+## R19: Standalone identity — kaya becomes its own authorization server (ADR 0012, EPIC-283)
+
+**Requirement.** Kaya must run and authenticate entirely on its own, with zero runtime dependency on
+pandan — not even for cold authentication, the one dependency ADR 0002 kept knowingly. A 2026-09-25
+cross-repo planning session (jointly with pandan, whose own ADR 0011/0014/0024 this mirrors) decided
+the product goal had shifted from "one shared credential across both apps" to "two fully independent
+apps," and R19 is that decision's implementation.
+
+**Decision, in one line.** Mirror pandan ADR 0011's shape — GitHub OAuth App, `fastapi-users`, a
+second async engine, revocable DB-backed cookie sessions — **reimplemented independently** in kaya's
+own codebase, not shared as a package, so the two apps stay separately releasable. Full reasoning,
+the alternatives considered (and why each was rejected), and the consequences are in
+[ADR 0012](../adr/0012-standalone-identity.md) — not repeated here.
+
+**Shape**
+
+| Part | Mechanism |
+|------|-----------|
+| OAuth App | Kaya's own GitHub OAuth App registration (never pandan's) — a manual, outside-any-PR step, same disposition as R14's Cloudflare R2 credentials. |
+| Human login | `fastapi-users` 15.x, its own `KayaAccount`/`KayaOAuthAccount` tables (`kaya_account`/`kaya_oauth_account`, not named `user`/`oauth_account` — that name is already ADR 0002's pandan-mirror table) on kaya's existing shared `Base`, so one Alembic pipeline still covers everything. |
+| Second engine | A quarantined async engine, `app/identity/db.py` only — `app/db.py`'s sync engine (every note/team/attachment route) is untouched, enforced by `tests/unit/test_no_async_engine.py`'s AST guard now scoped to exempt exactly that one package. |
+| Sessions | `DatabaseStrategy` + a `kaya_session` table (mirrors pandan's `access_token`) — logout is a row delete, i.e. instant revocation, never a JWT waiting out its own expiry. |
+| Graceful boot | `KAYA_GITHUB_OAUTH_CLIENT_ID`/`_CLIENT_SECRET` both unset → the app still boots and every other route still works; login is simply unavailable — mirrors pandan ADR 0011's own tested behaviour. |
+| PATs | `personal_access_token` table, `kaya_pat_…` prefix, HMAC-hashed, account-wide (kaya has no board-equivalent to scope one to), `read`/`write` scope column — mirrors pandan ADR 0014. `/api/v1/tokens` CRUD + a Tokens SPA page, gated on the **cookie session only**, never a PAT bearer (avoids the chicken-and-egg — see `app/api/tokens.py`'s module docstring). **Shipped** (`KAN-1739`). |
+| Retirement | `get_principal`'s pandan-forwarding branch, the `sha256` TTL cache, single-flight coalescing, and the split connect/read deadline are deleted, not left dormant — `app/auth/resolver.py`, `cache.py`, `upstream.py` are gone; `app/auth/kaya_principal.py` (cookie session or `kaya_pat_…` bearer, one indexed sync lookup, no cache/upstream/single-flight — nothing left to shield a stampede from) replaces them. **Shipped** (`KAN-1740`). |
+| Board-embed preview | **Shipped (`KAN-1741`).** Used to free-ride on the same PAT authenticating both apps; now stores an explicitly-connected pandan PAT per kaya account (`pandan_link` table, `app/identity/pandan_link.py`, encrypted at rest with `KAYA_AUTH_SECRET` — a linked pandan token must be handed back to pandan raw on every render, so it cannot be hashed the way kaya's own PATs are), reachable at `/pandan` (`PandanConnect.svelte`). `app/api/embeds.py` resolves the caller's kaya identity, looks up their link, and forwards it — never the caller's own kaya-side bearer, which stopped being a pandan credential at `KAN-1740`. A caller with no link sees a distinct `not_connected` state (never conflated with `unavailable`) and a "connect your pandan account" prompt inline in the note preview. **`app/integrations/card_resolution.py` (wikilink resolution) had the identical broken-bearer problem and is now fixed the same way** — `app/integrations/dependencies.py`'s `card_resolution_bearer` forwards the caller's linked pandan PAT via the same `pandan_link` table and the same `linked_pandan_bearer` lookup (moved to `app/identity/pandan_link.py` so both callers share one implementation), never the caller's kaya-side bearer; a caller with no linked account renders every pandan-shaped wikilink unresolved rather than forwarding a bearer pandan cannot recognise. |
+| Note ownership | **Resolved, by deliberate reset — the maintainer's explicit call, not a reconciliation.** Migration `0009` drops the `user` mirror table entirely and re-points `note.owner_id`'s foreign key at `kaya_account.id`, `NOT VALID` (existing rows are not re-validated against it, so the migration itself does not choke on them). A note created before this migration keeps its old, now-unbacked pandan UUID in `owner_id` and is **not reachable under anyone's new `KayaAccount` id** — no email-matching, no dual-auth transition window, no admin relink tool were built. This is dev/dogfood data with no real external users at stake; a future manual re-association is the maintainer's own problem if they ever want pre-cutover notes back. |
+
+**Fit-check.** `KAN-1738`/`1739` were purely additive; `KAN-1740` is the cutover itself and is
+**not** additive on purpose — `get_principal`/`authorize_note` now resolve every caller through
+`kaya_account`/`kaya_session`/`personal_access_token` exclusively, and a pandan bearer authenticates
+nothing on kaya any more. Two of the three unrelated pandan-calling stacks (`TeamAccessResolver` for
+ADR 0011 team-default access, `CardEpicResolver` for wikilink resolution) are **entirely
+unaffected** by the identity cutover itself — they still call pandan, still cache, still soft-fail
+the same way, because none of that was ever about identity. The third, the board-embed preview, *did*
+break, but for a different, narrower reason than identity resolution: it used to forward the
+caller's own kaya-side bearer as if it were a pandan credential, and `KAN-1740` made that bearer a
+`kaya_pat_…` (or nothing, for a cookie session) that pandan has never seen. `KAN-1741` fixes exactly
+that one call site with an explicit "connect your pandan account" step (see the table row above) —
+`CardEpicResolver`'s wikilink resolution has the identical defect and was deliberately left unfixed
+this round, tracked rather than silently carried forward.
+`tests/integration/test_kaya_principal_resolver.py` is the one file in the whole suite that
+exercises the real resolution path with nothing faked — PAT mint → auth, cookie auth,
+cookie-over-bearer precedence, expiry, a deactivated account's PAT rejected, `last_used_at`
+stamped — every other integration test fakes `get_principal` directly
+(`tests/integration/auth_helpers.py`) because it is really testing note *authorization*, not
+identity *resolution*.
+
+**Cards:** `KAN-1738` (OAuth App + `fastapi-users` + async engine + cookie sessions — **shipped**),
+`KAN-1739` (PAT table + `/api/v1/tokens` + Tokens UI — **shipped**), `KAN-1740` (retire the
+introspection path, cut `get_principal`/`authorize_note` over, re-point `note.owner_id` —
+**shipped**), `KAN-1741` (board-embed reconnect step — **shipped**), `KAN-1742` (this ADR + the CLAUDE.md update —
+**shipped**). All under `EPIC-283`.
+
+## R20: Device-flow CLI login + a hosted remote MCP server (ADR 0013, EPIC-284)
+
+**Requirement.** Once R19 gives kaya its own authorization server, two onboarding gaps remain: minting
+a PAT still means copying a raw secret out of a UI by hand, and kaya's MCP server is stdio-only —
+unreachable from a hosted client (Claude.ai, ChatGPT, Cursor) that can't spawn a local subprocess.
+
+**Decision, in one line.** Mirror pandan ADR 0024 (device flow) and ADR 0025 (hosted remote MCP),
+independently implemented. Full reasoning is in
+[ADR 0013](../adr/0013-device-flow-and-hosted-mcp.md) — not repeated here. Building the hosted MCP
+half surfaced a gap ADR 0013 shared with pandan's own ADR 0025: no grant type was specified for a
+*browser-embedded* client (device flow has no redirect target). [ADR 0014](../adr/0014-oauth-authorization-code-pkce-grant.md)
+fills it, mirroring pandan's own identical discovery and fix (ADR 0026) — with one deliberate
+simplification: no refresh-token rotation, since a token this grant mints is an ordinary, long-lived
+`kaya_pat_…` like every other kaya credential (ADR 0012), not a short-lived one needing renewal.
+
+**Shape**
+
+| Part | Mechanism |
+|------|-----------|
+| `kaya auth login/logout/status` | **Shipped (`KAN-1743`).** RFC 8628 Device Authorization Grant against kaya's own authorization server (R19) — `POST /auth/device/code`/`token` (unauthenticated, RFC 8628's own flat `{"error": "<code>"}` shape) plus a cookie-session-gated `GET/POST /auth/device/{user_code}[/approve\|/deny]` consent screen (`DeviceApproval.svelte`, `/device`), backed by a new `device_authorization` table. **No board/workspace scoping step** — every kaya PAT is account-wide (R19's own PAT shape has no scoping dimension to consent to), though a `read`/`write` scope choice (`--scope`) is still requested and shown. The CLI's third verb is spelled `auth check`, not pandan's `auth status` — `context` already owns that bare word and `mcp/tests/test_cli_parity.py`'s reader refuses two verbs sharing one (the same collision `context print` hit against `config show`). The minted `kaya_pat_…` is written straight to the config file and never printed, unlike the Tokens UI's manual "copy this now" reveal. |
+| Hosted MCP | **Shipped (`KAN-1744`, ADR 0014).** Streamable HTTP (`app/identity/mcp_host.py`, a plain `Route("/mcp", ...)` mounted on the same backend, never `Mount` — see that module's docstring for why), RFC 9728 protected-resource metadata + RFC 8414 authorization-server metadata (`app/identity/oauth_metadata.py`/`oauth_server_metadata.py`), RFC 7591 DCR **and** CIMD resolution (`POST /auth/register`, `app/identity/oauth_client.py` — mirrors pandan's own build, which settled on both simultaneously rather than choosing one), and RFC 8707 resource-indicator binding enforced by the new authorization_code+PKCE grant ([ADR 0014](../adr/0014-oauth-authorization-code-pkce-grant.md)). Bearer validation reuses `app.auth.kaya_principal.principal_from_pat` — the identical lookup `/api/v1` itself uses, since an OAuth-issued token is a `personal_access_token` row too. Hosting `kaya-mcp`'s existing tool registry on the backend is a deliberate, narrow exception to "nothing depends on an adapter" — ADR 0014's own section argues why, mirroring pandan's identical build accepting the identical coupling. |
+| Stdio MCP | Stays, repositioned as a documented self-hosting/offline fallback — the hosted endpoint and the CLI become the top-billed options. |
+
+**Fit-check.** Sequenced strictly after R19 (a device flow needs an authorization server to grant
+against) but not otherwise blocked on pandan's own EPIC-281/282 build — the RFC mechanics are
+spec-defined, not pandan-implementation-defined.
+
+**Cards:** `KAN-1743` (`kaya auth login/logout/status` — **shipped**), `KAN-1744` (hosted remote MCP
+endpoint — **shipped**), `KAN-1745` (docs: hosted MCP + CLI as top options, stdio as the fallback — **shipped** with `KAN-1825`).
+All under `EPIC-284`.

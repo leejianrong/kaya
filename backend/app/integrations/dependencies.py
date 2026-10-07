@@ -29,14 +29,17 @@ The board-embed wiring below follows the same upstream/resolver split, minus the
 ``board_embed.py``'s module docstring explains why that integration deliberately has none.
 """
 
+from collections.abc import Callable
 from functools import lru_cache
 from typing import Annotated
 
 from fastapi import Depends
-from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
 
-from app.auth.dependencies import bearer_scheme
+from app.auth import Principal, get_principal
 from app.config import get_settings
+from app.db import get_session
+from app.identity.pandan_link import linked_pandan_bearer
 from app.integrations.board_embed import BoardEmbedResolver, BoardEmbedUpstream
 from app.integrations.board_embed import default_resolver as default_board_embed_resolver
 from app.integrations.board_embed import default_upstream as default_board_embed_upstream
@@ -48,6 +51,8 @@ from app.integrations.card_resolution import (
     default_resolver,
     default_upstream,
 )
+from app.integrations.pandan_link import PandanLinkVerifier
+from app.integrations.pandan_link import default_verifier as default_pandan_link_verifier
 from app.integrations.storage import ObjectStorage
 from app.integrations.storage import default_storage as default_object_storage
 
@@ -95,6 +100,20 @@ def reset_board_embed() -> None:
 
 
 @lru_cache(maxsize=1)
+def get_pandan_link_verifier() -> PandanLinkVerifier:
+    """Process-wide, for the reason `get_card_epic_upstream` gives: `PandanHttpVerifier` pools an
+    `httpx.Client` to pandan, and rebuilding one per request would pay a TLS handshake on every
+    connect-a-pandan-account submission."""
+    return default_pandan_link_verifier(get_settings())
+
+
+def reset_pandan_link() -> None:
+    """Drop the cached verifier. The twin of `reset_board_embed`, needed for the identical
+    reason."""
+    get_pandan_link_verifier.cache_clear()
+
+
+@lru_cache(maxsize=1)
 def get_object_storage() -> ObjectStorage:
     """Process-wide, for the reason `get_card_epic_upstream` gives: the real implementation's
     `boto3` client pools connections, and building one per request would pay a handshake on every
@@ -113,33 +132,71 @@ def reset_object_storage() -> None:
     get_object_storage.cache_clear()
 
 
-def caller_bearer(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+def card_resolution_bearer(
+    principal: Annotated[Principal, Depends(get_principal)],
+    db: Annotated[Session, Depends(get_session)],
 ) -> str | None:
-    """The caller's own bearer, verbatim, for forwarding to pandan (KAN-564's whole premise).
+    """The caller's own **linked** pandan PAT, decrypted, or ``None`` if they have never connected
+    one — what `app/integrations/card_resolution.py`'s `CardEpicResolver` forwards to pandan to
+    resolve `KAN-`/`EPIC-` wikilinks (`app/api/links.py`).
 
-    **It reuses ``app.auth.dependencies.bearer_scheme`` rather than reading the header itself**, so
-    the claim in that module's comment — "this is the only place in kaya where anything about the
-    ``Authorization`` header is parsed, and it is Starlette doing the parsing" — stays true with a
-    second consumer. What is parsed there is the HTTP *scheme*, the literal ``Bearer `` in front;
-    nothing here or downstream looks at the credential itself (ADR 0002: kaya has no token format).
+    **Replaces forwarding the caller's own kaya bearer, which this route used to do and which was a
+    bug after ADR 0012's cutover (KAN-1740).** Before that cutover the caller's own kaya-side
+    bearer *was* a pandan credential (ADR 0002: one PAT authenticated both apps), so forwarding it
+    verbatim was correct. `KAN-1740` ended that — a `kaya_pat_…` (or no bearer at all, from a cookie
+    session) reaches pandan as a credential it has never seen, indistinguishable from an outage by
+    `CardEpicResolver`'s existing degrade-to-unresolved path. `app/api/embeds.py`'s board-embed
+    preview hit the identical defect first and was fixed the same way in `KAN-1741`
+    (`app/identity/pandan_link.py`'s `linked_pandan_bearer`, reused here rather than
+    reimplemented) — this dependency is that fix applied to wikilink resolution.
 
-    ``str | None``, and ``None`` is a **degradation rather than a refusal**. Every route that asks
-    for this also depends on ``get_principal``, which already answers `401` for a request with no
-    usable header, so in practice a route body never sees ``None``; raising a second `401` here
-    would be a second copy of an error shape ``principal_from_bearer`` already owns, for a case that
-    cannot arrive. If one ever did — a route wired to this and not to a principal — the ADR
-    0003-shaped answer is the one `app/api/links.py` gives it: resolve nothing, render the links
-    unresolved, do not fail the read. A note's own edges are local and are never at stake.
-
-    The value is returned and never stored, logged or put in an exception (Q41/Q42). It exists for
-    exactly one hop: into ``CardEpicResolver.resolve``, which keys its cache on
-    ``sha256(bearer)`` and holds no raw credential either.
+    ``None`` is a degradation, not a refusal, as in `pandan_bearer` below: a route
+    depending on this also depends on `get_principal`, which already answers `401` before the route
+    body runs, so in practice this only returns `None` for a caller who has simply never linked a
+    pandan account — and `CardEpicResolver.resolve` (via `app/api/links.py`) already treats a `None`
+    bearer as "resolve nothing, render unresolved" (ADR 0003), never a `401` of its own.
     """
-    return credentials.credentials if credentials is not None else None
+    return linked_pandan_bearer(db, principal.id)
 
 
-CallerBearer = Annotated[str | None, Depends(caller_bearer)]
+PandanBearerLookup = Callable[[], str | None]
+"""Call it to get the caller's linked pandan PAT (or ``None``). A lookup, not a value, so a route
+that only sometimes needs pandan pays for the database query only then."""
+
+
+def pandan_bearer(
+    principal: Annotated[Principal, Depends(get_principal)],
+    db: Annotated[Session, Depends(get_session)],
+) -> PandanBearerLookup:
+    """A lookup for the caller's linked pandan PAT, for **team-default access** (ADR 0011,
+    `app/api/refs.py` and `app/api/notes.py`). Calling it returns the PAT, or ``None`` if they never
+    linked one.
+
+    This used to forward the caller's own kaya bearer, which pandan has not recognised since ADR
+    0012 (a `kaya_pat_…` is not a pandan credential), so every non-owner of a team-shared note got
+    the soft-fail "no memberships" answer whatever pandan held (KAN-1804). The linked PAT is the one
+    credential pandan can resolve to the same person, exactly as for wikilink resolution and the
+    board embed. ``None`` degrades to "no team memberships known" (ADR 0003, ADR 0011 Fork 3), never
+    a refusal, so an unlinked caller keeps every note they own.
+
+    **Lazy, and it releases the connection when called.** The owner path of `resolve_note` never
+    needs this, so it must not cost a query. When it is called the caller goes on to ask pandan over
+    the network, and a sync handler must not hold a Postgres connection across that
+    (`app/api/links.py`'s `_release_the_connection`), so the lookup commits. ``expire_on_commit=
+    False`` (`app/db.py`) keeps the session's objects usable afterwards.
+    """
+
+    def lookup() -> str | None:
+        found = linked_pandan_bearer(db, principal.id)
+        db.commit()
+        return found
+
+    return lookup
+
+
+PandanBearer = Annotated[PandanBearerLookup, Depends(pandan_bearer)]
+CardResolutionBearer = Annotated[str | None, Depends(card_resolution_bearer)]
 CardResolver = Annotated[CardEpicResolver, Depends(get_card_epic_resolver)]
 BoardResolver = Annotated[BoardEmbedResolver, Depends(get_board_embed_resolver)]
+PandanLinkVerify = Annotated[PandanLinkVerifier, Depends(get_pandan_link_verifier)]
 ObjectStorageDep = Annotated[ObjectStorage, Depends(get_object_storage)]

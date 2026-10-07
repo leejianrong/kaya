@@ -121,12 +121,23 @@ class Note(Base):
 
     owner_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(),
-        # RESTRICT, not CASCADE. The `user` row is a *mirror* of pandan's identity, so it is the
-        # kind of row someone eventually writes a cleanup job against ("prune mirrors we haven't
-        # seen in a year"). Under CASCADE that job silently deletes prose. Under RESTRICT it fails
-        # loudly, which is the correct outcome — a mirror row is not the authority on whether a
-        # person's notes should exist.
-        ForeignKey("user.id", ondelete="RESTRICT"),
+        # RESTRICT, not CASCADE, both before and after ADR 0012's cutover (KAN-1740) — the target
+        # changed, the reasoning didn't. Before: the `user` row was a *mirror* of pandan's identity,
+        # not the authority on whether a person's notes should exist, so a cleanup job pruning old
+        # mirrors could not silently take prose down with it. After: `kaya_account` is the real
+        # identity, but the same asymmetry holds for a different reason — deleting someone's
+        # account (a revoked GitHub grant, an admin action) is a decision about their *login*, and
+        # should never silently cascade into deleting what they *wrote*. Either way, RESTRICT means
+        # that deletion fails loudly and forces a deliberate choice about the notes first.
+        #
+        # Migration `0009` re-points this FK from `user.id` (ADR 0002's pandan mirror) to
+        # `kaya_account.id` (ADR 0012) as `NOT VALID` — existing rows are not re-checked against
+        # it, so a note already owned by an old pandan-mirrored UUID keeps that value un-validated
+        # rather than being rewritten or deleted. It is a live foreign key for every *new* write:
+        # ADR 0012's own accepted cutover cost is that such a note becomes unreachable through
+        # kaya's new identity (nobody's new `KayaAccount.id` coincides with an old pandan UUID), not
+        # that the column itself becomes wrong. See `docs/roadmap/BREADBOARD.md`'s R19 section.
+        ForeignKey("kaya_account.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )

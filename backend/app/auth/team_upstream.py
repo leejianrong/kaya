@@ -4,16 +4,22 @@ Mirrors `app/auth/upstream.py`'s shape for identity, behind a `Protocol` for the
 at this boundary is what keeps "pandan is down", "the caller belongs to no teams" and "the caller
 belongs to several" all reachable in the unit layer with no network.
 
-The contract (pandan ADR 0021, `backend/app/routers/teams.py`):
+The contract (pandan ADR 0021, renamed by ADR 0023; `backend/app/routers/workspaces.py`):
 
-    GET /api/v1/teams, Authorization: Bearer <pat>
-        ->  200 [{"id": <int>, "name": ..., "role": ...}, ...]
+    GET /api/v1/workspaces, Authorization: Bearer <pandan pat>
+        ->  200 [{"id": <int>, "name": ..., "role": ..., ...}, ...]
 
-scoped server-side to the teams the bearer's owner is a member of. Only `id` is read here. `name`
+scoped server-side to the workspaces the bearer's owner is a member of. Pandan renamed its "team"
+tier to "workspace" in place (`ALTER TABLE ... RENAME`, ids preserved), so a kaya `note.team_id` is
+a pandan workspace id and kaya keeps its own `team` naming (ADR 0011 predates the rename). The
+bearer is the caller's *linked pandan PAT* (`app/integrations/dependencies.py`'s
+`pandan_bearer`), never their kaya credential, which pandan has never seen (ADR 0012). This asks
+pandan a question; it never authenticates anyone. Only `id` is read here. `name`
 and `role` are pandan's business — mirroring either into kaya would be exactly the staleness
 `app/models/team.py`'s module docstring argues against, and neither is needed to answer "is this
-note's team one the caller belongs to?". **`id` is an integer, not a UUID** — pandan's own `Team.id`
-is a `BigInteger` (`app/models/team.py`'s docstring has the full argument), unlike its `User.id`.
+note's team one the caller belongs to?". **`id` is an integer, not a UUID**: pandan's own
+`Workspace.id` (formerly `Team.id`) is a `BigInteger` (`app/models/team.py`'s docstring has the full
+argument), unlike its `User.id`.
 """
 
 from typing import Protocol
@@ -22,8 +28,9 @@ import httpx
 
 from app.auth.principal import UpstreamUnavailable
 
-TEAMS_PATH = "/api/v1/teams"
-"""Pandan's team-list endpoint (ADR 0021), scoped server-side to the caller's own memberships."""
+WORKSPACES_PATH = "/api/v1/workspaces"
+"""Pandan's workspace-list endpoint (ADR 0021, renamed from `/api/v1/teams` by ADR 0023), scoped
+server-side to the caller's own memberships. `/api/v1/teams` no longer exists there."""
 
 
 class TeamMembershipUpstream(Protocol):
@@ -53,7 +60,7 @@ class PandanTeamUpstream:
         timeout: httpx.Timeout | float,
         client: httpx.Client | None = None,
     ) -> None:
-        self._url = base_url.rstrip("/") + TEAMS_PATH
+        self._url = base_url.rstrip("/") + WORKSPACES_PATH
         self._client = client if client is not None else httpx.Client(timeout=timeout)
 
     def member_teams(self, bearer: str) -> frozenset[int]:

@@ -4,9 +4,9 @@
 Unlike that script, this one cannot run with no I/O. `measure_schema_compaction.py` only needs the
 `server` object in-process — `tools/list` is static, so a fake API and an in-memory transport are
 enough. A tool *call* needs a real backend behind a real `KayaClient`, so this script needs three
-things `measure_schema_compaction.py` does not: a live kaya backend, a real pandan PAT, and a real
-`kaya-mcp` **subprocess** talked to over stdio (the transport an MCP host actually launches this
-server with — the same shape `scripts/verify_stdio_image.py` drives against a built image, here
+things `measure_schema_compaction.py` does not: a live kaya backend, a real kaya_pat_ token, and a
+real `kaya-mcp` **subprocess** talked to over stdio (the transport an MCP host actually launches
+this server with — the same shape `scripts/verify_stdio_image.py` drives against a built image, here
 against `python -m kaya_mcp` so no image build is required).
 
 That is also why this is a script and not a test, and not wired into `make check`, `make test` or
@@ -25,14 +25,15 @@ or the maintainer's own browser session may depend on:
 Then, from `mcp/`:
 
     KAYA_MCP_MEASURE_URL=http://localhost:8023 \\
-    KAYA_MCP_MEASURE_PAT=$(python3 -c "import tomllib as t; \\
-        print(t.load(open('$HOME/.config/pandan/config.toml','rb'))['pandan']['token'])") \\
+    KAYA_MCP_MEASURE_PAT=<a kaya_pat_ token> \\
     uv run --with tiktoken python scripts/measure_read_payload.py --seed-notes 40 --markdown
 
-`KAYA_MCP_MEASURE_URL` is the target backend. `KAYA_MCP_MEASURE_PAT` is a real pandan PAT — it
-falls back to `~/.config/pandan/config.toml`, same as `backend/scripts/measure_introspection_
-latency.py` — and is held in one local, handed straight to the subprocess's environment, and never
-printed, logged or included in any output this script produces. With either missing, this script
+`KAYA_MCP_MEASURE_URL` is the target backend. `KAYA_MCP_MEASURE_PAT` is a real kaya_pat_ token
+(from `kaya auth login` or Settings > Tokens). The script still falls back to
+`~/.config/pandan/config.toml` as it did before ADR 0012; that file holds a pandan token, which a
+current backend rejects, so set the variable. The token is held in one local, handed straight to the
+subprocess's environment, and never printed, logged or included in any output this script produces.
+With either missing, this script
 says so and exits 0.
 
 `--seed-notes N` creates N fresh notes through a real `KayaClient` (not through MCP — the tools have
@@ -378,10 +379,9 @@ async def _call(
         env["KAYA_MAX_TEXT_CHARS"] = max_text_chars
     params = StdioServerParameters(command=sys.executable, args=["-m", "kaya_mcp"], env=env)
     with anyio.fail_after(HANDSHAKE_TIMEOUT_SECONDS):
-        async with stdio_client(params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool(tool, arguments)
+        async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool(tool, arguments)
     if result.is_error:
         text = result.content[0].text if result.content else "<no content>"
         raise RuntimeError(f"{tool}({arguments!r}) failed over the real stack: {text}")

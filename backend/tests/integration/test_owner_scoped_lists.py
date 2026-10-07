@@ -25,8 +25,10 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 ALICE_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
 BOB_ID = uuid.UUID("22222222-2222-4222-8222-222222222222")
 
-# `user` is reserved in Postgres; every hand-written statement against it quotes the name.
-INSERT_USER = text('INSERT INTO "user" (id, email) VALUES (:id, :email)')
+INSERT_ACCOUNT = text(
+    "INSERT INTO kaya_account (id, email, hashed_password, is_active, is_superuser, is_verified) "
+    "VALUES (:id, :email, 'not-a-real-hash', true, false, false)"
+)
 INSERT_NOTE = text("INSERT INTO note (owner_id, title) VALUES (:owner_id, :title)")
 COUNT_NOTES = text("SELECT count(*) FROM note")
 
@@ -64,13 +66,13 @@ def two_users_with_notes(database_url: str) -> Iterator[Any]:
 
     def empty() -> None:
         with factory() as session:
-            session.execute(text('TRUNCATE TABLE note, "user", team CASCADE'))
+            session.execute(text('TRUNCATE TABLE note, kaya_account, team CASCADE'))
             session.commit()
 
     empty()
     with factory() as session:
-        session.execute(INSERT_USER, {"id": ALICE_ID, "email": "alice@example.com"})
-        session.execute(INSERT_USER, {"id": BOB_ID, "email": "bob@example.com"})
+        session.execute(INSERT_ACCOUNT, {"id": ALICE_ID, "email": "alice@example.com"})
+        session.execute(INSERT_ACCOUNT, {"id": BOB_ID, "email": "bob@example.com"})
         session.execute(INSERT_NOTE, {"owner_id": ALICE_ID, "title": "alice on kaya"})
         session.execute(INSERT_NOTE, {"owner_id": ALICE_ID, "title": "alice on pandan"})
         session.execute(INSERT_NOTE, {"owner_id": BOB_ID, "title": "bob on kaya"})
@@ -99,13 +101,13 @@ def alice_and_bob_with_a_team_note(database_url: str) -> Iterator[Any]:
 
     def empty() -> None:
         with factory() as session:
-            session.execute(text('TRUNCATE TABLE note, "user", team CASCADE'))
+            session.execute(text('TRUNCATE TABLE note, kaya_account, team CASCADE'))
             session.commit()
 
     empty()
     with factory() as session:
-        session.execute(INSERT_USER, {"id": ALICE_ID, "email": "alice@example.com"})
-        session.execute(INSERT_USER, {"id": BOB_ID, "email": "bob@example.com"})
+        session.execute(INSERT_ACCOUNT, {"id": ALICE_ID, "email": "alice@example.com"})
+        session.execute(INSERT_ACCOUNT, {"id": BOB_ID, "email": "bob@example.com"})
         session.execute(INSERT_TEAM, {"id": PLATFORM_TEAM_ID})
         session.execute(INSERT_NOTE, {"owner_id": ALICE_ID, "title": "alice's personal note"})
         session.execute(

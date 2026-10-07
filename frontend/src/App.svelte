@@ -1,13 +1,24 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
+
+  import DeviceApproval from './components/DeviceApproval.svelte'
   import EditorPane from './components/EditorPane.svelte'
+  import EditorToolbar from './components/EditorToolbar.svelte'
   import GraphView from './components/GraphView.svelte'
   import Landing from './components/Landing.svelte'
+  import Logo from './components/Logo.svelte'
+  import ModeSwitch from './components/ModeSwitch.svelte'
+  import NavColumn from './components/NavColumn.svelte'
+  import PandanConnect from './components/PandanConnect.svelte'
   import PreviewPane from './components/PreviewPane.svelte'
+  import BottomSheet from './components/BottomSheet.svelte'
   import RightRail from './components/RightRail.svelte'
   import Sidebar from './components/Sidebar.svelte'
+  import Settings from './components/Settings.svelte'
+  import Tokens from './components/Tokens.svelte'
   import { ApiError } from './lib/api'
   import { clearToken, credentialState } from './lib/auth'
-  import { resolvePandanHref } from './lib/meta'
+  import { fetchCurrentUser } from './lib/identity'
   import { createNote, getNote, listNotes } from './lib/notes'
   import {
     currentRoute,
@@ -18,7 +29,23 @@
     setNavigationGuard,
     type Route,
   } from './lib/router'
+  import {
+    modeAvailable,
+    readStoredMode,
+    resolveMode,
+    writeStoredMode,
+    type NoteMode,
+  } from './lib/noteMode'
+  import {
+    readStoredPaneOpen,
+    resolvePaneOpen,
+    shellRegions,
+    writeStoredPaneOpen,
+  } from './lib/shell'
+import { type EditorCommands, toolbarShown } from './lib/toolbar'
+import { watchViewport } from './lib/viewport'
   import type { Note } from './lib/types'
+  import { currentWindowClass, watchWindowClass, type WindowClass } from './lib/windowClass'
 
   /**
    * The shell: three regions, the route, and the two reads the regions need. Nothing else.
@@ -31,15 +58,25 @@
    * KAN-555 kept to that with one exception it had to make here: the *credential lifecycle*. The
    * landing state cannot own it, because acquiring a credential changes which region renders, and
    * losing one is discovered by a `401` on a request the landing state never made. So `authed`,
-   * `accept()` and `discard()` live in this file, and `Landing.svelte` is still the only thing that
-   * ever holds a token — it calls `setToken` and then a callback, and hands nothing back.
+   * `accept()` and `discard()` live in this file. **KAN-1791 removed the one thing `Landing.svelte`
+   * used to do with a credential** — the paste form that called `setToken` and then `accept()` — so
+   * `Landing.svelte` now holds no token at all; GitHub sign-in is a full-page redirect, and `authed`
+   * flips because the mount-time session check below finds the fresh cookie, never because
+   * `Landing.svelte` told it to. `Tokens.svelte`'s "Use this token now" is the one place left that
+   * still calls `setToken` and then this file's `accept()`.
+   *
+   * KAN-1818 made the shell responsive. Which regions render is `lib/shell.ts`'s pure
+   * `shellRegions(windowClass, route, authed)`; the grid that places them is this file's CSS, keyed
+   * to the same breakpoints (`lib/windowClass.ts`). Compact (<600px) shows the note list and the
+   * note as separate screens under a bottom navigation bar; the header lost its Tokens and pandan
+   * links, which live under Settings now.
    *
    * KAN-568 added the **fourth** region, and it is a deliberate exception to the sentence above
    * rather than a drift past it. `BacklinksPanel` could have been a third column of `.split`, and
    * that placement is the one thing this file gets to decide: it would make the rail a sibling of
-   * `{#if previewing}`, so a toggle about the editor's preview would be one edit away from
+   * `{#if shownMode !== 'edit'}`, so a toggle about the editor's preview would be one edit away from
    * reflowing or discarding a panel that is about neither pane. KAN-554 and KAN-962 both paid for
-   * that rule. Outside `main` the preview toggle cannot reach the rail at all, which is the
+   * that rule. Outside `main` the mode switch cannot reach the rail at all, which is the
    * structural version of the property rather than the carefully-placed one — and the rail is not a
    * pane of the document, so it does not want one of `.split`'s `minmax(0, 1fr)` tracks either.
    *
@@ -47,6 +84,20 @@
    * `done: false` against `kaya-client` and `kaya-cli`, both of which shipped in V2a/V2b, and the
    * false claim reached the built bundle. It was a second copy of CLAUDE.md's package table and it
    * drifted twice inside one epic, so the fix was to delete the list rather than correct the flags.
+   *
+   * KAN-1739 added `route.name === 'tokens'` as a **peer of the whole `authed`/`Landing` branch**,
+   * not a case nested inside it — the one deliberate exception to "everything but the shell needs a
+   * credential" that `authed` otherwise enforces. `Tokens.svelte` reaches kaya's own cookie-session
+   * identity (`lib/identity.ts`, ADR 0012), which is a wholly different credential from the one
+   * `authed` tracks, and minting your first `kaya_pat_…` cannot itself require a credential already
+   * present in the tab. It owns its own session check entirely; this file only routes to it
+   * and hands it the same `accept` callback `Landing` gets, so a freshly minted token can flip
+   * `authed` and leave `/tokens` without a second credential ever passing through this file.
+   *
+   * KAN-1743's `route.name === 'device'` is the same exception for the same reason — `verification_
+   * uri_complete` is very plausibly the *first* URL a fresh machine's browser ever opens for kaya,
+   * so `DeviceApproval.svelte` reaches the identical cookie-session seam `Tokens.svelte` does, and
+   * must be reachable with no `authed` bearer in this tab at all.
    */
 
   let route: Route = $state(currentRoute())
@@ -80,6 +131,7 @@
   async function createAndOpen(title: string): Promise<void> {
     try {
       const created = await createNote({ title })
+      justCreatedRef = created.ref
       navigate(routeHref({ name: 'note', ref: created.ref }))
       const term = query.trim()
       notes = await listNotes({ q: term === '' ? undefined : term })
@@ -144,27 +196,99 @@
    * Whether this tab has a credential — **reactive**, and KAN-555 is why.
    *
    * It was a `const` read once at mount, which was honest while there was no way to acquire a
-   * credential without reloading. Now there is: the paste form calls `accept()` below and the
-   * effects re-run off this rune, so a paste reaches the note list without a reload. It also runs
-   * backwards, which is the half that matters more — `discard()` puts the app back in the landing
-   * state the moment the API says the credential is no good.
+   * credential without reloading. Now there is: `Tokens.svelte`'s "Use this token now" calls
+   * `accept()` below and the effects re-run off this rune, so a freshly minted bearer reaches the
+   * note list without a reload — and GitHub sign-in reaches it too, through the mount-time session
+   * check just below rather than through `accept()` at all. It also runs backwards, which is the
+   * half that matters more — `discard()` puts the app back in the landing state the moment the API
+   * says the credential is no good.
    */
   let authed = $state(credentialState() === 'set')
+
+  /**
+   * The one-time mount check for a cookie-only session (ADR 0012's two credential types — a bearer
+   * and a `kayaauth` cookie — this file only ever needs to ask about the second one, and only once).
+   *
+   * `apiRequest` (`lib/api.ts`) now trusts a live cookie session for every note-API call directly, so
+   * a tab that has no bearer at all is no longer necessarily a logged-out tab — it might be a reload
+   * of a browser that signed in with GitHub and never minted a bearer at all. `authed`'s own initializer
+   * above already covers the *other* case for free: a bearer already in `sessionStorage` is a
+   * known-good signal, so `authed` starts `true` synchronously and this effect's body below never
+   * needs to run for that tab. What is left is the cookie-only tab, and `fetchCurrentUser()` (`lib/
+   * identity.ts`) is the one call that can tell it apart from a genuinely logged-out one — it hits
+   * the cookie-authenticated `GET /users/me` and resolves to a `CurrentUser` or `null`, never
+   * throwing for the logged-out case, the same shape `Tokens.svelte`'s own mount check already uses.
+   *
+   * **Never mints or stores anything.** The bootstrap this replaced (KAN-1739/PR #178) had to call
+   * `POST /api/v1/tokens` and stash the result in `sessionStorage`, because `apiRequest` back then
+   * could not yet trust the cookie on its own — that call site was the actual bug this rewrite fixes:
+   * it manufactured a second, forgotten credential every time this effect ran, and "Clear token" only
+   * ever cleared *that* one. This effect only ever reads; a cookie-only session stays cookie-only for
+   * the rest of the tab's life, and every later note-API call keeps authenticating off the cookie.
+   *
+   * **Guarded to run exactly once per mount, for the same reason the bootstrap it replaced guarded
+   * itself.** An effect that reads `authed` and sometimes writes it back would refire the instant
+   * `authed` changes for *any* reason — including a later `401` (`discard()`, below) — and a rerun at
+   * that moment would be exactly backwards: it would immediately re-ask `/users/me` about a session
+   * that request just said doesn't work. `checkedSessionOnMount` starting `true` whenever a bearer is
+   * already present (mirroring `authed`'s own initializer) is what keeps that first fast-path tab from
+   * ever running this effect's body at all, now or after a later discard.
+   */
+  let checkedSessionOnMount = credentialState() === 'set'
+
+  $effect(() => {
+    if (authed || checkedSessionOnMount) {
+      return
+    }
+    checkedSessionOnMount = true
+    fetchCurrentUser()
+      .then((user) => {
+        if (user !== null) {
+          authed = true
+        }
+      })
+      .catch(() => {
+        // No live cookie session either — genuinely logged out. Landing is already what renders for
+        // `!authed`; there is nothing further to do or report.
+      })
+  })
 
   /** The API's own words for why the last credential was refused. Shown by the landing state. */
   let rejected: string | null = $state(null)
 
   /**
-   * Whether the preview is on the screen. KAN-554.
+   * How the open note is shown: Read, Edit or Split (KAN-1819; it replaced KAN-554's header Preview
+   * toggle). Which modes exist and what a note opens in is `lib/noteMode.ts`; this is the state.
    *
-   * **`EditorPane` is deliberately outside the `{#if}` this controls, and that placement is the whole
-   * of the toggle's correctness.** Inside it, the editor would be a *different component instance*
-   * every time the preview appeared or disappeared — `$effect` cleanup, `view.destroy()`, a fresh
-   * `EditorState` — so toggling the preview would throw away your unsaved edit and your undo history
-   * on a command that is about the pane beside it. `tests/preview.test.ts` types, toggles twice and
-   * asserts the same `EditorView` object is still there holding the same text.
+   * **`EditorPane` is deliberately outside every `{#if}` the mode controls, and that placement is the
+   * whole of the switch's correctness.** Inside one, the editor would be a *different component
+   * instance* every time the mode changed — `$effect` cleanup, `view.destroy()`, a fresh
+   * `EditorState` — so choosing Read would throw away your unsaved edit and your undo history on a
+   * command that is about how the note is *shown*. The mode reaches the pane only as the `mode`
+   * prop, which the template reads and the mount effect does not; Read hides the editor with CSS
+   * rather than removing it, so the live document keeps flowing and the preview shows unsaved text.
+   * `tests/preview.test.ts` and `tests/note-mode-switch.test.ts` assert the same `EditorView` object
+   * survives every switch, holding the same text.
+   *
+   * Resolved when the open note changes (remembered choice for this size class, else the default —
+   * and a note just made through New note opens in Edit below expanded), and written back, per class,
+   * only when the *person* picks a mode.
    */
-  let previewing = $state(true)
+  let mode: NoteMode = $state(
+    resolveMode({
+      windowClass: currentWindowClass(),
+      stored: readStoredMode(currentWindowClass()),
+      justCreated: false,
+    }),
+  )
+
+  /** The ref `createAndOpen` just made, until the first resolution that sees it consumes it. */
+  let justCreatedRef: string | null = null
+
+  function chooseMode(next: NoteMode): void {
+    mode = next
+    writeStoredMode(windowClass, next)
+  }
 
   /**
    * The document the editor is showing right now, out of `EditorPane`'s `ondocument` seam.
@@ -246,52 +370,124 @@
   })
 
   /**
-   * Whether the backlinks rail is on the screen — which is exactly "a note route is open" (KAN-568).
-   *
-   * Not a preference and deliberately not a toggle: the rail answers one question about one note, so
-   * there is nothing for it to say on `/` or on an unknown path, and a fourth region standing empty
-   * beside the note list reads as a broken app rather than as an idle one. The same call
-   * `.unauthenticated` already makes about the sidebar.
-   *
-   * The `{#if}` in the template and this class have to agree, so they are one expression: a rail
-   * with no grid column would overlap `main`, and a grid column with no rail would be a stripe of
-   * empty page.
+   * The window size class (KAN-1818), kept live from `matchMedia`. `expanded` where there is none,
+   * so every non-browser test sees the original four-region layout.
    */
-  const railed = $derived(authed && route.name === 'note')
+  let windowClass: WindowClass = $state(currentWindowClass())
 
-  /**
-   * `set` or `not set`, and this file does not get to spell either word.
-   *
-   * The value comes from the seam, which is the only thing allowed to describe a credential to a
-   * person — never a prefix, a suffix, a length or a mask (`lib/auth.ts`, and pandan's
-   * `set (…c_DE)`). The `void authed` is what makes it re-read: the credential lives in
-   * `sessionStorage`, which is not reactive, so a header derived from the seam alone would still
-   * say `not set` after a successful paste.
-   */
-  const credential = $derived.by(() => {
-    void authed
-    return credentialState()
-  })
+  $effect(() => watchWindowClass((next) => (windowClass = next)))
 
-  /**
-   * The pandan origin for the topbar's nav link (KAN-1157), resolved the same way `Landing`
-   * resolves it for the sign-in copy (KAN-1156) — `resolvePandanHref` already swallows a failed
-   * fetch and an unset/unsafe origin into `null`, so there is nothing to branch on here beyond
-   * "did we get a link".
-   *
-   * Fetched once per mount rather than gated on `authed`: this file is mounted for the app's whole
-   * lifetime (see the docstring at the top), so there is no re-mount for a toggle of `authed` to
-   * trigger, and re-asking `/api/v1/meta` every time a credential is pasted or cleared would just
-   * repeat a request whose answer cannot have changed. The link itself only *renders* while
-   * `authed`, in the template below.
-   */
-  let pandanHref: string | null = $state(null)
+  const regions = $derived(shellRegions(windowClass, route, authed))
+  const compact = $derived(windowClass === 'compact')
+
+  /** The open note's ref, or `null` — a derived so the effect below re-runs on a *different* note,
+   *  never on a re-assignment of the same route. */
+  const openRef = $derived(route.name === 'note' ? route.ref : null)
 
   $effect(() => {
-    const abort = new AbortController()
-    resolvePandanHref({ signal: abort.signal }).then((resolved) => (pandanHref = resolved))
-    return () => abort.abort()
+    const ref = openRef
+    if (ref === null) {
+      return
+    }
+    const fresh = ref === justCreatedRef
+    justCreatedRef = null
+    // `windowClass` is read untracked: a resize must not re-pick the mode under someone who is
+    // typing. The one resize rule (Split falls back to Edit) is `shownMode`'s, below.
+    const current = untrack(() => windowClass)
+    mode = resolveMode({ windowClass: current, stored: readStoredMode(current), justCreated: fresh })
   })
+
+  /** What is actually on screen: `mode`, except that Split cannot outlive the width that offers it,
+   *  and a route with no note (the empty `/`) is the editor's "pick a note" notice alone. */
+  const shownMode: NoteMode = $derived(
+    route.name !== 'note' ? 'edit' : modeAvailable(mode, windowClass) ? mode : 'edit',
+  )
+
+  /**
+   * KAN-1826: the mobile formatting toolbar. `editorCommands` and `editorFocused` come up out of
+   * `EditorPane` through two callbacks, so this file never touches the editor itself; the toolbar
+   * goes back down the same way, as an interface. It shows while a note is being edited with focus
+   * in the editor on a compact or medium window (`toolbarShown`), which is when a soft keyboard is
+   * up. `keyboardInset` is only watched while it shows.
+   */
+  let editorCommands: EditorCommands | null = $state(null)
+  let editorFocused = $state(false)
+  let keyboardInset = $state(0)
+
+  const toolbarOn = $derived(
+    toolbarShown({
+      windowClass,
+      mode: shownMode,
+      focused: editorFocused,
+      inNote: route.name === 'note',
+    }),
+  )
+
+  // A hidden editor (Read) keeps a stale "focused" in Chrome, which fires no blur for it.
+  $effect(() => {
+    if (shownMode !== 'edit') {
+      editorFocused = false
+    }
+  })
+
+  $effect(() => {
+    if (!toolbarOn) {
+      keyboardInset = 0
+      return
+    }
+    return watchViewport((inset) => (keyboardInset = inset))
+  })
+
+  // The keyboard coming up or the toolbar appearing moves the editor's bottom edge. CodeMirror does
+  // not re-reveal the caret on a resize, so ask once the layout has settled.
+  $effect(() => {
+    if (!toolbarOn) {
+      return
+    }
+    void keyboardInset
+    const frame = requestAnimationFrame(() => editorCommands?.revealCaret())
+    return () => cancelAnimationFrame(frame)
+  })
+
+  /**
+   * KAN-1827: the backlinks/history surface. `regions.supporting` (`lib/shell.ts`) says which kind
+   * this window class gets; this file owns the open/closed state and nothing else.
+   *
+   * - **sheet** (compact): never remembered, closed on every navigation (a tapped backlink lands on
+   *   the other note with the sheet gone) and when the window leaves compact.
+   * - **pane** (medium, expanded): closed by default so the document keeps the width, and the
+   *   person's choice is remembered per window class in `localStorage` (`lib/shell.ts`).
+   *
+   * The rail is in the grid only while the pane is open, so a grid column and its content always
+   * agree (a column with no rail would be a stripe of empty page).
+   */
+  const supporting = $derived(regions.supporting)
+  let sheetOpen = $state(false)
+  let paneOpen = $derived(
+    resolvePaneOpen(supporting, readStoredPaneOpen(untrack(() => windowClass))),
+  )
+
+  $effect(() => {
+    void route
+    sheetOpen = false
+  })
+
+  $effect(() => {
+    if (supporting.kind !== 'sheet') {
+      sheetOpen = false
+    }
+  })
+
+  function toggleSupporting(): void {
+    if (supporting.kind === 'sheet') {
+      sheetOpen = !sheetOpen
+    } else {
+      paneOpen = !paneOpen
+      writeStoredPaneOpen(windowClass, paneOpen)
+    }
+  }
+
+  const railed = $derived(supporting.kind === 'pane' && paneOpen)
 
   $effect(() => onNavigate((next) => (route = next)))
 
@@ -366,14 +562,17 @@
   /**
    * Forget the credential and go back to the landing state.
    *
-   * Reached two ways, and both are required: the API refusing it with a `401`, and the person
-   * clicking **Clear token**. The second exists because the first only covers one shape of being
-   * stuck — a valid token for the wrong account, or a `503` from a sleeping pandan, leaves a user
-   * looking at a failure with no way to change credentials. A state you can only leave through
-   * devtools is a bug, so the way out is a button rather than an instruction.
+   * Reached exactly one way now: the API refusing a request with a `401`. **Clear token** used to be
+   * the other way in, and KAN-1791 removed it — it only ever cleared the `sessionStorage` mirror, so
+   * clicking it flipped this file to the landing state while the real `kayaauth` cookie session
+   * underneath stayed alive server-side; it looked like a sign-out and was not one. Kaya's own
+   * sign-out (`Tokens.svelte`, `POST /auth/logout`) is the real way to end a session now, and it ends
+   * the thing that actually authenticates this tab rather than a mirror of it.
    *
-   * `reason` is the API's message or `null` for a deliberate clear; there is nothing to explain
-   * when the user did it on purpose.
+   * `reason` is the API's message — every remaining caller (`absorb()` below, and the `onexpired`
+   * callbacks `GraphView`/`RightRail`/`BacklinksPanel` hand this file) passes one. The parameter stays
+   * typed `string | null` regardless, because narrowing it is unrelated churn for a type this function
+   * costs nothing to keep general.
    */
   function discard(reason: string | null): void {
     clearToken()
@@ -403,86 +602,129 @@
   }
 </script>
 
-<div class="shell" class:unauthenticated={!authed} class:railed>
+<div
+  class="shell"
+  class:unauthenticated={!authed}
+  class:tokens-or-device={authed && (route.name === 'tokens' || route.name === 'device')}
+  class:railed
+  class:compact
+  class:toolbar-open={toolbarOn}
+  data-window-class={windowClass}
+>
   <header class="topbar">
-    <a class="brand" href="/" onclick={(event) => interceptClick(event, '/')}>kaya</a>
-    <span class="tagline">markdown notes, API-first</span>
-    {#if authed && pandanHref}
-      <!--
-        KAN-1157. Hidden entirely rather than shown-and-disabled when `pandanHref` is `null` — the
-        same convention `Sidebar.svelte` uses for its view toggle during a search, and the one
-        `Landing.svelte` already applies to this exact link: an operator who has not configured
-        pandan gets no link, not a dead one.
-      -->
+    {#if compact && authed && route.name === 'note'}
+      <!-- KAN-1818: real navigation (a link to `/`), so the browser's and the OS's back button and
+           this arrow agree. -->
       <a
-        class="pandan-link"
-        href={pandanHref}
-        target="_blank"
-        rel="noopener noreferrer"
-        data-testid="pandan-link"
+        class="back"
+        href="/"
+        aria-label="Back to notes"
+        onclick={(event) => interceptClick(event, '/')}
+        data-testid="back-to-list"
       >
-        pandan
+        <span aria-hidden="true">&larr;</span> Notes
+      </a>
+    {:else}
+      <a class="brand" href="/" onclick={(event) => interceptClick(event, '/')}>
+        <Logo size={26} />
+        <span>kaya</span>
       </a>
     {/if}
-    {#if authed}
+    <span class="tagline">markdown for humans and agents</span>
+    {#if supporting.kind !== 'none'}
+      <!-- KAN-1827: one button, two surfaces. A sheet is a dialog the button opens; a pane is a
+           region the button shows and hides. -->
       <button
         class="toggle"
-        class:on={previewing}
-        aria-pressed={previewing}
-        onclick={() => (previewing = !previewing)}
-        data-testid="toggle-preview"
+        class:on={supporting.kind === 'sheet' ? sheetOpen : paneOpen}
+        aria-expanded={supporting.kind === 'sheet' ? sheetOpen : paneOpen}
+        aria-haspopup={supporting.kind === 'sheet' ? 'dialog' : undefined}
+        aria-controls={supporting.kind === 'pane' ? 'supporting-pane' : undefined}
+        onclick={toggleSupporting}
+        data-testid="toggle-details"
       >
-        Preview
-      </button>
-    {/if}
-    <!--
-      `set` or `not set`, and never a fragment. `kaya config show` is the reference: pandan printed
-      `set (…c_DE)` and those four characters are a contiguous piece of a live credential in a
-      surface documented as safe to share. A browser is worse — a screenshot is one keystroke away.
-    -->
-    <span class="credential" data-testid="credential-state">token {credential}</span>
-    {#if authed}
-      <!-- The way out, always available while a credential is held. See `discard()`. -->
-      <button class="clear" onclick={() => discard(null)} data-testid="clear-token">
-        Clear token
+        Links
       </button>
     {/if}
   </header>
 
-  {#if authed}
-    <Sidebar {notes} {route} loading={listing} {query} onsearch={search} oncreate={createAndOpen} />
+  {#if regions.nav}
+    <NavColumn {route} />
+  {/if}
+
+  {#if route.name === 'tokens'}
     <main>
-      {#if route.name === 'unknown'}
-        <p class="notice">
-          Nothing lives at <code>{route.path}</code>. Pick a note from the sidebar.
-        </p>
-      {:else if route.name === 'graph'}
-        <!-- KAN-1050: read-only, so it takes no note-lifecycle callbacks — `onexpired` is the one
-             failure it cannot absorb itself, for the same reason `BacklinksPanel`'s cannot. -->
-        <GraphView onexpired={discard} />
-      {:else}
-        <!--
-          The editor and its preview, side by side. `EditorPane` is **outside** the `{#if}` below on
-          purpose (see `previewing`), and the preview is its **sibling** rather than anything nested in
-          it — PLAN §S9: Svelte never renders inside CM6's subtree. The document travels from one to
-          the other through `ondocument` and `liveDocument`, which is a published prop rather than a
-          reach into the editor's internals; see `liveDocument` on why it is not `note.body`.
-        -->
-        <div class="split" class:solo={!previewing}>
-          <EditorPane
-            {note}
-            error={failure === '' ? null : failure}
-            ondocument={publishDocument}
-            ondirty={noteDirty}
-            ondeleted={noteDeleted}
-            onupdated={noteUpdated}
-          />
-          {#if previewing}
-            <PreviewPane {note} source={liveDocument} />
-          {/if}
-        </div>
-      {/if}
+      <Tokens onaccept={accept} />
     </main>
+  {:else if route.name === 'device'}
+    <main>
+      <DeviceApproval />
+    </main>
+  {:else if authed}
+    {#if regions.list}
+      <Sidebar {notes} {route} loading={listing} {query} onsearch={search} oncreate={createAndOpen} />
+    {/if}
+    {#if regions.main}
+      <main>
+        {#if route.name === 'unknown'}
+          <p class="notice">
+            Nothing lives at <code>{route.path}</code>. Pick a note from the list.
+          </p>
+        {:else if route.name === 'graph'}
+          <!-- KAN-1050: read-only, so it takes no note-lifecycle callbacks — `onexpired` is the one
+               failure it cannot absorb itself, for the same reason `BacklinksPanel`'s cannot. -->
+          <GraphView onexpired={discard} />
+        {:else if route.name === 'settings'}
+          <!-- KAN-1815: reads and writes one resource (`/api/v1/preferences`), no note-lifecycle
+               callbacks, for the same reason `PandanConnect` below has none. -->
+          <Settings />
+        {:else if route.name === 'pandan'}
+          <!-- ADR 0012's amendment (KAN-1741): connecting a pandan account has no note-lifecycle
+               callbacks of its own either, for the same reason `GraphView` above has none — it
+               reads and writes exactly one resource (`/api/v1/pandan-link`) that no other region
+               touches. -->
+          <PandanConnect />
+        {:else}
+          <!--
+            The editor and its preview, side by side. `EditorPane` is **outside** the `{#if}` below on
+            purpose (see `mode`), and the preview is its **sibling** rather than anything nested
+            in it — PLAN §S9: Svelte never renders inside CM6's subtree. The document travels from
+            one to the other through `ondocument` and `liveDocument`, which is a published prop
+            rather than a reach into the editor's internals; see `liveDocument` on why it is not
+            `note.body`.
+          -->
+          <div class="note-screen" style:--kb-inset="{keyboardInset}px">
+            {#if route.name === 'note'}
+              <!-- KAN-1819: above the note, not in the header — it is about this note, and on a
+                   phone the header has no room. A sibling of `.split`, so it can never be the
+                   thing that remounts the editor. -->
+              <div class="mode-bar">
+                <ModeSwitch mode={shownMode} {windowClass} onchange={chooseMode} />
+              </div>
+            {/if}
+            <div class="split" data-mode={shownMode}>
+              <EditorPane
+                {note}
+                mode={shownMode}
+                error={failure === '' ? null : failure}
+                ondocument={publishDocument}
+                ondirty={noteDirty}
+                ondeleted={noteDeleted}
+                onupdated={noteUpdated}
+                oncommands={(next) => (editorCommands = next)}
+                onfocuschange={(focused) => (editorFocused = focused)}
+              />
+              {#if shownMode !== 'edit'}
+                <PreviewPane {note} source={liveDocument} reading={shownMode === 'read'} />
+              {/if}
+            </div>
+            {#if toolbarOn}
+              <EditorToolbar commands={editorCommands} inset={keyboardInset} />
+            {/if}
+          </div>
+        {/if}
+      </main>
+    {/if}
     {#if railed}
       <!--
         KAN-568's rail — the fourth region, and **outside `main` on purpose** (see `railed`). It
@@ -495,76 +737,123 @@
       -->
       <RightRail {note} onexpired={discard} onrestored={noteRestored} />
     {/if}
+    {#if supporting.kind === 'sheet' && sheetOpen}
+      <BottomSheet label="Links and history" onclose={() => (sheetOpen = false)}>
+        <RightRail id="sheet-rail" {note} onexpired={discard} onrestored={noteRestored} />
+      </BottomSheet>
+    {/if}
   {:else}
-    <!-- KAN-555's landing state, which owns everything about the paste including the credential
-         itself: this file hands it `rejected` and gets back a callback, and never sees a token. -->
+    <!-- KAN-555's landing state. KAN-1791 removed its paste form — GitHub sign-in is a full-page
+         redirect now, so this file hands it `rejected` and never sees a token at all. -->
     <Landing {rejected} onaccept={accept} />
   {/if}
 </div>
 
 <style>
+  /*
+    KAN-1818. Written base = medium (600-839px): a slim nav rail, the list beside the note, the
+    rail *below* the note. `min-width: 840px` is expanded (the original four regions);
+    `max-width: 599.98px` is compact (one screen at a time, bottom navigation bar). The numbers
+    mirror `lib/windowClass.ts` and `tests/window-class.test.ts` checks them. Every grid track that
+    holds content is `minmax(0, …)`, so nothing keeps a laptop-width minimum on a phone.
+  */
   .shell {
     display: grid;
-    grid-template-areas: 'topbar topbar' 'sidebar main';
-    grid-template-columns: minmax(12rem, 18rem) 1fr;
-    grid-template-rows: auto 1fr;
+    grid-template-areas: 'topbar topbar' 'nav main';
+    grid-template-columns: 3.75rem minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
     height: 100dvh;
   }
 
-  /* KAN-568's fourth region, present only while a note route is open (see `railed`). The rail is
-     a fixed-ish rail rather than a `1fr` pane, because it holds one column of titles and giving it
-     a third of the width would take that width from the document. */
-  .shell.railed {
-    grid-template-areas: 'topbar topbar topbar' 'sidebar main rail';
-    grid-template-columns: minmax(12rem, 18rem) 1fr minmax(11rem, 16rem);
+  /* The list region, whenever there is one (`Sidebar` places itself by class, below). */
+  .shell:has(> :global(.sidebar)) {
+    grid-template-areas: 'topbar topbar topbar' 'nav sidebar main';
+    grid-template-columns: 3.75rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr);
   }
 
-  /* No sidebar without a credential: there is nothing to list, and an empty rail beside a
-     sign-in page reads as a broken app rather than as a locked one. */
+  /* KAN-568's fourth region, present only while a note route is open (see `railed`): below the
+     document on medium, beside it on expanded. The list spans both rows (named twice) because it is
+     a column, not something that stacks. */
+  .shell.railed {
+    grid-template-areas: 'topbar topbar topbar' 'nav sidebar main' 'nav sidebar rail';
+    grid-template-columns: 3.75rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .shell.railed > :global(.right-rail) {
+    max-height: 40dvh;
+    border-top: 1px solid var(--outline-variant);
+    border-left: 0;
+  }
+
+  /* No sidebar, no nav column, without a credential: there is nothing to list or switch between,
+     and either one beside a sign-in page reads as a broken app rather than as a locked one. */
   .shell.unauthenticated {
     grid-template-areas: 'topbar' 'main';
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  @media (min-width: 840px) {
+    .shell {
+      grid-template-columns: 7rem minmax(0, 1fr);
+    }
+
+    .shell:has(> :global(.sidebar)) {
+      grid-template-columns: 7rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr);
+    }
+
+    .shell.railed {
+      grid-template-areas: 'topbar topbar topbar topbar' 'nav sidebar main rail';
+      grid-template-columns: 7rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr) clamp(10rem, 16vw, 14rem);
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .shell.railed > :global(.right-rail) {
+      max-height: none;
+      border-top: 0;
+      border-left: 1px solid var(--outline-variant);
+    }
+
+    .shell.unauthenticated {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 
   .topbar {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 0.75rem;
     grid-area: topbar;
+    min-width: 0;
     padding: 0.85rem 1.25rem;
-    background: var(--card-bg);
-    border-bottom: 1px solid var(--border);
+    background: var(--surface-container-low);
+    border-bottom: 1px solid var(--outline-variant);
+  }
+
+  /* The toggles sit at the right edge of the bar. */
+  .topbar > .toggle:first-of-type {
+    margin-left: auto;
   }
 
   .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .brand,
+  .back {
     color: inherit;
-    font-size: 1.05rem;
+    font-size: var(--type-title-medium-size);
     font-weight: 600;
     letter-spacing: -0.01em;
     text-decoration: none;
   }
 
   .tagline {
-    color: var(--muted);
-    font-size: 0.85rem;
-  }
-
-  .pandan-link {
-    color: var(--muted);
-    font-size: 0.85rem;
-    text-decoration: none;
-  }
-
-  .pandan-link:hover {
-    color: var(--accent);
-    text-decoration: underline;
-  }
-
-  .credential {
-    margin-left: auto;
-    color: var(--muted);
-    font-family: var(--mono);
-    font-size: 0.75rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-medium-size);
   }
 
   .shell > :global(.sidebar) {
@@ -572,8 +861,8 @@
   }
 
   /* R13/KAN-1064 wrapped the fourth region in `RightRail.svelte` (the tab strip beside Backlinks),
-     so the direct child under `.shell` is now `.right-rail` rather than `BacklinksPanel`'s own
-     `.rail` — that class still exists, one level deeper, inside `RightRail`'s `.pane`. */
+     so the direct child under `.shell` is `.right-rail`; `BacklinksPanel`'s own `.rail` is one level
+     deeper. */
   .shell > :global(.right-rail) {
     grid-area: rail;
   }
@@ -587,71 +876,172 @@
   main {
     grid-area: main;
     min-width: 0;
+    min-height: 0;
     overflow-y: auto;
   }
 
-  .split {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* KAN-1819: the note screen is the mode switch above the document area. `.split` fills what the
+     switch leaves; `min-height: 0` lets its grid track (and the editor's own scrolling) shrink. */
+  .note-screen {
+    display: flex;
+    flex-direction: column;
     height: 100%;
+    min-height: 0;
   }
 
-  /* `minmax(0, …)` on both tracks, not `1fr 1fr`: a `1fr` track has an `auto` minimum, so one long
-     unbroken line in a fenced code block would widen the editor and push the preview off the pane. */
-  .split.solo {
+  /* KAN-1826: the toolbar is fixed to the visible bottom, so the editor stops above it: the
+     keyboard's inset plus the toolbar's own height (2.75rem, `EditorToolbar`'s button). */
+  .shell.toolbar-open .note-screen {
+    padding-bottom: calc(var(--kb-inset, 0px) + 2.75rem);
+  }
+
+  .mode-bar {
+    flex: none;
+    padding: 0.75rem 1.5rem 0;
+  }
+
+  /* One track by default (Edit). `minmax(0, …)` always, not `1fr`: a `1fr` track has an `auto`
+     minimum, so one long unbroken line in a fenced code block would widen the editor and push the
+     preview off the pane. */
+  .split {
+    display: grid;
+    flex: 1;
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  /* Edit: the editor alone. Capped to a readable measure and centred so it does not stretch across
+     a wide pane. */
+  .split[data-mode='edit'] > :global(.pane) {
+    width: 100%;
+    max-width: 72ch;
+    margin-inline: auto;
+  }
+
+  /* Read: the document alone, as a column of text (~65ch) centred in the pane. The editor is still
+     mounted inside `.pane`, hidden by `EditorPane`'s own `reading` class; the page scrolls, not the
+     box. */
+  .split[data-mode='read'] {
+    display: block;
+    overflow-y: auto;
+  }
+
+  .split[data-mode='read'] > :global(.pane),
+  .split[data-mode='read'] > :global(.preview) {
+    max-width: 65ch;
+    margin-inline: auto;
+  }
+
+  /* Split (expanded only): editor 55 / preview 45. */
+  .split[data-mode='split'] {
+    grid-template-columns: minmax(0, 55fr) minmax(0, 45fr);
   }
 
   /* Under about a laptop's width two columns are two cramped columns. Stacking keeps both usable, and
      the editor stays first so the thing you type in is the thing you see. */
   @media (max-width: 60rem) {
-    .split {
+    .split[data-mode='split'] {
       grid-template-columns: minmax(0, 1fr);
-      height: auto;
-    }
-
-    /* Three columns is one too many here, so the rail goes *below* the document rather than beside
-       it. It keeps its own region either way, which is what stops the narrow layout from being a
-       second place the toggle-cannot-reach-it property has to be re-established. */
-    .shell.railed {
-      grid-template-areas: 'topbar topbar' 'sidebar main' 'sidebar rail';
-      grid-template-columns: minmax(12rem, 18rem) 1fr;
-      grid-template-rows: auto 1fr auto;
+      grid-template-rows: auto;
+      flex: none;
     }
   }
 
   .toggle {
     padding: 0.2rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-full);
     background: transparent;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     cursor: pointer;
     font: inherit;
-    font-size: 0.75rem;
+    font-size: var(--type-body-small-size);
   }
 
   .toggle.on {
-    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-    color: var(--accent);
-  }
-
-  .clear {
-    padding: 0.2rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 0.3rem;
-    background: transparent;
-    color: var(--muted);
-    cursor: pointer;
-    font: inherit;
-    font-size: 0.75rem;
+    border-color: transparent;
+    background: var(--secondary-container);
+    color: var(--on-secondary-container);
   }
 
   .notice {
     max-width: 34rem;
     margin: 0;
     padding: 1.5rem;
-    color: var(--muted);
+    color: var(--on-surface-variant);
+  }
+
+  /* Compact: one screen at a time, the navigation bar along the bottom. The list and `main` never
+     coexist here (`shellRegions`), so both claim the one content area. */
+  @media (max-width: 599.98px) {
+    .shell,
+    .shell:has(> :global(.sidebar)),
+    .shell.unauthenticated {
+      grid-template-areas: 'topbar' 'main' 'rail' 'nav';
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr) auto auto;
+    }
+
+    /* KAN-1826: the toolbar takes the bottom edge while a note is being edited. */
+    .shell.toolbar-open > :global(.nav-column) {
+      display: none;
+    }
+
+    /* KAN-1826: a phone's keyboard leaves about half the screen. While the editor has focus the
+       document gets it: the title and path step aside, and the editor may shrink below its usual
+       minimum. Save and the mode switch stay: on an iPhone there is no key to dismiss the keyboard,
+       and switching to Read is how a person leaves editing. Everything is back once focus leaves. */
+    .shell.toolbar-open .note-screen :global(.pane > header) {
+      display: none;
+    }
+
+    .shell.toolbar-open .note-screen :global(.editor-host) {
+      min-height: 0;
+    }
+
+    .shell.toolbar-open .mode-bar {
+      padding-top: 0.25rem;
+    }
+
+    .shell.toolbar-open .note-screen :global(.pane) {
+      gap: 0.5rem;
+      padding-block: 0.5rem;
+    }
+
+    .shell > :global(.sidebar) {
+      grid-area: main;
+      border-right: 0;
+    }
+
+    .topbar {
+      align-items: center;
+      gap: 0.5rem;
+      min-height: 3.5rem;
+      padding: 0.25rem 1rem;
+    }
+
+    .tagline {
+      display: none;
+    }
+
+    .back {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      min-height: 2.75rem;
+      margin-left: -0.5rem;
+      padding: 0 0.5rem;
+    }
+
+    .toggle {
+      min-height: 2.75rem;
+      padding: 0 0.75rem;
+      font-size: var(--type-body-medium-size);
+    }
+
+    .mode-bar {
+      padding: 0.5rem 1rem 0;
+    }
   }
 </style>

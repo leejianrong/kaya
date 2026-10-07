@@ -87,7 +87,11 @@ name = "kaya-client"
 # 0.3.0 — KAN-543 adds `provenance`, the build stamp both adapters read. 0.2.0 was KAN-540's
 # `KayaClient` and `render()` seam. A behavioural change to a shipped package bumps it in the same
 # PR (ADR 0007 §3, CLAUDE.md §Conventions §Versioning).
-version = "0.16.0"
+# 0.18.0 — KAN-1816 (Part C of KAN-1813): `KayaClient.format_note` and a `format` argument on
+# `update_note` (the KAN-1814 wire contract), plus the conditional format hint on `create_note`/
+# `update_note(format_hint=True)`: `Payload.format_changed_lines`, `hints.format_help_lines`, and an
+# in-band `help` key on a structured note. Behavioural, so a minor bump.
+version = "0.18.0"
 description = "The shared core for kaya: the API client and the one payload-shaping seam"
 readme = "README.md"
 license = "Apache-2.0"

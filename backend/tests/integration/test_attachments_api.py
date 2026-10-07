@@ -17,32 +17,19 @@ from typing import Any
 
 import pytest
 
+from tests.integration.auth_helpers import override_get_principal, seed_kaya_account
+
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
-# Shapeless on purpose, same reasoning as `test_note_links_api.py`'s tokens (ADR 0002: kaya has no
-# token format, so a PAT-shaped fixture would quietly assert the opposite of the thing under test).
+# Shapeless on purpose, same reasoning as `test_note_links_api.py`'s tokens — kaya does not verify a
+# bearer by its shape (KAN-1740), so a PAT-shaped fixture would quietly assert the opposite of the
+# thing under test.
 ALICE_TOKEN = "a-caller-supplied-string-kaya-does-not-parse"
 BOB_TOKEN = "a-different-caller-supplied-string"
 ALICE_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
 BOB_ID = uuid.UUID("22222222-2222-4222-8222-222222222222")
 
 NOTES = "/api/v1/notes"
-
-
-class FakeIdentityUpstream:
-    """Pandan's `GET /api/v1/me`, faked — lifted from `test_note_links_api.py` rather than
-    reinvented, so a change to the seam breaks one fake and not two."""
-
-    def __init__(self) -> None:
-        self.known: dict[str, Any] = {}
-        self.available = True
-
-    def introspect(self, bearer: str) -> Any:
-        from app.auth.principal import UpstreamUnavailable
-
-        if not self.available:
-            raise UpstreamUnavailable("https://pandan.invalid/api/v1/me is unreachable")
-        return self.known.get(bearer)
 
 
 class FakeObjectStorage:
@@ -82,33 +69,21 @@ def _alembic_config() -> Any:
 
 
 @pytest.fixture
-def identity() -> FakeIdentityUpstream:
-    return FakeIdentityUpstream()
-
-
-@pytest.fixture
 def storage() -> FakeObjectStorage:
     return FakeObjectStorage()
 
 
 @pytest.fixture
-def client(
-    database_url: str, identity: FakeIdentityUpstream, storage: FakeObjectStorage
-) -> Iterator[Any]:
-    """The real app with two dependencies overridden: identity, and object storage. Both are
-    process-wide singletons by design, so both are reset around the test the way
-    `test_note_links_api.py`'s `client` fixture resets the principal and resolution caches."""
+def client(database_url: str, storage: FakeObjectStorage) -> Iterator[Any]:
+    """The real app with identity faked (`override_get_principal`, KAN-1740) and object storage
+    overridden with `FakeObjectStorage`. Object storage's singleton is reset around the test; there
+    is no identity cache left to reset — `get_principal`'s replacement is a plain lookup."""
     from alembic import command
     from fastapi.testclient import TestClient
     from sqlalchemy import text
 
-    from app.auth.cache import PrincipalCache
-    from app.auth.dependencies import get_resolver, reset_auth
-    from app.auth.mirror import SqlAlchemyPrincipalMirror
     from app.auth.principal import Principal
-    from app.auth.resolver import PrincipalResolver
-    from app.auth.single_flight import SingleFlight
-    from app.db import get_session, get_sessionmaker
+    from app.db import get_sessionmaker
     from app.integrations.dependencies import get_object_storage, reset_object_storage
     from app.main import app
 
@@ -116,40 +91,28 @@ def client(
 
     def empty() -> None:
         with get_sessionmaker()() as session:
-            session.execute(text('TRUNCATE TABLE attachment, note_link, note, "user" CASCADE'))
+            session.execute(
+                text("TRUNCATE TABLE attachment, note_link, note, kaya_account CASCADE")
+            )
             session.commit()
 
     empty()
-    reset_auth()
     reset_object_storage()
 
-    identity.known[ALICE_TOKEN] = Principal(id=ALICE_ID, email="alice@example.com")
-    identity.known[BOB_TOKEN] = Principal(id=BOB_ID, email="bob@example.com")
-
-    cache = PrincipalCache(positive_ttl=60.0, negative_ttl=10.0)
-    single_flight = SingleFlight()
-
-    from typing import Annotated
-
-    from fastapi import Depends
-    from sqlalchemy.orm import Session
-
-    def identity_resolver(session: Annotated[Session, Depends(get_session)]) -> PrincipalResolver:
-        return PrincipalResolver(
-            upstream=identity,
-            mirror=SqlAlchemyPrincipalMirror(session),
-            cache=cache,
-            single_flight=single_flight,
-        )
-
-    app.dependency_overrides[get_resolver] = identity_resolver
+    with get_sessionmaker()() as session:
+        seed_kaya_account(session, id=ALICE_ID, email="alice@example.com")
+        seed_kaya_account(session, id=BOB_ID, email="bob@example.com")
+    known_principals = {
+        ALICE_TOKEN: Principal(id=ALICE_ID, email="alice@example.com"),
+        BOB_TOKEN: Principal(id=BOB_ID, email="bob@example.com"),
+    }
+    override_get_principal(app, known_principals)
     app.dependency_overrides[get_object_storage] = lambda: storage
     try:
         with TestClient(app) as test_client:
             yield test_client
     finally:
         app.dependency_overrides.clear()
-        reset_auth()
         reset_object_storage()
         empty()
 

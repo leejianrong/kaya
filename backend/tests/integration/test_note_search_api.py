@@ -30,19 +30,18 @@ from typing import Any
 import pytest
 from sqlalchemy import text
 
+from tests.integration.auth_helpers import override_get_principal, seed_kaya_account
+
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 # Two callers, because one cannot prove the scoping (see the module docstring). Kaya does not parse
-# a token (ADR 0002), so these are opaque strings the fake upstream knows about.
+# a bearer's shape, so these are opaque strings the identity override knows about (KAN-1740).
 ALICE_TOKEN = "a-caller-supplied-string-kaya-does-not-parse"
 ALICE_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
 BOB_TOKEN = "another-caller-supplied-string-kaya-does-not-parse"
 BOB_ID = uuid.UUID("22222222-2222-4222-8222-222222222222")
 
 NOTES = "/api/v1/notes"
-
-# `user` is reserved in Postgres, so every hand-written statement against it quotes the name.
-INSERT_USER = text('INSERT INTO "user" (id, email) VALUES (:id, :email)')
 
 NOTE_PAYLOAD_KEYS = [
     "ref",
@@ -60,16 +59,6 @@ than imported: ``tests/`` is not a package, and the point of the copy is that th
 the bytes on the wire."""
 
 
-class FakeUpstream:
-    """Pandan, faked at the HTTP boundary (ADR 0002's Protocol seam). Kaya holds no credential."""
-
-    def __init__(self) -> None:
-        self.known: dict[str, Any] = {}
-
-    def introspect(self, bearer: str) -> Any:
-        return self.known.get(bearer)
-
-
 def _alembic_config() -> Any:
     from alembic.config import Config
 
@@ -79,63 +68,38 @@ def _alembic_config() -> Any:
 
 
 @pytest.fixture
-def upstream() -> FakeUpstream:
-    return FakeUpstream()
-
-
-@pytest.fixture
-def client(database_url: str, upstream: FakeUpstream) -> Iterator[Any]:
-    """The real app with pandan swapped out, holding two users' mirror rows.
-
-    A fresh ``PrincipalCache`` per test, because the cache is process-wide by design and one
-    surviving a ``TRUNCATE`` serves a principal whose mirror row no longer exists — the next INSERT
-    then fails on the foreign key, which reads as a flake and is not one.
-    """
-    from typing import Annotated
-
+def client(database_url: str) -> Iterator[Any]:
+    """The real app with identity resolution faked (KAN-1740's `override_get_principal`), holding
+    two real `kaya_account` rows — required now that `note.owner_id` is a live foreign key into
+    that table (migration `0009`)."""
     from alembic import command
-    from fastapi import Depends
     from fastapi.testclient import TestClient
-    from sqlalchemy.orm import Session
 
-    from app.auth.cache import PrincipalCache
-    from app.auth.dependencies import get_resolver, reset_auth
-    from app.auth.mirror import SqlAlchemyPrincipalMirror
     from app.auth.principal import Principal
-    from app.auth.resolver import PrincipalResolver
-    from app.auth.single_flight import SingleFlight
-    from app.db import get_session, get_sessionmaker
+    from app.db import get_sessionmaker
     from app.main import app
 
     command.upgrade(_alembic_config(), "head")
 
     def empty() -> None:
         with get_sessionmaker()() as session:
-            session.execute(text('TRUNCATE TABLE note, "user" CASCADE'))
+            session.execute(text("TRUNCATE TABLE note, kaya_account CASCADE"))
             session.commit()
 
     empty()
-    reset_auth()
-    upstream.known[ALICE_TOKEN] = Principal(id=ALICE_ID, email="alice@example.com")
-    upstream.known[BOB_TOKEN] = Principal(id=BOB_ID, email="bob@example.com")
-    cache = PrincipalCache(positive_ttl=60.0, negative_ttl=10.0)
-    single_flight = SingleFlight()
-
-    def resolver(session: Annotated[Session, Depends(get_session)]) -> PrincipalResolver:
-        return PrincipalResolver(
-            upstream=upstream,
-            mirror=SqlAlchemyPrincipalMirror(session),
-            cache=cache,
-            single_flight=single_flight,
-        )
-
-    app.dependency_overrides[get_resolver] = resolver
+    with get_sessionmaker()() as session:
+        seed_kaya_account(session, id=ALICE_ID, email="alice@example.com")
+        seed_kaya_account(session, id=BOB_ID, email="bob@example.com")
+    known_principals = {
+        ALICE_TOKEN: Principal(id=ALICE_ID, email="alice@example.com"),
+        BOB_TOKEN: Principal(id=BOB_ID, email="bob@example.com"),
+    }
+    override_get_principal(app, known_principals)
     try:
         with TestClient(app) as test_client:
             yield test_client
     finally:
         app.dependency_overrides.clear()
-        reset_auth()
         empty()
 
 

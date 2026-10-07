@@ -394,16 +394,20 @@ describe('a 401 leaves this component rather than being absorbed by it', () => {
     expect(host.querySelector('[data-testid="backlinks-error"]')).toBeNull()
   })
 
-  it('reports a missing credential the same way, without a request', async () => {
-    // `MissingCredential` is a `401` raised before the fetch, so it has to travel the same road.
+  it('reports a real 401 with no bearer in the tab the same way — the cookie did not authenticate either', async () => {
+    // KAN-1791: `apiRequest` no longer refuses before the fetch when there is no bearer — a
+    // same-origin cookie session might answer instead, so the request always goes out. What used to
+    // be a client-side precheck is now an ordinary `401` from the backend, and it has to travel the
+    // same road as the one above.
     auth.clearToken()
+    answer = refused(401, 'invalid_token', 'That token is not valid.')
     const panel = render(note('NOTE-1'))
 
     await vi.waitFor(() => {
       flushSync()
       expect(panel.expired).toHaveLength(1)
     })
-    expect(asked).toEqual([])
+    expect(asked).toHaveLength(1)
   })
 
   it('says nothing about the credential itself, in any state', async () => {

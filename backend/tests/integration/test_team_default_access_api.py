@@ -17,10 +17,15 @@ from typing import Any
 import pytest
 from sqlalchemy import text
 
+from tests.integration.auth_helpers import override_get_principal, seed_kaya_account
+
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 ALICE_TOKEN = "a-caller-supplied-string-kaya-does-not-parse"
 BOB_TOKEN = "a-different-caller-supplied-string"
+# Team membership is asked of pandan with the caller's *linked pandan PAT* (KAN-1804), never the
+# kaya bearer above, so the fake upstream is keyed by this one.
+BOB_PANDAN_PAT = "bobs-linked-pandan-pat"
 ALICE_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
 BOB_ID = uuid.UUID("22222222-2222-4222-8222-222222222222")
 PLATFORM_TEAM_ID = 501
@@ -33,18 +38,8 @@ INSERT_TEAM_NOTE = text(
 )
 
 
-class FakeIdentityUpstream:
-    """Pandan's identity endpoint, faked — same shape as `test_notes_api.py`'s."""
-
-    def __init__(self) -> None:
-        self.known: dict[str, Any] = {}
-
-    def introspect(self, bearer: str) -> Any:
-        return self.known.get(bearer)
-
-
 class FakeTeamUpstream:
-    """Pandan's `GET /api/v1/teams`, faked — a bearer maps to the team ids its owner belongs to."""
+    """Pandan's `GET /api/v1/workspaces`, faked: a linked PAT maps to its owner's team ids."""
 
     def __init__(self) -> None:
         self.known: dict[str, frozenset[int]] = {}
@@ -64,60 +59,42 @@ def _alembic_config() -> Any:
 
 
 @pytest.fixture
-def identity_upstream() -> FakeIdentityUpstream:
-    return FakeIdentityUpstream()
-
-
-@pytest.fixture
 def team_upstream() -> FakeTeamUpstream:
     return FakeTeamUpstream()
 
 
 @pytest.fixture
+def known_principals() -> dict[str, Any]:
+    return {}
+
+
+@pytest.fixture
 def client(
-    database_url: str, identity_upstream: FakeIdentityUpstream, team_upstream: FakeTeamUpstream
+    database_url: str, known_principals: dict[str, Any], team_upstream: FakeTeamUpstream
 ) -> Iterator[Any]:
-    """The real app, with both of pandan's endpoints swapped for fakes — identity (ADR 0002) and
-    team membership (ADR 0011) are two different upstreams, two different overrides, mirroring how
-    `app/auth/`'s two resolvers never share a cache or a single-flight registry."""
-    from typing import Annotated
-
+    """The real app, with identity faked directly (`override_get_principal`, KAN-1740) and team
+    membership (ADR 0011) faked at its own, unrelated upstream seam — the two were never one
+    dependency to override, and KAN-1740 didn't change that."""
     from alembic import command
-    from fastapi import Depends
     from fastapi.testclient import TestClient
-    from sqlalchemy.orm import Session
 
-    from app.auth.cache import PrincipalCache
-    from app.auth.dependencies import get_resolver, get_team_access_resolver, reset_auth
-    from app.auth.mirror import SqlAlchemyPrincipalMirror
-    from app.auth.resolver import PrincipalResolver
+    from app.auth.dependencies import get_team_access_resolver
     from app.auth.single_flight import SingleFlight
     from app.auth.team_cache import TeamMembershipCache
     from app.auth.team_resolver import TeamAccessResolver
-    from app.db import get_session, get_sessionmaker
+    from app.db import get_sessionmaker
     from app.main import app
 
     command.upgrade(_alembic_config(), "head")
 
     def empty() -> None:
         with get_sessionmaker()() as session:
-            session.execute(text('TRUNCATE TABLE note, "user", team CASCADE'))
+            session.execute(text("TRUNCATE TABLE note, kaya_account, team CASCADE"))
             session.commit()
 
     empty()
-    reset_auth()
-    cache = PrincipalCache(positive_ttl=60.0, negative_ttl=10.0)
-    single_flight = SingleFlight()
     team_cache = TeamMembershipCache(positive_ttl=60.0, negative_ttl=10.0)
     team_single_flight = SingleFlight()
-
-    def resolver(session: Annotated[Session, Depends(get_session)]) -> PrincipalResolver:
-        return PrincipalResolver(
-            upstream=identity_upstream,
-            mirror=SqlAlchemyPrincipalMirror(session),
-            cache=cache,
-            single_flight=single_flight,
-        )
 
     def team_resolver() -> TeamAccessResolver:
         return TeamAccessResolver(
@@ -126,32 +103,50 @@ def client(
             single_flight=team_single_flight,
         )
 
-    app.dependency_overrides[get_resolver] = resolver
+    override_get_principal(app, known_principals)
     app.dependency_overrides[get_team_access_resolver] = team_resolver
     try:
         with TestClient(app) as test_client:
             yield test_client
     finally:
         app.dependency_overrides.clear()
-        reset_auth()
         empty()
 
 
 @pytest.fixture
-def alice(identity_upstream: FakeIdentityUpstream) -> Any:
+def alice(client: Any, known_principals: dict[str, Any]) -> Any:
+    """Depends on ``client`` so its ``empty()`` truncation has already run — see
+    `test_notes_api.py`'s identical fixture for why that ordering matters."""
     from app.auth.principal import Principal
+    from app.db import get_sessionmaker
+
+    with get_sessionmaker()() as session:
+        seed_kaya_account(session, id=ALICE_ID, email="alice@example.com")
 
     principal = Principal(id=ALICE_ID, email="alice@example.com")
-    identity_upstream.known[ALICE_TOKEN] = principal
+    known_principals[ALICE_TOKEN] = principal
     return principal
 
 
 @pytest.fixture
-def bob(identity_upstream: FakeIdentityUpstream) -> Any:
+def bob(client: Any, known_principals: dict[str, Any]) -> Any:
     from app.auth.principal import Principal
+    from app.config import get_settings
+    from app.db import get_sessionmaker
+    from app.identity.pandan_link import PandanLink, encrypt_token
+
+    with get_sessionmaker()() as session:
+        seed_kaya_account(session, id=BOB_ID, email="bob@example.com")
+        session.add(
+            PandanLink(
+                user_id=BOB_ID,
+                encrypted_token=encrypt_token(BOB_PANDAN_PAT, get_settings().kaya_auth_secret),
+            )
+        )
+        session.commit()
 
     principal = Principal(id=BOB_ID, email="bob@example.com")
-    identity_upstream.known[BOB_TOKEN] = principal
+    known_principals[BOB_TOKEN] = principal
     return principal
 
 
@@ -160,24 +155,15 @@ def auth(token: str) -> dict[str, str]:
 
 
 @pytest.fixture
-def alices_team_note(client: Any, alice: Any) -> str:
+def alices_team_note(alice: Any) -> str:
     """A note owned by Alice and shared with the Platform team, inserted directly (R16.5 is what
     teaches `POST /api/v1/notes` to do this over HTTP). Returns its `NOTE-n` ref.
 
-    Alice's ``user`` row does not exist until something mirrors it (`app/auth/mirror.py`'s
-    just-in-time insert, run from a real request) — a raw `INSERT` before any request has
-    authenticated as her would violate `note.owner_id`'s foreign key. A throwaway `POST` earns the
-    mirror row the same way `test_notes_api.py`'s `create` helper does it implicitly — a `POST`
-    rather than a `GET /notes`, deliberately: the list route always calls `TeamAccessResolver`
-    (`app/api/notes.py`'s `list_notes`), and a call made here would already be sitting in
-    ``team_upstream.calls`` before a test's own assertions run.
+    Depends on the `alice` fixture (not just `client`) so her `kaya_account` row exists before this
+    raw `INSERT` — `note.owner_id`'s foreign key needs it, and unlike the pre-KAN-1740 pandan-mirror
+    world, there is no just-in-time mirroring left to earn it with a throwaway request.
     """
     from app.db import get_sessionmaker
-
-    assert (
-        client.post(NOTES, json={"title": "throwaway"}, headers=auth(ALICE_TOKEN)).status_code
-        == 201
-    )
 
     with get_sessionmaker()() as session:
         session.execute(INSERT_TEAM, {"id": PLATFORM_TEAM_ID})
@@ -193,7 +179,7 @@ def alices_team_note(client: Any, alice: Any) -> str:
 def test_a_team_member_reaches_a_teammates_team_shared_note_over_http(
     client: Any, team_upstream: FakeTeamUpstream, alices_team_note: str
 ) -> None:
-    team_upstream.known[BOB_TOKEN] = frozenset({PLATFORM_TEAM_ID})
+    team_upstream.known[BOB_PANDAN_PAT] = frozenset({PLATFORM_TEAM_ID})
 
     response = client.get(f"{NOTES}/{alices_team_note}", headers=auth(BOB_TOKEN))
 
@@ -228,7 +214,7 @@ def test_the_owner_never_pays_for_a_team_check_on_their_own_note(
 @pytest.mark.usefixtures("alice", "bob")
 def test_a_team_note_appears_in_a_members_list_and_not_a_strangers(
     client: Any,
-    identity_upstream: FakeIdentityUpstream,
+    known_principals: dict[str, Any],
     team_upstream: FakeTeamUpstream,
     alices_team_note: str,
 ) -> None:
@@ -238,8 +224,10 @@ def test_a_team_note_appears_in_a_members_list_and_not_a_strangers(
     from app.auth.principal import Principal
 
     carol_token = "yet-another-caller-supplied-string"
-    identity_upstream.known[carol_token] = Principal(id=uuid.uuid4(), email="carol@example.com")
-    team_upstream.known[BOB_TOKEN] = frozenset({PLATFORM_TEAM_ID})
+    # Carol only ever reads (`GET /api/v1/notes`), never creates, so — unlike `alice`/`bob` — she
+    # needs no `kaya_account` row: nothing here writes a foreign key that would need one.
+    known_principals[carol_token] = Principal(id=uuid.uuid4(), email="carol@example.com")
+    team_upstream.known[BOB_PANDAN_PAT] = frozenset({PLATFORM_TEAM_ID})
     # carol is a real, resolvable caller who belongs to no team at all.
 
     bobs_view = client.get(NOTES, headers=auth(BOB_TOKEN))
@@ -260,7 +248,7 @@ def test_creating_a_note_with_a_team_you_belong_to_succeeds(
     """The team's own `team` mirror row does not exist yet anywhere -- this is the first time
     anyone has ever mentioned `PLATFORM_TEAM_ID` to kaya. `ensure_team_mirrored` has to create it
     just-in-time, in the same request, or the note insert fails its own foreign key."""
-    team_upstream.known[BOB_TOKEN] = frozenset({PLATFORM_TEAM_ID})
+    team_upstream.known[BOB_PANDAN_PAT] = frozenset({PLATFORM_TEAM_ID})
 
     response = client.post(
         NOTES,

@@ -25,13 +25,15 @@ Each remaining V3 card replaces **one file**, which is the whole reason the layo
 ```
 src/
   App.svelte                 the shell: layout regions, the route, the two reads they need
-  app.css                    design tokens (--ink, --paper, --muted, --edge, --accent, --sans, --mono)
+  tokens.css                 Material 3 role, type, shape, state-layer and motion tokens, light and dark (KAN-1828)
+  app.css                    imports tokens.css; base element rules, the shared focus ring and state layers
   lib/api.ts                 apiPath + apiRequest — the one place a request happens
   lib/auth.ts                the credential seam: the only module that knows what a bearer is
   lib/editor.ts              the editor's two guards + ADR 0009's two versions, as pure functions
   lib/codemirror.ts          every runtime CodeMirror value, behind one import() (KAN-767)
   lib/markdown.ts            markdown -> DOM nodes, behind one import() (KAN-554, KAN-836)
   lib/notes.ts               the five note calls
+  lib/preferences.ts         `/api/v1/preferences` + the cached "format on save" answer (KAN-1815)
   lib/router.ts              / and /notes/:ref, hand-written, no dependency
   lib/types.ts               the wire shapes, mirroring backend/app/api/schemas.py
   lib/conflict.ts            ADR 0009's resolution rule + the side-by-side comparison (KAN-556)
@@ -42,6 +44,7 @@ src/
   components/Landing.svelte    the no-credential state and the one-time PAT paste (KAN-555)
   components/Sidebar.svelte    the folder tree over `path`, the flat list, the search box (KAN-554/559/962)
   components/PreviewPane.svelte live preview, a sibling of the editor (KAN-554, KAN-836)
+  components/Settings.svelte   `/settings`: the "Format on save" toggle (KAN-1815)
   components/BacklinksPanel.svelte what links to the open note — the fourth region (KAN-568)
 ```
 
@@ -159,6 +162,18 @@ on — ADR 0009's precondition, carried as an **opaque string** and never near a
 backend's comparison is exact to the microsecond. The precondition is never *fetched*: it comes from
 the note that was opened and then from each save's own response. Fetching it would look safer and
 would disable the guarantee.
+
+**Format on save (KAN-1815), a per-account setting, default ON.** It lives server-side
+(`user_preference`, `/api/v1/preferences`, edited on `/settings`), so it follows the account across
+browsers; an account that never chose has no row and reads ON. The editor reads it **once, at mount**
+(`primePreferences`), never as part of a save, so a save is still exactly one request. While ON the
+`PATCH` also carries `format: true` and the server (KAN-1814) formats and stores once, under the same
+`if_updated_at`. The response's body is applied through the echo guard as one minimal CM6 transaction
+(`syncFormatted` in `lib/editor.ts`): never a remount, never a second save, one undo step back to the
+text as typed, the caret left alone when it sits outside what changed, and **not applied at all** if
+the user typed while the save was in flight (their keystrokes win and the pane stays unsaved). It
+governs browser saves only; the CLI and MCP never format implicitly. There is no JS formatter in the
+bundle; the engine is server-side.
 
 A `409` is shown with both timestamps and both whole notes held in state; `conflictVersions()` reads
 `attempted` / `stored` out of `ApiError.details`.
@@ -385,10 +400,11 @@ the browser cache disabled — so the request sets below are observed, not deriv
 
 **The last two rows are identical, and that is a fact about the app rather than a rounding.**
 `EditorPane` sits **outside** the preview toggle's `{#if}` (see `App.svelte`, and `tests/preview.test.ts`
-for why), and `previewing` starts `true`, so a signed-in user on `/` already mounts both panes with
-`note === null`. Every cold load that has a credential fetches all five assets; every cold load that
+for why), and (as measured, before KAN-1819 replaced the Preview toggle with the Read/Edit/Split switch: `previewing` started `true`, so a signed-in user on `/` already mounted both panes with
+`note === null`). **Since KAN-1819 an expanded load opens in Edit, so the preview chunk is fetched
+only once Read or Split is chosen (or remembered); these numbers are the upper bound.** Every cold load that has a credential fetched all five assets; every cold load that
 does not fetches two. There is no fourth state to quote — toggling the preview off after the fact
-cannot un-fetch a chunk, and `previewing` is not persisted, so "preview off" is not a page a visitor
+cannot un-fetch a chunk, and `previewing` was not persisted, so "preview off" is not a page a visitor
 can land on.
 
 **So the trade is: −22,490 B gzip on the page where a person has not decided to use kaya yet, against
@@ -538,7 +554,7 @@ Four decisions, each argued in the file that holds it.
 
 **It is a region of the shell, not a third column of `.split`.** `App.svelte` was three layout regions
 "and nothing else", so the fourth is a deliberate exception rather than drift. A rail inside `main`
-would be a sibling of `{#if previewing}`, and KAN-554 and KAN-962 both paid for the rule that a command
+would be a sibling of the mode switch's `{#if}`, and KAN-554 and KAN-962 both paid for the rule that a command
 about one pane must not disturb another's state. Outside `main` the preview toggle **cannot reach it at
 all** — the structural form of the property rather than the carefully-placed one. It also is not a pane
 of the document, so it does not want one of `.split`'s `minmax(0, 1fr)` tracks; the grid becomes

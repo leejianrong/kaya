@@ -82,22 +82,34 @@ def _api_app() -> FastAPI:
     return app
 
 
-def served_paths(router: Any) -> list[str]:
+def served_paths(router: Any, prefix: str = "") -> list[str]:
     """Every path the app can answer, including the ones behind an included router.
 
     FastAPI 0.141 puts a single opaque ``_IncludedRouter`` into ``app.routes`` rather than
     splicing the included routes in, so a flat read of ``app.routes`` sees ``/health`` and misses
     the whole of ``/api/v1``. It would have reported "all routes covered" while covering nothing —
     the failure mode this guard exists to prevent, in the guard itself.
+
+    **`prefix` matters for exactly one case (KAN-1738).** Every router this app built for itself
+    bakes its prefix in at `APIRouter(prefix=...)` construction time, so `route.path` was always
+    already the full path — `served_paths`'s original form never needed to track one.
+    `fastapi-users` hands back *pre-built* routers instead, which this app can only mount via
+    `app.include_router(router, prefix="/auth")`; `_IncludedRouter.original_router`'s own routes
+    then carry the **un**prefixed path (`"/login"`, not `"/auth/login"`), with the prefix recorded
+    only on the wrapper's `include_context.prefix`. Recursing with that prefix accumulated is what
+    keeps this walker honest about a router mounted that way instead of silently under-reporting it
+    (the exact failure mode the docstring above already warns this guard exists to prevent).
     """
     paths: list[str] = []
     for route in getattr(router, "routes", []):
         nested = getattr(route, "original_router", None)
         if nested is not None:
-            paths.extend(served_paths(nested))
+            include_context = getattr(route, "include_context", None)
+            nested_prefix = prefix + getattr(include_context, "prefix", "")
+            paths.extend(served_paths(nested, nested_prefix))
         path = getattr(route, "path", None)
         if path is not None and getattr(route, "name", None) != "spa":
-            paths.append(path)
+            paths.append(prefix + path)
     return paths
 
 
@@ -260,6 +272,42 @@ def test_a_root_level_file_is_served_without_the_immutable_header(served: TestCl
 
     assert response.status_code == 200
     assert "immutable" not in response.headers.get("cache-control", "")
+
+
+ICON_FILES = {
+    "favicon.svg": "image/svg+xml",
+    "favicon.ico": "image/vnd.microsoft.icon",
+    "apple-touch-icon.png": "image/png",
+    "icon-192.png": "image/png",
+    "icon-512.png": "image/png",
+    "icon-maskable-512.png": "image/png",
+    "og.png": "image/png",
+    "manifest.webmanifest": "application/manifest+json",
+}
+"""KAN-1823: Vite copies ``frontend/public/`` to the build root, where the root-level-file branch of
+``serve_spa`` serves it. The content type is the part worth pinning: a ``.webmanifest`` that came
+back ``text/plain`` is ignored by browsers, and an icon that came back as ``index.html`` is a
+silent generic globe."""
+
+
+@pytest.mark.parametrize(("name", "content_type"), sorted(ICON_FILES.items()))
+def test_the_real_icon_files_are_served_as_themselves_not_as_the_index(
+    dist: Path, name: str, content_type: str
+) -> None:
+    public = Path(__file__).resolve().parents[3] / "frontend" / "public"
+    real = public / name
+    assert real.is_file(), f"{name} is missing from frontend/public"
+    (dist / name).write_bytes(real.read_bytes())
+    app = _api_app()
+    assert mount_spa(app, dist) is True
+
+    with TestClient(app) as client:
+        response = client.get("/" + name)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].split(";")[0] == content_type
+    assert response.content == real.read_bytes()
+    assert b"<!doctype html" not in response.content.lower()
 
 
 # --- containment and absence ----------------------------------------------------------------------

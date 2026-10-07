@@ -25,6 +25,8 @@ from typing import Any
 import pytest
 from sqlalchemy import text
 
+from tests.integration.auth_helpers import override_get_principal, seed_kaya_account
+
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 ALICE_TOKEN = "a-caller-supplied-string-kaya-does-not-parse"
@@ -41,27 +43,12 @@ READ_LINKS = text(
 )
 
 
-class FakeUpstream:
-    """Pandan, faked at the HTTP boundary (ADR 0002's Protocol seam). Kaya holds no credential."""
-
-    def __init__(self) -> None:
-        self.known: dict[str, Any] = {}
-
-    def introspect(self, bearer: str) -> Any:
-        return self.known.get(bearer)
-
-
 def _alembic_config() -> Any:
     from alembic.config import Config
 
     config = Config(str(BACKEND_ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND_ROOT / "alembic"))
     return config
-
-
-@pytest.fixture
-def upstream() -> FakeUpstream:
-    return FakeUpstream()
 
 
 @pytest.fixture
@@ -76,52 +63,39 @@ def engine(database_url: str) -> Any:
 
 
 @pytest.fixture
-def client(database_url: str, upstream: FakeUpstream) -> Iterator[Any]:
-    """The real app with pandan swapped out, exactly as ``test_notes_api.py`` builds it."""
-    from typing import Annotated
+def known_principals() -> dict[str, Any]:
+    return {}
 
+
+@pytest.fixture
+def client(database_url: str, known_principals: dict[str, Any]) -> Iterator[Any]:
+    """The real app with identity faked (`override_get_principal`, KAN-1740) — only Alice by
+    default; `test_resolution_never_crosses_an_owner_boundary` and its backward-pass sibling add Bob
+    themselves, mid-test, the same way they always have."""
     from alembic import command
-    from fastapi import Depends
     from fastapi.testclient import TestClient
-    from sqlalchemy.orm import Session
 
-    from app.auth.cache import PrincipalCache
-    from app.auth.dependencies import get_resolver, reset_auth
-    from app.auth.mirror import SqlAlchemyPrincipalMirror
     from app.auth.principal import Principal
-    from app.auth.resolver import PrincipalResolver
-    from app.auth.single_flight import SingleFlight
-    from app.db import get_session, get_sessionmaker
+    from app.db import get_sessionmaker
     from app.main import app
 
     command.upgrade(_alembic_config(), "head")
 
     def empty() -> None:
         with get_sessionmaker()() as session:
-            session.execute(text('TRUNCATE TABLE note, "user" CASCADE'))
+            session.execute(text("TRUNCATE TABLE note, kaya_account CASCADE"))
             session.commit()
 
     empty()
-    reset_auth()
-    upstream.known[ALICE_TOKEN] = Principal(id=ALICE_ID, email="alice@example.com")
-    cache = PrincipalCache(positive_ttl=60.0, negative_ttl=10.0)
-    single_flight = SingleFlight()
-
-    def resolver(session: Annotated[Session, Depends(get_session)]) -> PrincipalResolver:
-        return PrincipalResolver(
-            upstream=upstream,
-            mirror=SqlAlchemyPrincipalMirror(session),
-            cache=cache,
-            single_flight=single_flight,
-        )
-
-    app.dependency_overrides[get_resolver] = resolver
+    with get_sessionmaker()() as session:
+        seed_kaya_account(session, id=ALICE_ID, email="alice@example.com")
+    known_principals[ALICE_TOKEN] = Principal(id=ALICE_ID, email="alice@example.com")
+    override_get_principal(app, known_principals)
     try:
         with TestClient(app) as test_client:
             yield test_client
     finally:
         app.dependency_overrides.clear()
-        reset_auth()
         empty()
 
 
@@ -419,14 +393,17 @@ def test_title_matching_is_exact_and_case_sensitive(client: Any, engine: Any) ->
 
 
 def test_resolution_never_crosses_an_owner_boundary(
-    client: Any, engine: Any, upstream: Any
+    client: Any, engine: Any, known_principals: dict[str, Any]
 ) -> None:
     """A title match is scoped to the *linking* note's own owner — Bob having a note titled
     "Shared Title" must never resolve (or, worse, silently name) Alice's link to that title, the
     same "another user's note must never appear" property `notes_owned_by` enforces for a list."""
     from app.auth.principal import Principal
+    from app.db import get_sessionmaker
 
-    upstream.known[BOB_TOKEN] = Principal(id=BOB_ID, email="bob@example.com")
+    with get_sessionmaker()() as session:
+        seed_kaya_account(session, id=BOB_ID, email="bob@example.com")
+    known_principals[BOB_TOKEN] = Principal(id=BOB_ID, email="bob@example.com")
     create(client, token=BOB_TOKEN, title="Shared Title", body="")
 
     linker = create(client, title="linker", body="see [[Shared Title]] for background")
@@ -435,7 +412,7 @@ def test_resolution_never_crosses_an_owner_boundary(
 
 
 def test_the_backward_pass_never_crosses_an_owner_boundary_either(
-    client: Any, engine: Any, upstream: Any
+    client: Any, engine: Any, known_principals: dict[str, Any]
 ) -> None:
     """The other direction of the same property, and it was **untested until KAN-965**.
 
@@ -451,8 +428,11 @@ def test_the_backward_pass_never_crosses_an_owner_boundary_either(
     would pass against a link nothing could ever have resolved.
     """
     from app.auth.principal import Principal
+    from app.db import get_sessionmaker
 
-    upstream.known[BOB_TOKEN] = Principal(id=BOB_ID, email="bob@example.com")
+    with get_sessionmaker()() as session:
+        seed_kaya_account(session, id=BOB_ID, email="bob@example.com")
+    known_principals[BOB_TOKEN] = Principal(id=BOB_ID, email="bob@example.com")
 
     linker = create(client, title="linker", body="blocked on [[Shared Title]]")
     pending = link_row(engine, linker["id"])

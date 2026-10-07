@@ -1,12 +1,14 @@
 /**
- * Shared e2e fixtures: authenticating a page through the real landing-state paste flow, and thin
- * API helpers for setup a test doesn't want to spend UI steps on.
+ * Shared e2e fixtures: authenticating a page, and thin API helpers for setup a test doesn't want to
+ * spend UI steps on.
  *
- * `pasteToken` drives `Landing.svelte`'s actual form rather than seeding `sessionStorage` directly
- * (`page.evaluate(() => sessionStorage.setItem(...))` would work and would be faster, but it would
- * also mean this suite never exercises the one flow SLICES.md's landing-state bullet is actually
- * about, and `landing.spec.ts` needs the unauthenticated form regardless — reusing it here is one
- * fewer thing this suite asserts two different ways).
+ * KAN-1791 removed `Landing.svelte`'s paste form entirely — GitHub OAuth is kaya's only login path,
+ * and there is no scripted way through a real consent screen in CI. `login()` mints a real
+ * `kayaauth` cookie session directly instead, through kaya's own e2e-only `POST /auth/test-login`
+ * (gated on `KAYA_E2E_AUTH_BYPASS`, see `Settings.kaya_e2e_auth_bypass`'s own docstring and
+ * `docker-compose.e2e.yml`'s `app.environment`, the only place that sets it) — the kaya mirror of
+ * pandan's own shipped `E2E_AUTH_BYPASS`/`login()` helper (`pandan/frontend/e2e/helpers.ts`), which
+ * hit the identical problem for the identical reason.
  */
 import { type APIRequestContext, type Page, expect, test as base } from '@playwright/test'
 
@@ -14,12 +16,37 @@ import { fakeToken, prefixedTitle } from './env'
 
 export { prefixedTitle }
 
-/** Drive the real paste form with the fake pandan bearer, and wait for the shell to leave landing. */
-export async function pasteToken(page: Page): Promise<void> {
-  await page.goto('/')
-  await page.getByTestId('paste-form').locator('input[type="password"]').fill(fakeToken())
-  await page.getByTestId('paste-form').getByRole('button', { name: 'Use this token' }).click()
-  await expect(page.locator('.shell')).not.toHaveClass(/unauthenticated/)
+/**
+ * The email every fixture in this suite authenticates as by default — the same one
+ * `scripts/test-e2e.sh` seeds the suite's `kaya_pat_…` bearer for, so a cookie session from
+ * `login()` and a bearer from `fakeToken()` resolve to the **same** `KayaAccount`: notes created
+ * through one are visible through the other, exactly as they were when both were the one fake PAT.
+ *
+ * Not a `.test`/`.invalid`/`.localhost` domain: `POST /auth/test-login` validates this through
+ * fastapi-users' `UserCreate` schema, whose `EmailStr` rejects an RFC 2606 reserved-for-testing
+ * domain as a "special-use or reserved name" — found by actually running this suite, not reasoned
+ * about, since `scripts/test-e2e.sh`'s own direct-DB seed bypasses that validation and would not
+ * have caught the mismatch on its own. `example.com` matches pandan's own e2e seam.
+ */
+const E2E_EMAIL = 'e2e@example.com'
+
+/**
+ * Mint a real cookie session for `email`, with no navigation and no GitHub round trip.
+ *
+ * `page.request` shares this page's own browser-context cookie jar, so the `Set-Cookie` on the
+ * response lands where a subsequent `page.goto()` will actually send it — `maxRedirects: 0` keeps
+ * the route's own `302` to `/` (`RedirectingCookieTransport`, `app/identity/backend.py`) from being
+ * auto-followed, matching pandan's own `login()` for the identical reason: the interesting response
+ * is the one carrying the cookie, not whatever the redirect's target answers with.
+ */
+export async function login(page: Page, email = E2E_EMAIL): Promise<void> {
+  const response = await page.request.post('/auth/test-login', {
+    data: { email },
+    maxRedirects: 0,
+  })
+  if (response.status() >= 400) {
+    throw new Error(`test-login failed (${response.status()}): ${await response.text()}`)
+  }
 }
 
 interface Note {
@@ -34,7 +61,7 @@ interface Note {
 
 /** `notePath`'s sibling for this file — one percent-encoded segment, same as `lib/notes.ts`. */
 function notePath(ref: string): string {
-  return `notes/${encodeURIComponent(ref)}`
+  return `/api/v1/notes/${encodeURIComponent(ref)}`
 }
 
 /**
@@ -75,7 +102,7 @@ export async function apiDeleteNote(api: APIRequestContext, ref: string): Promis
 }
 
 /**
- * `authedPage`: a page that has already been through the real paste flow.
+ * `authedPage`: a page that already has a real cookie session and has landed on the note list.
  *
  * `request` here is Playwright's own built-in fixture — same `baseURL` as `page`'s, scoped to the
  * one test using it. `apiCreateNote`/`apiUpdateNote`/`apiDeleteNote` above are typed against it
@@ -83,7 +110,9 @@ export async function apiDeleteNote(api: APIRequestContext, ref: string): Promis
  */
 export const test = base.extend<{ authedPage: Page }>({
   authedPage: async ({ page }, use) => {
-    await pasteToken(page)
+    await login(page)
+    await page.goto('/')
+    await expect(page.locator('.shell')).not.toHaveClass(/unauthenticated/)
     await use(page)
   },
 })

@@ -19,6 +19,8 @@ from typing import Any
 import pytest
 from sqlalchemy import text
 
+from tests.integration.auth_helpers import override_get_principal, seed_kaya_account
+
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 ALICE_TOKEN = "a-caller-supplied-string-kaya-does-not-parse"
@@ -38,70 +40,38 @@ def _alembic_config() -> Any:
     return config
 
 
-class FakeIdentityUpstream:
-    def __init__(self) -> None:
-        self.known: dict[str, Any] = {}
-
-    def introspect(self, bearer: str) -> Any:
-        return self.known.get(bearer)
-
-
 @pytest.fixture
-def identity() -> FakeIdentityUpstream:
-    return FakeIdentityUpstream()
-
-
-@pytest.fixture
-def client(database_url: str, identity: FakeIdentityUpstream) -> Iterator[Any]:
-    """The real app, with only identity faked — the same minimal override `test_notes_api.py` uses,
-    since this route reaches no upstream of its own."""
-    from typing import Annotated
-
+def client(database_url: str) -> Iterator[Any]:
+    """The real app, with only identity faked (`override_get_principal`, KAN-1740) — since this
+    route reaches no upstream of its own."""
     from alembic import command
-    from fastapi import Depends
     from fastapi.testclient import TestClient
-    from sqlalchemy.orm import Session
 
-    from app.auth.cache import PrincipalCache
-    from app.auth.dependencies import get_resolver, reset_auth
-    from app.auth.mirror import SqlAlchemyPrincipalMirror
     from app.auth.principal import Principal
-    from app.auth.resolver import PrincipalResolver
-    from app.auth.single_flight import SingleFlight
-    from app.db import get_session, get_sessionmaker
+    from app.db import get_sessionmaker
     from app.main import app
 
     command.upgrade(_alembic_config(), "head")
 
     def empty() -> None:
         with get_sessionmaker()() as session:
-            session.execute(text('TRUNCATE TABLE note_link, note, "user" CASCADE'))
+            session.execute(text("TRUNCATE TABLE note_link, note, kaya_account CASCADE"))
             session.commit()
 
     empty()
-    reset_auth()
-
-    identity.known[ALICE_TOKEN] = Principal(id=ALICE_ID, email="alice@example.com")
-    identity.known[BOB_TOKEN] = Principal(id=BOB_ID, email="bob@example.com")
-
-    cache = PrincipalCache(positive_ttl=60.0, negative_ttl=10.0)
-    single_flight = SingleFlight()
-
-    def resolver(session: Annotated[Session, Depends(get_session)]) -> PrincipalResolver:
-        return PrincipalResolver(
-            upstream=identity,
-            mirror=SqlAlchemyPrincipalMirror(session),
-            cache=cache,
-            single_flight=single_flight,
-        )
-
-    app.dependency_overrides[get_resolver] = resolver
+    with get_sessionmaker()() as session:
+        seed_kaya_account(session, id=ALICE_ID, email="alice@example.com")
+        seed_kaya_account(session, id=BOB_ID, email="bob@example.com")
+    known_principals = {
+        ALICE_TOKEN: Principal(id=ALICE_ID, email="alice@example.com"),
+        BOB_TOKEN: Principal(id=BOB_ID, email="bob@example.com"),
+    }
+    override_get_principal(app, known_principals)
     try:
         with TestClient(app) as test_client:
             yield test_client
     finally:
         app.dependency_overrides.clear()
-        reset_auth()
         empty()
 
 
@@ -131,7 +101,7 @@ def test_no_bearer_at_all_is_a_401(client: Any) -> None:
     assert response.headers["WWW-Authenticate"] == "Bearer"
 
 
-def test_a_bearer_pandan_does_not_recognise_is_also_a_401(client: Any) -> None:
+def test_a_bearer_kaya_does_not_recognise_is_also_a_401(client: Any) -> None:
     response = client.get(GRAPH, headers=auth("a-token-nobody-issued"))
 
     assert response.status_code == 401

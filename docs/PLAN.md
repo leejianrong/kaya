@@ -109,7 +109,7 @@ EPIC-137) is where the day-to-day state lives.
 
 **This table is synced from BREADBOARD.md, not the other way round** — when a status here and there
 disagree, BREADBOARD.md is current and this table is stale; fix this table in the same PR that notices
-the drift (last synced 2026-09-05, KAN-1155).
+the drift (last synced 2026-09-25, KAN-1741, R19 shipped).
 
 | ID | Requirement | Status |
 |----|-------------|--------|
@@ -120,6 +120,11 @@ the drift (last synced 2026-09-05, KAN-1155).
 | R14 | A note can carry a non-text attachment, stored in R2, never leaked to another owner | Shipped (KAN-1067–1069) |
 | R15 | Investigate whether kaya's data model can support a team/org scope, not just single-owner | Done — spike (KAN-1048), superseded by R16 |
 | R16 | A note can be shared with everyone on a pandan team by default (ADR 0011) | Shipped (KAN-1082–1088) |
+| R17 | A published, browsable docs site for install/CLI/agent/self-hosting docs (Q34) | Shipped (KAN-1194–1197), live at <https://leejianrong.github.io/kaya/> |
+| R18 | Ambient session context: a session already knows recent notes without asking (ADR 0005, pandan V48) | Shipped (KAN-1198–1201) |
+| R19 | Kaya becomes its own authorization server — no runtime dependency on pandan for identity (ADR 0012, supersedes ADR 0002) | **Shipped** — KAN-1738/1739/1740/1741: GitHub OAuth App + fastapi-users + async engine + cookie sessions; `personal_access_token` table + `/api/v1/tokens` + the Tokens UI; `get_principal` cut over to kaya's own identity, the ADR 0002 introspection path deleted (not left dormant), `note.owner_id` re-pointed at `kaya_account` (migration `0009`); the board-embed preview's own "connect your pandan account" step (`/api/v1/pandan-link`, `pandan_link` table, `/pandan` SPA page). **Deliberate, accepted cutover cost**: a note created before migration `0009` keeps its old pandan UUID in `owner_id` with no row anywhere to back it, and is not reachable under anyone's new `KayaAccount` id — no reconciliation tooling was built (maintainer's explicit call: this is dev/dogfood data). `card_resolution.py`'s wikilink resolution had the same broken-bearer defect the board-embed preview did — fixed the same way: `app/integrations/dependencies.py`'s `card_resolution_bearer` now forwards the caller's linked pandan PAT (`app/identity/pandan_link.py`), never their kaya-side bearer. |
+| R20 | `kaya auth login/logout/status` (RFC 8628 device flow) + a hosted remote MCP endpoint (ADR 0013) | **`kaya auth login/logout/check` shipped (`KAN-1743`); hosted MCP shipped (`KAN-1744`, ADR 0014)** — see `docs/roadmap/BREADBOARD.md`'s R20 section. Its docs pass (`KAN-1745`, with `KAN-1825`) shipped. |
+| R21 | Markdown formatter: one server-side engine for the SPA, the CLI and MCP (KAN-1813 split into KAN-1814/1815/1816) | **Part A shipped (`KAN-1814`)** — `app/markdown_format.py` (`mdformat` + GFM + frontmatter, every `[[…]]` span protected by a same-width placeholder, declines rather than alter a note's link edges), `PATCH /notes/{ref}` with `format: true` (one guarded write; formats the stored body if none is sent; `X-Kaya-Format` header says `formatted`/`unchanged`/`skipped`) and `GET /notes/{ref}/format-check`. **Part B (`KAN-1815`)**: a per-account "Format on save" setting (default ON; `user_preference` table, `/api/v1/preferences`, SPA `/settings`) — the SPA sends `format: true` on its `PATCH` and applies the returned body in place; CLI/MCP never format implicitly. The agent second pass (`KAN-1816`) follows. |
 
 ## Requirements
 

@@ -1,10 +1,11 @@
 /**
- * The router is two routes and a hand-written parser, so it gets assertions rather than trust.
+ * The router is a handful of routes and a hand-written parser, so it gets assertions rather than
+ * trust.
  *
- * A router library would have arrived with its own test suite; the price of not adding one for two
- * routes (`lib/router.ts` explains why) is writing the tests it would have brought. The failure
- * mode this covers is quiet: a deep link that parses to `unknown` shows an empty pane rather than
- * an error, and `spa.py` has already returned a `200` for it.
+ * A router library would have arrived with its own test suite; the price of not adding one
+ * (`lib/router.ts` explains why) is writing the tests it would have brought. The failure mode this
+ * covers is quiet: a deep link that parses to `unknown` shows an empty pane rather than an error,
+ * and `spa.py` has already returned a `200` for it.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -31,6 +32,48 @@ describe('parseRoute', () => {
     // under it — so neither grammar can accidentally swallow the other's path.
     expect(parseRoute('/notes/graph')).toEqual({ name: 'note', ref: 'graph' })
     expect(parseRoute('/graph/extra')).toEqual({ name: 'unknown', path: '/graph/extra' })
+  })
+
+  it('reads /tokens as the tokens route (KAN-1739)', () => {
+    expect(parseRoute('/tokens')).toEqual({ name: 'tokens' })
+    expect(parseRoute('/tokens/')).toEqual({ name: 'tokens' })
+  })
+
+  it('does not let a note ref shadow /tokens, or the reverse', () => {
+    expect(parseRoute('/notes/tokens')).toEqual({ name: 'note', ref: 'tokens' })
+    expect(parseRoute('/tokens/extra')).toEqual({ name: 'unknown', path: '/tokens/extra' })
+  })
+
+  it('reads /settings as the settings route (KAN-1815), and a note ref cannot shadow it', () => {
+    expect(parseRoute('/settings')).toEqual({ name: 'settings' })
+    expect(parseRoute('/notes/settings')).toEqual({ name: 'note', ref: 'settings' })
+    expect(parseRoute('/settings/extra')).toEqual({ name: 'unknown', path: '/settings/extra' })
+  })
+
+  it('reads /pandan as the pandan-link route (ADR 0012, KAN-1741)', () => {
+    expect(parseRoute('/pandan')).toEqual({ name: 'pandan' })
+    expect(parseRoute('/pandan/')).toEqual({ name: 'pandan' })
+  })
+
+  it('does not let a note ref shadow /pandan, or the reverse', () => {
+    expect(parseRoute('/notes/pandan')).toEqual({ name: 'note', ref: 'pandan' })
+    expect(parseRoute('/pandan/extra')).toEqual({ name: 'unknown', path: '/pandan/extra' })
+  })
+
+  it('reads /device as the device-flow consent route (ADR 0013, KAN-1743)', () => {
+    expect(parseRoute('/device')).toEqual({ name: 'device' })
+    expect(parseRoute('/device/')).toEqual({ name: 'device' })
+  })
+
+  it('does not let a note ref shadow /device, or the reverse', () => {
+    expect(parseRoute('/notes/device')).toEqual({ name: 'note', ref: 'device' })
+    expect(parseRoute('/device/extra')).toEqual({ name: 'unknown', path: '/device/extra' })
+  })
+
+  it('strips ?user_code=... from /device the same way it strips any other query', () => {
+    // `verification_uri_complete` carries the code as a query param; `DeviceApproval.svelte` reads
+    // it from `location.search` itself rather than through the route (`router.ts`'s own docstring).
+    expect(parseRoute('/device?user_code=WDJB-MJHT')).toEqual({ name: 'device' })
   })
 
   it('passes every spelling the backend accepts straight through', () => {
@@ -78,7 +121,16 @@ describe('parseRoute', () => {
 
 describe('routeHref', () => {
   it('round-trips every real route', () => {
-    for (const path of ['/', '/notes/NOTE-12', '/notes/12', '/graph']) {
+    for (const path of [
+      '/',
+      '/notes/NOTE-12',
+      '/notes/12',
+      '/graph',
+      '/tokens',
+      '/pandan',
+      '/settings',
+      '/device',
+    ]) {
       expect(routeHref(parseRoute(path))).toBe(path)
     }
   })

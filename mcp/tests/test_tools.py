@@ -22,6 +22,7 @@ that account is worth a docstring of its own.
 import json
 
 import anyio
+import httpx
 import pytest
 from conftest import BASE_URL, GROCERIES, NOTES, TOKEN
 from mcp.server.mcpserver.exceptions import ToolError
@@ -159,6 +160,56 @@ def test_edit_note_with_nothing_to_change_is_a_tool_error(answering) -> None:
     seen = answering(200, GROCERIES)
     assert "usage" in call_error("edit_note", ref="NOTE-12")
     assert seen == []
+
+
+# ------------------------------------------------------- format (KAN-1816, KAN-1814's contract)
+
+
+def _formatting_api(changed_lines: int):
+    """PATCH/POST answer the note; `format-check` answers the KAN-1814 verdict."""
+
+    def handle(request):
+        if request.url.path.endswith("/format-check"):
+            return httpx.Response(
+                200, json={"changed": changed_lines > 0, "changed_lines": changed_lines}
+            )
+        return httpx.Response(201 if request.method == "POST" else 200, json=GROCERIES)
+
+    return handle
+
+
+def test_edit_note_format_alone_is_a_format_only_patch(answering) -> None:
+    seen = answering(200, GROCERIES)
+    result = call("edit_note", ref="NOTE-12", format=True, if_updated_at="2026-08-01T00:00:00Z")
+    assert result.is_error is False
+    assert json.loads(seen[0].content) == {"format": True, "if_updated_at": "2026-08-01T00:00:00Z"}
+    assert len(seen) == 1  # just formatted: no hint probe
+
+
+def test_edit_note_without_format_never_sends_the_flag(fake_api) -> None:
+    seen = fake_api(_formatting_api(0))
+    call("edit_note", ref="NOTE-12", body="x")
+    assert "format" not in json.loads(seen[0].content)
+
+
+def test_an_unformatted_write_carries_the_hint_in_the_structured_result(fake_api) -> None:
+    fake_api(_formatting_api(3))
+    for result in (
+        call("edit_note", ref="NOTE-12", body="*  x"),
+        call("create_note", title="t", body="*  x"),
+    ):
+        assert result.structured_content["help"] == [
+            "kaya note format <ref>  # 3 lines would change"
+        ]
+
+
+def test_a_formatted_write_carries_no_hint(fake_api) -> None:
+    fake_api(_formatting_api(0))
+    for result in (
+        call("edit_note", ref="NOTE-12", body="- x"),
+        call("create_note", title="t", body="- x"),
+    ):
+        assert "help" not in result.structured_content
 
 
 # -------------------------------------------------------------------------------- search_notes

@@ -73,6 +73,15 @@
 import type { SyntaxNode, Tree } from '@lezer/common'
 import { Emoji, GFM, parser as commonmark, Subscript, Superscript } from '@lezer/markdown'
 
+import type { Link } from './types'
+import {
+  findWikilinkSpans,
+  isResolved,
+  matchingLink,
+  type WikilinkSpan,
+  wikilinkTooltip,
+} from './wikilinks'
+
 /**
  * The grammar. Same extensions as `@codemirror/lang-markdown`'s `markdownLanguage`, so the preview
  * and the editor's highlighting are parsing the same language.
@@ -243,11 +252,16 @@ export function safeUrl(raw: string): string | null {
  * choice — see the module header. Needs a `document`, so callers in a node test environment want
  * `// @vitest-environment jsdom`.
  */
-export function renderMarkdown(source: string): DocumentFragment {
+export function renderMarkdown(source: string, options: RenderOptions = {}): DocumentFragment {
   const fragment = document.createDocumentFragment()
   const tree: Tree = MARKDOWN.parse(source)
   const links = definitions(tree, source)
-  const context: Context = { source, links }
+  const wikilinks = new Map<number, WikilinkSpan>()
+  for (const span of findWikilinkSpans(source)) {
+    // Keyed by where the inner `[title]` starts, which is where the parser's `Link` node starts.
+    wikilinks.set(span.start + 1, span)
+  }
+  const context: Context = { source, links, wikilinks, resolution: options.links }
 
   for (const child of childrenOf(tree.topNode)) {
     blockInto(child, context, fragment)
@@ -255,8 +269,22 @@ export function renderMarkdown(source: string): DocumentFragment {
   return fragment
 }
 
+/**
+ * What a render may know beyond the markdown itself.
+ *
+ * `links` is the note's `/links` answer (KAN-1824). `undefined` means it has not arrived or could
+ * not be fetched, and every wikilink then renders as unresolved, which is the honest reading of
+ * "nothing is known". This module never fetches; the caller hands the rows in.
+ */
+export interface RenderOptions {
+  links?: readonly Link[]
+}
+
 interface Context {
   readonly source: string
+  /** `[[…]]` spans in the source, keyed by the offset of the inner `[` (the `Link` node's start). */
+  readonly wikilinks: ReadonlyMap<number, WikilinkSpan>
+  readonly resolution: readonly Link[] | undefined
   /** Reference-link definitions, normalised label → raw target. */
   readonly links: Map<string, string>
 }
@@ -663,6 +691,17 @@ function inlineInto(
     if (child.to <= from || child.from >= to) {
       continue
     }
+    const span = wikilinkAround(child, context, cursor, to)
+    if (span !== undefined) {
+      // The parser sees `[[Title]]` as a `[`, a shortcut `Link` and a `]`. Drop the two outer
+      // brackets from the gap and the tail so none of them reaches the page.
+      if (child.from - 1 > cursor) {
+        into.append(textNode(source.slice(cursor, child.from - 1)))
+      }
+      into.append(wikilinkElement(span, context.resolution))
+      cursor = child.to + 1
+      continue
+    }
     if (child.from > cursor) {
       into.append(textNode(source.slice(cursor, child.from)))
     }
@@ -673,6 +712,60 @@ function inlineInto(
   if (cursor < to) {
     into.append(textNode(source.slice(cursor, to)))
   }
+}
+
+/** The `[[…]]` span whose inner `[…]` is exactly `child`, if both outer brackets are plain gap text. */
+function wikilinkAround(
+  child: SyntaxNode,
+  context: Context,
+  cursor: number,
+  to: number,
+): WikilinkSpan | undefined {
+  if (child.name !== 'Link' || child.from - 1 < cursor || child.to + 1 > to) {
+    return undefined
+  }
+  const span = context.wikilinks.get(child.from)
+  return span !== undefined && span.end === child.to + 1 ? span : undefined
+}
+
+const NOTE_REF = /^NOTE-\d+$/
+
+/**
+ * A wikilink as the reader sees it (KAN-1824), with no literal brackets.
+ *
+ * - A note link that resolved is an `<a>` to the note's route. No `target`, so the router handles
+ *   the click and its unsaved-work guard applies; `PreviewPane` does the routing, this file has no
+ *   router. `resolved_ref` is checked against the `NOTE-n` shape before it reaches an `href`.
+ * - A card or epic reference that resolved is a chip with no destination, because kaya holds no URL
+ *   for a pandan card. Its tooltip carries the column and title as the editor's pill does.
+ * - Anything else is an inert `span` marked unresolved, announced as a disabled link.
+ *
+ * Everything visible is a `Text` node of what was typed between the brackets.
+ */
+function wikilinkElement(span: WikilinkSpan, resolution: readonly Link[] | undefined): HTMLElement {
+  const link = resolution === undefined ? undefined : matchingLink(span, resolution)
+  const label = span.kind === 'NOTE' ? span.title : span.ref
+  const resolved = isResolved(link)
+
+  if (resolved && span.kind === 'NOTE' && link?.resolved_ref && NOTE_REF.test(link.resolved_ref)) {
+    const el = element('a')
+    el.className = 'wikilink resolved'
+    el.setAttribute('href', `/notes/${link.resolved_ref}`)
+    el.setAttribute('title', wikilinkTooltip(span, link))
+    el.append(textNode(label))
+    return el
+  }
+  const el = element('span')
+  el.setAttribute('title', wikilinkTooltip(span, link))
+  if (resolved && span.kind !== 'NOTE') {
+    el.className = 'wikilink resolved card'
+  } else {
+    el.className = 'wikilink unresolved'
+    el.setAttribute('role', 'link')
+    el.setAttribute('aria-disabled', 'true')
+  }
+  el.append(textNode(label))
+  return el
 }
 
 function inlineNodeInto(node: SyntaxNode, context: Context, into: ParentNode): void {

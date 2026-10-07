@@ -7,15 +7,17 @@ license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     # ADR 0001: FastAPI, SYNC SQLAlchemy over psycopg v3, Alembic from day one.
-    # There is deliberately no fastapi-users, no OAuth client and no async driver.
     "fastapi>=0.115",
     "uvicorn[standard]>=0.52.1",
     "sqlalchemy>=2.0.36",
     "psycopg[binary]>=3.3.4",
     "alembic>=1.19.0",
     "pydantic-settings>=2.7",
-    # Runtime, not just test tooling, since KAN-534: the principal resolver calls pandan's
-    # `GET /api/v1/me` over httpx (ADR 0002). It doubles as fastapi.testclient's transport.
+    # Runtime, not just test tooling, since KAN-534: `app/auth/team_upstream.py` (team-default
+    # access, ADR 0011), `app/integrations/card_resolution.py` (wikilink resolution) and
+    # `app/integrations/board_embed.py` (the board-embed preview) all still call pandan over HTTP —
+    # ADR 0012/KAN-1740 retired only the *identity* call this package used to also make. It doubles
+    # as fastapi.testclient's transport.
     "httpx>=0.28",
     # R14 (KAN-1067): attachments live in Cloudflare R2, which speaks the S3 API — boto3 is the
     # standard S3-compatible client (see app/integrations/storage.py's module docstring for why
@@ -24,6 +26,25 @@ dependencies = [
     # FastAPI's File()/UploadFile parse multipart bodies through this package; it does nothing on
     # its own and no code here imports it directly.
     "python-multipart>=0.0.32",
+    # ADR 0012 (KAN-1738): kaya becomes its own authorization server, mirroring pandan ADR 0011.
+    # fastapi-users' user store is async-only, which is why `app/db.py` now carries a second,
+    # async engine quarantined to `app/identity/` — see that package's docstring.
+    "fastapi-users[sqlalchemy]>=15.0",
+    # GitHub OAuth2 client fastapi-users' router wraps.
+    "httpx-oauth>=0.16",
+    # ADR 0012's amendment (KAN-1741): a linked pandan PAT is encrypted at rest, never hashed —
+    # `app/identity/pandan_link.py`'s module docstring explains why a one-way hash cannot work here.
+    # Already a transitive dependency of `httpx-oauth`/`fastapi-users`; explicit because this is the
+    # first place in `app/` that imports it directly.
+    "cryptography>=45",
+    # ADR 0014 (KAN-1744): hosting `kaya-mcp`'s Streamable HTTP transport on this backend
+    # (`app/identity/mcp_host.py`) means importing its finished `MCPServer` instance — a deliberate,
+    # narrow exception to "nothing depends on an adapter", argued in ADR 0014's own "necessary,
+    # narrow exception" section. `kaya-client` itself gains no new dependency either way.
+    "kaya-mcp",
+    "mdformat>=1.0.0",
+    "mdformat-gfm>=1.0.0",
+    "mdformat-frontmatter>=2.1.2",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +53,9 @@ dev = [
     "ruff>=0.9",
     "testcontainers[postgres]>=4.15.0",
 ]
+
+[tool.uv.sources]
+kaya-mcp = { path = "../mcp", editable = true }
 
 [build-system]
 requires = ["hatchling>=1.31.0"]

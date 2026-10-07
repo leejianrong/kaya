@@ -1,0 +1,24 @@
+# Isolated toolchain for building the documentation site (KAN-1194, EPIC-172/R17).
+#
+# Zensical is kept in its own uv project so the docs build has a pinned,
+# lockfile-frozen dependency set that CI can cache, without touching the
+# backend/frontend/kaya-client/kaya-cli/mcp environments. It is intentionally
+# not a package (`tool.uv.package = false`), mirroring pandan's own
+# docs-tooling/pyproject.toml and the other non-shipped uv projects in this
+# repo — so it never turns on as a "shipped package" for
+# scripts/check-version-bump.sh (that guard only scopes kaya-client, kaya-cli
+# and mcp; see scripts/check-version-bump.sh's PACKAGES array).
+#
+# Build the site from the REPO ROOT (so zensical.toml's docs_dir resolves):
+#   uv run --project docs-tooling --frozen zensical build --strict --clean
+[project]
+name = "kaya-docs-tooling"
+version = "0"
+description = "Documentation site toolchain (Zensical) for kaya."
+requires-python = ">=3.12"
+dependencies = [
+    "zensical==0.0.59",
+]
+
+[tool.uv]
+package = false

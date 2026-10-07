@@ -70,6 +70,8 @@ const ALLOWED_TAGS = new Set([
  */
 const ALLOWED_ATTRIBUTES = new Set([
   'alt',
+  // KAN-1824: an unresolved wikilink is announced as a disabled link. Both values are literals.
+  'aria-disabled',
   'checked',
   'class',
   // KAN-1049's `pandan-board` placeholder. Values are a board/view id or a column name typed in the
@@ -82,6 +84,7 @@ const ALLOWED_ATTRIBUTES = new Set([
   'loading',
   'referrerpolicy',
   'rel',
+  'role',
   'src',
   'start',
   'target',

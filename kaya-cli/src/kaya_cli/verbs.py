@@ -1,5 +1,5 @@
-"""The verbs: `note {list,get,create,edit,move,delete}`, `config {set,show,path}`, `links`,
-`backlinks`, and bare `kaya`.
+"""The verbs: `note {list,get,create,edit,move,delete}`, `config {set,show,path}`,
+`context {install,uninstall,status,print}`, `links`, `backlinks`, and bare `kaya`.
 
 ### What a verb is allowed to be
 
@@ -39,6 +39,21 @@ on the machine where it is needed.
 `tests/test_verbs.py` asserts the union of the two matches the parser exactly, and that they are
 disjoint, so a word cannot be added to one table, forgotten in the other, and silently dispatch to
 whichever was checked first.
+
+**KAN-1198 joins `config`'s three verbs in `LOCAL_VERBS` for the identical reason.**
+`context install`/`uninstall`/`status` read and write `.claude/settings.json` and resolve kaya's
+own credential, but never open a `KayaClient` session of their own — `context print` is the one
+context verb that does (it calls `client.recent_notes`, same as bare `kaya`), so it is the one
+context row in `VERBS`. See `kaya_cli.context`'s module docstring for the hook mechanism itself;
+`--hook` mode bypasses both tables entirely (`__main__.main` dispatches it directly, before
+`verbs.run`).
+
+**KAN-1743's `auth {login,logout,status}` join `LOCAL_VERBS` for a sharper version of the same
+reason.** `open_client()` raises `MissingCredential` when no token is configured — exactly the
+state `auth login` starts from, so it cannot be handed an already-open `KayaClient` the way `VERBS`'
+rows are. `auth login` still talks to the network (unauthenticated `/auth/device/*` calls, via
+`kaya_client.device_login`), which `config`'s own local verbs never do — "local" is about *not
+depending on an existing session*, not about staying offline.
 
 ### The ref is passed through untouched, on six verbs now
 
@@ -83,6 +98,8 @@ more than the convenience, and the convenience is not even lost: the shell alrea
 ``--body-file /dev/stdin``, with no code here at all.
 """
 
+import time
+import webbrowser
 from argparse import Namespace
 from collections.abc import Callable, Mapping
 
@@ -91,12 +108,18 @@ from kaya_client import (
     TOKEN_ENV,
     KayaClient,
     Payload,
+    api_url,
     open_client,
     path_payload,
+    poll_once,
+    request_device_code,
     settings_payload,
+    token_status_payload,
+    unset_token,
     write_settings,
 )
 
+from kaya_cli import context
 from kaya_cli.parsing import resolve_body
 
 NOTE = "note"
@@ -105,6 +128,7 @@ GET = "get"
 CREATE = "create"
 EDIT = "edit"
 MOVE = "move"
+FORMAT = "format"
 DELETE = "delete"
 EXPORT = "export"
 IMPORT = "import"
@@ -144,6 +168,27 @@ CONFIG = "config"
 SET = "set"
 SHOW = "show"
 PATH = "path"
+
+AUTH = "auth"
+LOGIN = "login"
+LOGOUT = "logout"
+CHECK = "check"
+"""`auth {login,logout,check}` (ADR 0013, KAN-1743): RFC 8628 device-flow login against kaya's own
+authorization server (ADR 0012). **Not `status`**, even though ADR 0013/pandan ADR 0024 both call
+it that — `context` already owns that bare word, and `mcp/tests/test_cli_parity.py`'s reader keys
+`__main__.py`'s subparsers on the word alone, refusing two verbs that share one (see `context.py`'s
+own module docstring, which hit the identical collision against `config show` and picked `print`
+for the same reason)."""
+
+CONTEXT = "context"
+INSTALL = "install"
+UNINSTALL = "uninstall"
+STATUS = "status"
+PRINT = "print"
+"""R18/KAN-1198's ambient `SessionStart` hook (`kaya-cli/context.py`): `context
+{install,uninstall,status,print}`. `print` rather than pandan's own `show` — see `context.py`'s
+module docstring for why `show` was unavailable (`config show` already owns that word, and
+`mcp/tests/test_cli_parity.py`'s reader refuses two verbs sharing a bare word)."""
 
 BARE: tuple[None, None] = (None, None)
 """ADR 0005 §contract 7's bare `kaya`, as a row in ``VERBS`` like everything else (KAN-549).
@@ -198,7 +243,11 @@ def _note_get(client: KayaClient, args: Namespace) -> Payload:
 
 def _note_create(client: KayaClient, args: Namespace) -> Payload:
     return client.create_note(
-        args.title, body=resolve_body(args), path=args.path, team_id=args.team
+        args.title,
+        body=resolve_body(args),
+        path=args.path,
+        team_id=args.team,
+        format_hint=True,
     )
 
 
@@ -209,11 +258,18 @@ def _note_edit(client: KayaClient, args: Namespace) -> Payload:
         body=resolve_body(args),
         path=args.path,
         if_updated_at=args.if_updated_at,
+        format_hint=True,
     )
 
 
 def _note_move(client: KayaClient, args: Namespace) -> Payload:
     return client.move_note(args.ref, args.path)
+
+
+def _note_format(client: KayaClient, args: Namespace) -> Payload:
+    """`note format <ref> [--check]` (KAN-1816): one client call, like `move` — no endpoint of its
+    own. The client refuses `--check` with a precondition."""
+    return client.format_note(args.ref, check=args.check, if_updated_at=args.if_updated_at)
 
 
 def _note_delete(client: KayaClient, args: Namespace) -> Payload:
@@ -284,6 +340,63 @@ def _config_set(args: Namespace) -> Payload:
     return write_settings({API_URL_ENV: args.api_url, TOKEN_ENV: args.token})
 
 
+# ------------------------------------------------------------------------------- auth
+
+
+def _auth_login(args: Namespace) -> Payload:
+    """`kaya auth login` (ADR 0013, KAN-1743): RFC 8628 device-flow login, no token required to
+    start — the same reason `config show` is a local verb, this one must be too: `open_client()`
+    would raise `MissingCredential` before this ever ran, on the one command whose entire job is
+    supplying that credential for the first time.
+
+    **The interactive loop lives here, not in `kaya_client.device_login`** — printing the code,
+    best-effort-opening a browser, and sleeping between polls are this adapter's own terminal
+    concerns, the same split `kaya_client`'s own module docstring argues for. `time.sleep` between
+    polls rather than on the way in: the first poll happens only after the human has had the full
+    interval to act, matching `gh auth login`'s own cadence and RFC 8628's suggested floor.
+
+    Every failure — denied, expired, unreachable — is a `KayaError` this function lets propagate
+    unhandled, exactly like every other verb in this file; `main`'s single funnel reports it.
+
+    On success, the minted `kaya_pat_…` is written straight to the config file and **never
+    printed** — device flow's whole point is that a human never has to see or copy the raw secret,
+    unlike the Tokens UI's manual "copy this now" reveal (R7.1). The returned `Payload` is
+    `write_settings`' own effective-configuration row, the identical shape `config set --token`
+    already produces, so the confirmation says "token: set" rather than repeating the secret.
+    """
+    code = request_device_code(api_url(), args.scope)
+    print(f"First, visit this link in your browser:\n\n  {code.verification_uri_complete}\n")
+    print(f"If it doesn't open automatically, enter this code: {code.user_code}\n")
+    webbrowser.open(code.verification_uri_complete)
+
+    interval = code.interval
+    while True:
+        time.sleep(interval)
+        result = poll_once(api_url(), code.device_code)
+        if result == "slow_down":
+            interval += 5
+            continue
+        if result == "pending":
+            continue
+        break
+
+    return write_settings({TOKEN_ENV: result.token})
+
+
+def _auth_logout(_args: Namespace) -> Payload:
+    """`kaya auth logout`: remove the stored `kaya_pat_…` from the config file. Idempotent — logging
+    out twice is not an error, matching `kaya_client.config.unset_token`'s own stance. Cannot revoke
+    a `KAYA_TOKEN` set in the environment, and does not claim to (see that function's docstring)."""
+    return unset_token()
+
+
+def _auth_status(_args: Namespace) -> Payload:
+    """`kaya auth check`: is a credential configured, and where would it come from. The
+    auth-specific row of `config show` — see `token_status_payload`'s own docstring for why this is
+    not simply an alias for `config show`."""
+    return token_status_payload()
+
+
 VERBS: Mapping[tuple[str | None, str | None], Verb] = {
     BARE: _overview,
     (NOTE, LIST): _note_list,
@@ -291,6 +404,7 @@ VERBS: Mapping[tuple[str | None, str | None], Verb] = {
     (NOTE, CREATE): _note_create,
     (NOTE, EDIT): _note_edit,
     (NOTE, MOVE): _note_move,
+    (NOTE, FORMAT): _note_format,
     (NOTE, DELETE): _note_delete,
     (NOTE, EXPORT): _note_export,
     (NOTE, IMPORT): _note_import,
@@ -298,6 +412,7 @@ VERBS: Mapping[tuple[str | None, str | None], Verb] = {
     (BACKLINKS, None): _backlinks,
     (EXPORT_ALL, None): _export_all,
     (IMPORT_ALL, None): _import_all,
+    (CONTEXT, PRINT): context.cmd_print,
 }
 """``(command, subcommand)`` → the client method that answers it, for the verbs that need a session.
 
@@ -310,6 +425,12 @@ LOCAL_VERBS: Mapping[tuple[str, str], LocalVerb] = {
     (CONFIG, SET): _config_set,
     (CONFIG, SHOW): _config_show,
     (CONFIG, PATH): _config_path,
+    (AUTH, LOGIN): _auth_login,
+    (AUTH, LOGOUT): _auth_logout,
+    (AUTH, CHECK): _auth_status,
+    (CONTEXT, INSTALL): context.cmd_install,
+    (CONTEXT, UNINSTALL): context.cmd_uninstall,
+    (CONTEXT, STATUS): context.cmd_status,
 }
 """The verbs that never open a session. See this module's docstring for why they are a second table.
 

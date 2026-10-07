@@ -67,12 +67,26 @@ through B and asserting the upstream sees a second call rather than the cache an
 
 ## Why this is not reachable by an unauthenticated caller, and why it still needs a bound
 
-`resolve()` is only ever called with a bearer that has already cleared ADR 0002's principal
-resolution on the request it is serving — KAN-566 wired that in, at `GET /api/v1/notes/{ref}/links`,
-whose `NoteFromRef` dependency resolves a principal from the same header before the route body runs
-— so unlike `PrincipalCache`'s negative half — built specifically to shed load from a stranger
+`resolve()` is only ever called with a bearer that is the caller's own **linked pandan PAT**
+(`app/identity/pandan_link.py`'s `linked_pandan_bearer`, via `app/integrations/dependencies.py`'s
+`card_resolution_bearer`), never a bare pass-through of whatever `Authorization` header the request
+arrived with — that dependency resolves a principal through `get_principal` before the route body
+runs, so unlike `PrincipalCache`'s negative half — built specifically to shed load from a stranger
 sending garbage `Authorization` headers with no request past that — this cache is not a surface a
-caller can reach without a credential that already worked. It still needs `DEFAULT_MAX_ENTRIES`:
+caller can reach without a credential that already worked.
+
+**This used to be a bare forward of the caller's kaya-side bearer instead, and that was a defect,
+not a design choice.** Before ADR 0012's cutover (KAN-1740) the same PAT authenticated both apps
+(ADR 0002), so forwarding the caller's own kaya-side bearer straight to pandan happened to be
+correct. `KAN-1740` ended that: a `kaya_pat_…` (or no bearer at all, from a cookie session) reaches
+pandan as a credential it has never seen, which the "unavailable" degrade path below correctly
+cannot distinguish from an outage — but *should* be distinguishable, because a caller who has never
+linked a pandan account is not the same fact as pandan being down. `app/api/embeds.py`'s
+board-embed preview hit the identical defect first and was fixed in `KAN-1741`
+(`docs/PLAN.md`'s R19 row, `docs/roadmap/BREADBOARD.md`'s board-embed Fit-check); this module was
+the explicitly tracked, deliberately sequenced-after gap, closed the same way.
+
+It still needs `DEFAULT_MAX_ENTRIES`:
 the key space here is *per (caller, ticket)* rather than per-caller, so one authenticated caller
 referencing many distinct nonexistent refs across many notes over time grows this cache faster than
 `PrincipalCache`'s one-entry-per-token ever could. Bounded, with the same evict-expired-then-oldest
@@ -107,9 +121,9 @@ from typing import Literal, Protocol
 
 import httpx
 
-from app.auth.cache import digest
-from app.auth.upstream import split_timeout
+from app.auth.digest import digest
 from app.config import Settings
+from app.pandan_timeout import split_timeout
 
 CARDS_PATH = "/api/v1/cards"
 EPICS_PATH = "/api/v1/epics"
@@ -171,10 +185,10 @@ class CardBatch:
 
 
 class CardEpicUpstream(Protocol):
-    """The two calls this card needs, behind a seam fakeable at the HTTP boundary — ADR 0002's
-    reason for `IdentityUpstream` applies unchanged: pandan is a runtime dependency this suite
-    does not want a network for, and `httpx.MockTransport` lets a test assert against the real
-    request `PandanCardEpicUpstream` would put on the wire."""
+    """The two calls this card needs, behind a seam fakeable at the HTTP boundary — the same
+    reason `TeamMembershipUpstream` (`app/auth/team_upstream.py`) has one: pandan is a runtime
+    dependency this suite does not want a network for, and `httpx.MockTransport` lets a test
+    assert against the real request `PandanCardEpicUpstream` would put on the wire."""
 
     def fetch_cards(self, bearer: str, refs: Sequence[str]) -> CardBatch:
         """One request. ``refs`` must already be at or under pandan's combined-selector cap —
@@ -190,7 +204,7 @@ class CardEpicUpstream(Protocol):
 
 class PandanCardEpicUpstream:
     """``CardEpicUpstream`` over real HTTP. The bearer is forwarded byte for byte, exactly like
-    `PandanIdentityUpstream` — this module has no more business parsing it than that one does."""
+    `PandanTeamUpstream` — this module has no more business parsing it than that one does."""
 
     def __init__(
         self,
@@ -202,7 +216,7 @@ class PandanCardEpicUpstream:
         self._cards_url = base_url.rstrip("/") + CARDS_PATH
         self._epics_url = base_url.rstrip("/") + EPICS_PATH
         # `timeout` configures the client this builds; a `client` passed in (tests only) carries
-        # its own — see `PandanIdentityUpstream`'s constructor comment, the asymmetry is the same.
+        # its own — see `PandanTeamUpstream`'s constructor comment, the asymmetry is the same.
         self._client = client if client is not None else httpx.Client(timeout=timeout)
         # No explicit `Accept-Encoding` header: httpx's `Client` already sends
         # ``gzip, deflate`` by default (verified: `httpx.Client().headers["accept-encoding"]`), so

@@ -1,270 +1,322 @@
 <!--
-  What a visitor with no credential sees, and the one-time PAT paste (KAN-555).
+  What a visitor with no credential sees (KAN-555; KAN-1740's identity cutover; KAN-1791; rewritten
+  for KAN-1822). One promise, one sign-in action, an interactive phone mock, three short tiles.
 
-  This component is small and its discipline is not. It is the only place in the product where a
-  live credential exists as a value a person typed, so every choice about the input element is a
-  deliberate one and is written down beside it. `lib/auth.ts` holds the rule those choices serve:
-  **the token never enters a URL, a log line, an error message, or the DOM.**
-
-  Nothing here validates the token against pandan. It is stored, the shell advances, and the note
-  list's own request is what says whether it works — a `401` comes back to this component as
-  `rejected`. Verifying here first would mean two code paths that can produce a `401` and two
-  places to keep the recovery honest, for one saved round trip on the failure case only.
+  GitHub sign-in is the page's only credential-acquisition path: kaya mints no passwords, and the
+  `kayaauth` cookie `/auth/github/callback` sets is what `apiRequest` (`lib/api.ts`) authenticates
+  against. A named bearer for the CLI or a script is minted later, on the Tokens page, once signed in.
 -->
 <script lang="ts">
-  import { isUsableToken, setToken } from '../lib/auth'
-  import { resolvePandanHref } from '../lib/meta'
+  import { githubLoginUrl, IdentityError } from '../lib/identity'
+  import Logo from './Logo.svelte'
+  import PhoneDemo from './PhoneDemo.svelte'
 
   const {
     rejected = null,
-    onaccept,
   }: {
     /**
      * Why the last credential was refused, in the API's own words, or `null`.
      *
-     * The shell has already cleared the token by the time this arrives (a `401` state you cannot
-     * leave without devtools is a bug), so this is a message and not a state — the form below is
-     * always ready.
+     * The shell has already discarded the credential by the time this arrives (`App.svelte`'s
+     * `discard()`) — a `401` you cannot leave without devtools is a bug — so this is a message to
+     * show beside the sign-in button, not a state that gates anything here.
      */
     rejected?: string | null
-    /** The token is stored; the shell may proceed. Called only after `setToken`. */
+    /**
+     * Kept in the type for parity with `App.svelte`'s call site, which still hands this component
+     * the same `accept` callback `Tokens.svelte` and the CLI's device-flow approval get — but
+     * nothing in this file destructures or calls it any more now that the paste form (the one
+     * thing that used to) is gone. GitHub sign-in is a full-page redirect (`signIn` below): the tab
+     * navigates away and back through `/auth/github/callback`, so there is no in-page moment to
+     * call `onaccept` from — `authed` flips because `App.svelte`'s own mount-time session check
+     * finds the fresh cookie session, not because this component told it to.
+     */
     onaccept: () => void
   } = $props()
 
-  /** The pandan origin, from `GET /api/v1/meta`. `null` until it arrives, or if it never does. */
-  let origin: string | null = $state(null)
-  let asking = $state(true)
-
   /**
-   * The field's contents. A credential, while it is being typed.
-   *
-   * It is a plain `$state` string and it is bound to the input's **value property** — never to a
-   * `value` attribute, and never interpolated into text or into any other attribute. That is what
-   * keeps it out of `document.body.innerHTML`, which is what a devtools copy, an HTML snapshot and
-   * a bug reporter's "copy outer HTML" all read. `tests/landing.test.ts` sweeps that serialization
-   * for every four-character fragment of a fake token, mid-paste as well as after submit.
+   * The three tiles. The approved copy, in one place. The first tile deliberately names Claude Code
+   * and MCP clients in general and no other product: only Claude Code has been checked against
+   * kaya's MCP endpoint, so another client's name is added here once it has been.
    */
-  let pasted = $state('')
+  const TILES = [
+    {
+      title: 'Agent ready',
+      text: 'Write and edit notes from Claude Code or any MCP client, or script them with the CLI.',
+    },
+    {
+      title: 'Linked notes',
+      text: 'Link notes with [[wikilinks]]. Backlinks appear automatically.',
+    },
+    {
+      title: 'Knowledge graph',
+      text: 'See how your notes connect, including the ones your agents wrote.',
+    },
+  ] as const
 
-  /** Why the last paste was not even storable. Never contains the value it is about. */
-  let problem: string | null = $state(null)
+  let signingIn = $state(false)
+  let signInProblem: string | null = $state(null)
 
-  $effect(() => {
-    const abort = new AbortController()
-    // `resolvePandanHref` (KAN-1156) already swallows both a failed fetch and an unsafe/unset
-    // origin into `null` — nothing is logged on any path in this component, deliberately: the
-    // failure is already visible as "no link", and the fallback text below says what to do
-    // instead. Q41/Q42's rule is about the token, and "this component logs nothing" is cheaper to
-    // keep than a per-call judgement about whether some particular error object carried one.
-    resolvePandanHref({ signal: abort.signal })
-      .then((resolved) => (origin = resolved))
-      .finally(() => (asking = false))
-    return () => abort.abort()
-  })
+  // `/auth/github/callback` (`backend/app/identity/router.py`'s `_redirect_declined_oauth`)
+  // redirects back here — `POST_LOGIN_REDIRECT`, the same target a *successful* callback uses —
+  // with this query param rather than leaving the tab on a raw JSON error body. A successful
+  // attempt carries no such param, so this never fires on the path where `App.svelte`'s own
+  // mount-time session check (`fetchCurrentUser`, KAN-1791) is about to swap this page out for the
+  // note list anyway.
+  // `replaceState`, not a plain read, so a later reload of this same tab does not re-show a message
+  // about an attempt from minutes ago.
+  const oauthError = new URLSearchParams(globalThis.location.search).get('oauth_error')
+  if (oauthError !== null) {
+    signInProblem =
+      oauthError === 'access_denied'
+        ? 'GitHub sign-in was cancelled.'
+        : 'GitHub sign-in failed. Try again.'
+    history.replaceState(null, '', globalThis.location.pathname)
+  }
 
-  function submit(event: SubmitEvent): void {
-    // First statement in the handler. A form with no `method` submits as GET, which would put the
-    // credential in the address bar, in history and in the backend's request line — the exact
-    // failure `lib/api.ts` refuses for every other request. The `method="post"` below and the
-    // missing `name=` on the input are the two backstops for the day this line is edited.
-    event.preventDefault()
-
-    const candidate = pasted
-    // Cleared *before* the branch, not in an `else`, so no path through this function leaves the
-    // credential in the field. The clipboard still has it, which is the whole reason this is
-    // affordable: a re-paste costs one keystroke and a stale credential in a text field costs a
-    // screen share.
-    pasted = ''
-
-    if (!isUsableToken(candidate)) {
-      // Says nothing about the value — not its length, not its first characters, not what was
-      // wrong with it beyond the category. A message that quoted the input would be this card's
-      // rule broken by the error path, which is where it usually breaks.
-      problem = 'That cannot be used as a credential. Paste the token again.'
-      return
+  async function signIn(): Promise<void> {
+    signInProblem = null
+    signingIn = true
+    try {
+      const url = await githubLoginUrl()
+      // Not a bare `<a href>` — `GET /auth/github/authorize` answers JSON, not a redirect
+      // (`Tokens.svelte`'s own `signIn` has the full reasoning; this is the same call).
+      globalThis.location.assign(url)
+    } catch (error) {
+      signInProblem =
+        error instanceof IdentityError || error instanceof Error
+          ? error.message
+          : 'Could not start GitHub sign-in. Try again.'
+      signingIn = false
     }
-
-    problem = null
-    setToken(candidate)
-    onaccept()
   }
 </script>
 
 <main class="landing">
-  <h1>kaya</h1>
-  <p class="lede">
-    Cloud-hosted markdown notes, API-first. Every action in this app is a plain
-    <code>/api/v1</code> call, so the notes you write here are the same notes the
-    <code>kaya</code> command-line tool reads and writes.
-  </p>
+  <section class="hero">
+    <div class="hero-mark"><Logo size={72} /></div>
+    <h1>Markdown for humans and agents.</h1>
+    <p class="subhead">Work on notes alongside your agents.</p>
 
-  <section aria-labelledby="identity">
-    <h2 id="identity">Identity comes from pandan</h2>
-    <p>
-      kaya mints no credentials of its own. It authenticates you by asking
-      {#if origin}<a href={origin} target="_blank" rel="noopener noreferrer">pandan</a>{:else}pandan{/if},
-      the board this app is paired with, so one account and one token span both.
-      <!--
-        Not "the kanban board", and the reason is the fragment sweep rather than style: the fake
-        credential in `tests/token.ts` is prefixed `kanban_pat_` — a real, still-accepted pandan
-        prefix — so the word `kanban` in this page contains four-character fragments of it
-        (`kanb`, `anba`, `nban`) and every sweep over the rendered DOM would report a leak. The
-        collision is the sweep working exactly as designed: it cannot know which occurrence of
-        `kanb` came from a credential. Keeping the copy clear of it keeps the guard at full width
-        instead of teaching the next person to add an exception to it.
-      -->
-      Sign-in through a shared browser session is deferred: it needs both apps under one apex
-      domain, and
-      <code>fly.dev</code> is on the Public Suffix List, so today's two origins cannot share a
-      cookie at all.
-    </p>
+    <div class="cta-row">
+      <button
+        type="button"
+        class="btn-github"
+        onclick={signIn}
+        disabled={signingIn}
+        data-testid="github-signin"
+      >
+        <svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true">
+          <path
+            d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+          ></path>
+        </svg>
+        {signingIn ? 'Redirecting…' : 'Sign in with GitHub'}
+      </button>
+    </div>
 
-    <ol class="steps">
-      <li>
-        {#if origin}
-          <!-- The origin only, with no path. Pandan's SPA holds its Tokens tab in component state
-               and gives it no URL of its own, so there is nothing to deep-link to; a guessed path
-               would be a broken link that looks like kaya's fault. -->
-          Open <a href={origin} target="_blank" rel="noopener noreferrer">{origin}</a> and sign in.
-        {:else if asking}
-          Open pandan and sign in.
-        {:else}
-          <!-- `/api/v1/meta` did not answer, so this SPA does not know which pandan it is paired
-               with. Saying so is better than naming one: a self-hosted deployment is supported
-               (ADR 0002) and a hard-coded origin would send its users to the wrong place. -->
-          Open your pandan deployment and sign in. (kaya could not reach its own API to look up
-          which one that is, so there is no link here.)
-        {/if}
-      </li>
-      <li>Open the <strong>Tokens</strong> tab and create a token.</li>
-      <li>Paste it below.</li>
-    </ol>
+    {#if signInProblem}
+      <p class="refused" role="alert" data-testid="sign-in-problem">{signInProblem}</p>
+    {/if}
+
+    {#if rejected}
+      <!-- KAN-1791: relocated from the now-deleted paste section. Still the API's own prose for a
+           refusal it produced — the backend never puts a credential in a message, and nothing here
+           builds one out of a request — just now surfaced beside the one credential-acquisition
+           path this page has left. -->
+      <p class="refused" role="alert" data-testid="rejected">
+        <!-- An em dash between the two clauses rather than a full stop: kaya's refusal messages carry
+             no trailing punctuation (`kaya did not accept this credential`), and appending one here
+             would double up the day a message arrives with its own. -->
+        {rejected} — sign in again to continue.
+      </p>
+    {/if}
   </section>
 
-  {#if rejected}
-    <!-- The API's own prose for a refusal it produced. The backend never puts a credential in a
-         message, and nothing here builds one out of a request. -->
-    <p class="refused" role="alert" data-testid="rejected">
-      <!-- An em dash between the two clauses rather than a full stop: kaya's refusal messages carry
-           no trailing punctuation (`pandan did not accept this token`), and appending one here would
-           double up the day a message arrives with its own. -->
-      {rejected} — the credential has been cleared from this tab. Paste another below.
-    </p>
-  {/if}
+  <div class="phone-slot"><PhoneDemo /></div>
 
-  <form class="paste" method="post" onsubmit={submit} data-testid="paste-form">
-    <label for="pat">pandan personal access token</label>
-    <!--
-      Four attributes, each with a reason, and none of them cosmetic:
-
-      - `type="password"` — the field holds a live credential and a screenshot or a screen share is
-        one keystroke away. The CLI's equivalent never echoes either.
-      - **no `name`** — a form field with no name is not serialized at all, so even a submission
-        that somehow escaped `preventDefault()` above carries nothing. This is the strongest of the
-        three guards against the credential reaching a URL, because it does not depend on a handler
-        running.
-      - `autocomplete="off"` — this is not a password to remember, it is a token that gets revoked;
-        an offer to save it moves the credential out of `sessionStorage`'s tab lifetime and into the
-        browser's own store, which is the `localStorage` decision `lib/auth.ts` already refused.
-      - `spellcheck="false"` — a spellchecker is allowed to send text to a remote service.
-    -->
-    <input
-      id="pat"
-      type="password"
-      autocomplete="off"
-      spellcheck="false"
-      autocapitalize="off"
-      placeholder="paste here"
-      bind:value={pasted}
-    />
-    <button type="submit">Use this token</button>
-  </form>
-
-  {#if problem}
-    <p class="refused" role="alert" data-testid="problem">{problem}</p>
-  {/if}
-
-  <p class="footnote">
-    The token stays in this tab and nowhere else: it is held in <code>sessionStorage</code>, so
-    closing the tab discards it, and it is sent only as an <code>Authorization</code> header to
-    kaya's own API on this origin.
-  </p>
+  <section class="features" aria-label="What kaya does">
+    {#each TILES as tile (tile.title)}
+      <article class="tile">
+        <h2>{tile.title}</h2>
+        <p>{tile.text}</p>
+      </article>
+    {/each}
+  </section>
 </main>
 
 <style>
   .landing {
-    max-width: 34rem;
-    padding: 3rem 1.5rem;
+    /* An explicit width, not just a max: as a grid item with auto margins it would otherwise size to
+       its content's min-content and push the page 10px wider than a 320px screen. */
+    box-sizing: border-box;
+    width: min(100%, 46rem);
+    min-width: 0;
+    margin: 0 auto;
+    padding: clamp(2.5rem, 7vw, 4.5rem) 1.5rem 3rem;
+  }
+
+  /* --- hero ---------------------------------------------------------------------------------- */
+
+  .hero {
+    text-align: center;
+  }
+
+  .hero-mark {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 1.25rem;
   }
 
   h1 {
-    margin: 0;
-    font-size: 1.6rem;
+    margin: 0 auto 0.85rem;
+    max-width: 20ch;
+    font-size: clamp(1.9rem, 5vw, 2.65rem);
+    line-height: 1.08;
     letter-spacing: -0.02em;
+    font-weight: 700;
+    text-wrap: balance;
   }
 
-  h2 {
-    margin: 2rem 0 0.5rem;
-    font-size: 1rem;
+  .subhead {
+    margin: 0 auto;
+    max-width: 44ch;
+    color: var(--on-surface-variant);
+    font-size: 1.05rem;
+    line-height: 1.6;
+    text-wrap: pretty;
   }
 
-  .lede {
-    margin: 0.5rem 0 0;
-  }
-
-  p {
-    line-height: 1.55;
-  }
-
-  .steps {
-    margin: 0.75rem 0 0;
-    padding-left: 1.25rem;
-    line-height: 1.8;
-  }
-
-  .paste {
+  .cta-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.5rem;
-    margin-top: 2rem;
+    justify-content: center;
+    gap: 1rem;
+    margin-top: 1.75rem;
   }
 
-  .paste label {
-    flex-basis: 100%;
-    color: var(--muted);
-    font-size: 0.85rem;
-  }
-
-  .paste input {
-    flex: 1 1 18rem;
-    min-width: 0;
-    padding: 0.5rem 0.65rem;
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
-    background: transparent;
-    color: inherit;
-    font-family: var(--mono);
-    font-size: 0.9rem;
-  }
-
-  .paste button {
-    padding: 0.5rem 0.9rem;
-    border: 1px solid var(--border);
-    border-radius: 0.35rem;
-    background: transparent;
-    color: inherit;
-    cursor: pointer;
+  .btn-github {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.65rem 1.15rem;
+    border: 0;
+    border-radius: var(--shape-full);
+    background: var(--primary);
+    color: var(--on-primary);
     font: inherit;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition:
+      transform 0.12s ease,
+      filter 0.12s ease;
+  }
+
+  .btn-github:hover {
+    filter: brightness(1.12);
+  }
+
+  .btn-github:active {
+    transform: translateY(1px);
+  }
+
+  .btn-github:disabled {
+    cursor: progress;
+    opacity: 0.75;
+  }
+
+  .btn-github:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+
+  .btn-github svg {
+    fill: currentColor;
+    flex-shrink: 0;
+  }
+
+  .phone-slot {
+    margin-top: clamp(1.75rem, 4vw, 2.5rem);
+  }
+
+  /* --- features -------------------------------------------------------------------------------- */
+
+  .features {
+    margin-top: clamp(2rem, 5vw, 3rem);
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+  }
+
+  .tile {
+    padding: 1.1rem 1.2rem 1.3rem;
+    border-radius: var(--shape-md);
+    background: var(--surface-container);
+  }
+
+  .tile h2 {
+    margin: 0 0 0.4rem;
+    font-size: 0.95rem;
+    letter-spacing: -0.01em;
+  }
+
+  .tile p {
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-medium-size);
+    line-height: 1.55;
+  }
+
+  @media (max-width: 40rem) {
+    .features {
+      grid-template-columns: 1fr;
+    }
   }
 
   .refused {
-    margin: 0.75rem 0 0;
+    margin: 1rem 0 0;
+    color: var(--error);
   }
 
-  .footnote {
-    margin: 2rem 0 0;
-    color: var(--muted);
-    font-size: 0.85rem;
+  /* --- motion ------------------------------------------------------------------------------------
+     A one-time reveal on mount, not a scroll-triggered sequence — a single viewport-height hero has
+     nothing left to reveal once scrolled to. */
+  @media (prefers-reduced-motion: no-preference) {
+    .hero > *,
+    .phone-slot,
+    .tile {
+      opacity: 0;
+      transform: translateY(8px);
+      animation: rise 0.5s ease forwards;
+    }
+    .hero > *:nth-child(1) {
+      animation-delay: 0.02s;
+    }
+    .hero > *:nth-child(2) {
+      animation-delay: 0.08s;
+    }
+    .hero > *:nth-child(3) {
+      animation-delay: 0.14s;
+    }
+    .phone-slot {
+      animation-delay: 0.2s;
+    }
+    .tile:nth-child(1) {
+      animation-delay: 0.24s;
+    }
+    .tile:nth-child(2) {
+      animation-delay: 0.28s;
+    }
+    .tile:nth-child(3) {
+      animation-delay: 0.32s;
+    }
+    @keyframes rise {
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
   }
 </style>

@@ -1,4 +1,7 @@
-"""Migration `0001` against a real Postgres 17.
+"""Migration `0001` against a real Postgres 17, exercised at `head` (KAN-1740's cutover moved
+`note.owner_id`'s target from `user.id` to `kaya_account.id`, migration `0009` — these tests write
+`kaya_account` rows now, but the *properties* under test are all migration `0001`'s: the sequence,
+its atomicity, and the FK's RESTRICT behaviour, unchanged in shape by which table it targets).
 
 Two things are worth the cost of a container here, and neither can be checked from metadata:
 
@@ -25,10 +28,10 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 REF_PATTERN = re.compile(r"^NOTE-(\d+)$")
 
-# `user` is a reserved word in Postgres, so every hand-written statement against it quotes the
-# name. Unquoted, `INSERT INTO user` does not fail with "no such table" — Postgres reads `user` as
-# CURRENT_USER and reports a syntax error somewhere else entirely, which is a bad five minutes.
-INSERT_USER = text('INSERT INTO "user" (id, email) VALUES (:id, :email)')
+INSERT_ACCOUNT = text(
+    "INSERT INTO kaya_account (id, email, hashed_password, is_active, is_superuser, is_verified) "
+    "VALUES (:id, :email, 'not-a-real-hash', true, false, false)"
+)
 INSERT_NOTE = text("INSERT INTO note (owner_id, title) VALUES (:owner_id, :title) RETURNING ref")
 
 
@@ -82,7 +85,8 @@ def test_upgrade_then_downgrade_leaves_a_clean_schema(migrated: None) -> None:
     with engine.connect() as connection:
         after_upgrade = _relations(connection)
 
-    assert {"table:user", "table:note", "sequence:note_ref_seq"} <= after_upgrade
+    assert {"table:kaya_account", "table:note", "sequence:note_ref_seq"} <= after_upgrade
+    assert "table:user" not in after_upgrade, "ADR 0002's user mirror was dropped in migration 0009"
 
     command.downgrade(_alembic_config(), "base")
 
@@ -115,7 +119,7 @@ def test_the_ref_sequence_allocates_atomically_under_concurrent_inserts(migrated
     owner = uuid.uuid4()
 
     with engine.begin() as connection:
-        connection.execute(INSERT_USER, {"id": owner, "email": f"{owner}@example.test"})
+        connection.execute(INSERT_ACCOUNT, {"id": owner, "email": f"{owner}@example.test"})
 
     writers, per_writer = 16, 8
 
@@ -159,7 +163,7 @@ def test_a_rolled_back_insert_never_lends_its_ref_to_the_next_writer(migrated: N
     owner = uuid.uuid4()
 
     with engine.begin() as connection:
-        connection.execute(INSERT_USER, {"id": owner, "email": f"{owner}@example.test"})
+        connection.execute(INSERT_ACCOUNT, {"id": owner, "email": f"{owner}@example.test"})
 
     with engine.connect() as connection:
         abandoned = connection.execute(
@@ -185,8 +189,10 @@ def test_a_rolled_back_insert_never_lends_its_ref_to_the_next_writer(migrated: N
 def test_a_note_cannot_outlive_its_owner_silently(migrated: None) -> None:
     """RESTRICT, watched rather than asserted from metadata.
 
-    The failure this buys: a job that prunes stale mirror rows gets an error instead of quietly
-    deleting somebody's prose.
+    The failure this buys: deleting someone's `kaya_account` (a revoked GitHub grant, an admin
+    action) gets an error instead of quietly deleting their prose with it — see `app/models/note.py`
+    for the fuller reasoning, which predates and survives KAN-1740's retarget from `user` to
+    `kaya_account`.
     """
     from sqlalchemy.exc import IntegrityError
 
@@ -196,13 +202,13 @@ def test_a_note_cannot_outlive_its_owner_silently(migrated: None) -> None:
     owner = uuid.uuid4()
 
     with engine.begin() as connection:
-        connection.execute(INSERT_USER, {"id": owner, "email": f"{owner}@example.test"})
+        connection.execute(INSERT_ACCOUNT, {"id": owner, "email": f"{owner}@example.test"})
         connection.execute(INSERT_NOTE, {"owner_id": owner, "title": "keep me"})
 
     with pytest.raises(IntegrityError) as raised, engine.begin() as connection:
-        connection.execute(text('DELETE FROM "user" WHERE id = :id'), {"id": owner})
+        connection.execute(text("DELETE FROM kaya_account WHERE id = :id"), {"id": owner})
 
-    assert "fk_note_owner_id_user" in str(raised.value)
+    assert "fk_note_owner_id_kaya_account" in str(raised.value)
 
 
 def test_a_note_gets_its_timestamps_and_defaults_from_the_database(migrated: None) -> None:
@@ -213,7 +219,7 @@ def test_a_note_gets_its_timestamps_and_defaults_from_the_database(migrated: Non
     owner = uuid.uuid4()
 
     with engine.begin() as connection:
-        connection.execute(INSERT_USER, {"id": owner, "email": f"{owner}@example.test"})
+        connection.execute(INSERT_ACCOUNT, {"id": owner, "email": f"{owner}@example.test"})
         connection.execute(INSERT_NOTE, {"owner_id": owner, "title": "bare"})
         row = connection.execute(
             text("SELECT body, path, created_at, updated_at FROM note WHERE title = 'bare'")

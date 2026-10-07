@@ -42,7 +42,7 @@ from app.auth import (
     note_addressed_as_ref,
 )
 from app.db import get_session
-from app.integrations.dependencies import caller_bearer
+from app.integrations.dependencies import PandanBearer, PandanBearerLookup
 from app.models import NOTE_REF_PREFIX, Note
 
 # The whole accepted grammar: an optional case-insensitive `NOTE-`, then digits, then nothing.
@@ -131,7 +131,7 @@ def resolve_note(
     session: Session,
     principal: Principal,
     raw: str,
-    bearer: str | None = None,
+    bearer: PandanBearerLookup | None = None,
     team_resolver: TeamAccessResolver | None = None,
 ) -> Note:
     """A caller's string → the note it may see, or the same refusal for either spelling.
@@ -142,13 +142,15 @@ def resolve_note(
     ADR 0008's "identical results including identical error codes", rather than two paths that a
     test has to keep in agreement.
 
-    ``bearer``/``team_resolver`` (ADR 0011, R16.3) default to ``None`` rather than being required,
+    ``bearer`` (a lookup for the caller's linked pandan PAT, called only on that same lazy path, so
+    the owner path pays no extra query) and ``team_resolver`` (ADR 0011, R16.3) default to ``None``
+    rather than being required,
     so every existing caller — every unit test in this repository included — keeps working
     unchanged. Team-default access is checked **lazily**, and only when it could possibly matter:
     the owner check runs first (inside ``authorize_note``, over a plain equality this function
     never re-implements), so a personal note or a note the caller already owns costs nothing extra
     and never touches pandan. Only a note that (a) exists, (b) belongs to someone else, and (c) has
-    a ``team_id`` set is worth a `GET /api/v1/teams` call for.
+    a ``team_id`` set is worth a `GET /api/v1/workspaces` call for.
 
     **The connection is released before that call**, the same discipline `app/api/links.py`'s
     `_release_the_connection` documents in full: a sync route holds its session's connection for
@@ -181,8 +183,9 @@ def resolve_note(
     ):
         session.commit()  # release the connection before calling pandan — see this function's own
         # docstring, and app/api/links.py's `_release_the_connection`.
-        if bearer is not None:
-            team_ids = team_resolver.member_of(bearer)
+        pandan_pat = bearer() if bearer is not None else None
+        if pandan_pat is not None:
+            team_ids = team_resolver.member_of(pandan_pat)
 
     return authorize_note(principal, found, team_ids)
 
@@ -191,7 +194,7 @@ def note_from_ref(
     ref: str,
     session: Annotated[Session, Depends(get_session)],
     principal: Annotated[Principal, Depends(get_principal)],
-    bearer: Annotated[str | None, Depends(caller_bearer)],
+    bearer: PandanBearer,
     team_resolver: Annotated[TeamAccessResolver, Depends(get_team_access_resolver)],
 ) -> Note:
     """The dependency every ref-taking route uses, and the reason none of them parse anything.

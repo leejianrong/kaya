@@ -30,14 +30,25 @@ from typing import Any
 import pytest
 from sqlalchemy import text
 
+from tests.integration.auth_helpers import override_get_principal, seed_kaya_account
+
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
-# Shapeless on purpose: kaya has no token format (ADR 0002), so a PAT-shaped fixture would quietly
-# assert the opposite of the thing under test. Same reasoning as `test_pandan_down.py`.
+# Shapeless on purpose: kaya does not verify a bearer by its shape (KAN-1740), so a PAT-shaped
+# fixture would quietly assert the opposite of the thing under test.
 ALICE_TOKEN = "a-caller-supplied-string-kaya-does-not-parse"
 BOB_TOKEN = "a-different-caller-supplied-string"
 ALICE_ID = uuid.UUID("11111111-1111-4111-8111-111111111111")
 BOB_ID = uuid.UUID("22222222-2222-4222-8222-222222222222")
+
+# The caller's *linked* pandan PAT — a deliberately different string from the kaya bearer above.
+# `/links` forwards this to `pandan`, never `ALICE_TOKEN`/`BOB_TOKEN` (those authenticate the
+# request *to kaya*; since ADR 0012/KAN-1740 they are not a pandan credential at all). Keeping the
+# two disjoint is what makes `test_resolution_uses_the_callers_pat_so_an_unreadable_cards_title_
+# never_leaks`'s final assertion mean anything — if this file reused `ALICE_TOKEN` as the linked
+# PAT too, a regression back to forwarding the kaya bearer would go unnoticed.
+ALICE_PANDAN_PAT = "alices-linked-pandan-pat"
+BOB_PANDAN_PAT = "bobs-linked-pandan-pat"
 
 NOTES = "/api/v1/notes"
 
@@ -91,23 +102,6 @@ class FakeCardEpicUpstream:
         return len(self.card_calls) + len(self.epic_calls)
 
 
-class FakeIdentityUpstream:
-    """Pandan's `GET /api/v1/me`, faked. `available = False` is a stopped process, so `introspect`
-    raises rather than returning `None` — returning `None` for an outage surfaces as a `401` and
-    reads as "your token is bad" (`test_pandan_down.py` makes the same point at length)."""
-
-    def __init__(self) -> None:
-        self.known: dict[str, Any] = {}
-        self.available = True
-
-    def introspect(self, bearer: str) -> Any:
-        from app.auth.principal import UpstreamUnavailable
-
-        if not self.available:
-            raise UpstreamUnavailable("https://pandan.invalid/api/v1/me is unreachable")
-        return self.known.get(bearer)
-
-
 def _alembic_config() -> Any:
     from alembic.config import Config
 
@@ -128,9 +122,24 @@ def epic(ticket: str, title: str) -> Any:
     return ResolvedTicket(kind="epic", id=3, ticket_number=ticket, title=title, column=None)
 
 
-@pytest.fixture
-def identity() -> FakeIdentityUpstream:
-    return FakeIdentityUpstream()
+def connect_pandan_account(id: uuid.UUID, raw_token: str) -> None:
+    """Link `raw_token` as a linked pandan PAT for a seeded kaya account — the fixture
+    `tests/integration/test_board_embed_api.py`'s `connect_alices_pandan_account` already needed
+    for `/api/v1/embeds/board`, now needed here too since `/links` reads through the same
+    `pandan_link` table (`app/identity/pandan_link.py`) rather than forwarding the caller's kaya
+    bearer."""
+    from app.config import get_settings
+    from app.db import get_sessionmaker
+    from app.identity.pandan_link import PandanLink, encrypt_token
+
+    with get_sessionmaker()() as session:
+        session.add(
+            PandanLink(
+                user_id=id,
+                encrypted_token=encrypt_token(raw_token, get_settings().kaya_auth_secret),
+            )
+        )
+        session.commit()
 
 
 @pytest.fixture
@@ -139,30 +148,23 @@ def pandan() -> FakeCardEpicUpstream:
 
 
 @pytest.fixture
-def client(
-    database_url: str, identity: FakeIdentityUpstream, pandan: FakeCardEpicUpstream
-) -> Iterator[Any]:
-    """The real app with two dependencies overridden: identity, and card/epic resolution.
+def client(database_url: str, pandan: FakeCardEpicUpstream) -> Iterator[Any]:
+    """The real app with identity faked directly (`override_get_principal`, KAN-1740) and card/epic
+    resolution overridden with `pandan`.
 
-    Both caches are fresh per test and both are dropped afterwards, for the reason
-    `test_notes_api.py` gives about the principal cache: they are process-wide by design, and one
-    surviving a `TRUNCATE` serves an answer about rows that no longer exist. The resolution cache
-    also has to be fresh for a *second* reason specific to this file — a warm entry would make the
-    "no upstream call happened" assertions pass for the wrong reason.
+    Alice and Bob each get a linked pandan PAT (`connect_pandan_account`) so that every existing
+    test keeps resolving by default — a test wanting the "never connected" path disconnects one
+    explicitly (`DELETE /api/v1/pandan-link`) rather than starting from a state most tests don't
+    want.
+
+    The resolution cache is fresh per test and dropped afterwards — a warm entry would make the
+    "no upstream call happened" assertions pass for the wrong reason. There is no identity cache
+    left to reset; `get_principal`'s replacement is a plain lookup.
     """
-    from typing import Annotated
-
     from alembic import command
-    from fastapi import Depends
     from fastapi.testclient import TestClient
-    from sqlalchemy.orm import Session
 
-    from app.auth.cache import PrincipalCache
-    from app.auth.dependencies import get_resolver, reset_auth
-    from app.auth.mirror import SqlAlchemyPrincipalMirror
     from app.auth.principal import Principal
-    from app.auth.resolver import PrincipalResolver
-    from app.auth.single_flight import SingleFlight
     from app.db import get_sessionmaker
     from app.integrations.card_resolution import CardEpicCache, CardEpicResolver
     from app.integrations.dependencies import get_card_epic_resolver, reset_card_resolution
@@ -172,29 +174,26 @@ def client(
 
     def empty() -> None:
         with get_sessionmaker()() as session:
-            session.execute(text('TRUNCATE TABLE note_link, note, "user" CASCADE'))
+            # `pandan_link` is not named: it cascades from `kaya_account`'s own truncation
+            # (`ON DELETE CASCADE`, `app/identity/pandan_link.py`), same as `note_link` cascades
+            # from `note`.
+            session.execute(text("TRUNCATE TABLE note_link, note, kaya_account CASCADE"))
             session.commit()
 
     empty()
-    reset_auth()
     reset_card_resolution()
 
-    identity.known[ALICE_TOKEN] = Principal(id=ALICE_ID, email="alice@example.com")
-    identity.known[BOB_TOKEN] = Principal(id=BOB_ID, email="bob@example.com")
+    with get_sessionmaker()() as session:
+        seed_kaya_account(session, id=ALICE_ID, email="alice@example.com")
+        seed_kaya_account(session, id=BOB_ID, email="bob@example.com")
+    connect_pandan_account(ALICE_ID, ALICE_PANDAN_PAT)
+    connect_pandan_account(BOB_ID, BOB_PANDAN_PAT)
+    known_principals = {
+        ALICE_TOKEN: Principal(id=ALICE_ID, email="alice@example.com"),
+        BOB_TOKEN: Principal(id=BOB_ID, email="bob@example.com"),
+    }
 
-    cache = PrincipalCache(positive_ttl=60.0, negative_ttl=10.0)
-    single_flight = SingleFlight()
     card_cache = CardEpicCache(ttl=300.0)
-
-    from app.db import get_session
-
-    def identity_resolver(session: Annotated[Session, Depends(get_session)]) -> PrincipalResolver:
-        return PrincipalResolver(
-            upstream=identity,
-            mirror=SqlAlchemyPrincipalMirror(session),
-            cache=cache,
-            single_flight=single_flight,
-        )
 
     def card_resolver() -> CardEpicResolver:
         return CardEpicResolver(
@@ -205,14 +204,13 @@ def client(
             total_deadline_seconds=8.0,
         )
 
-    app.dependency_overrides[get_resolver] = identity_resolver
+    override_get_principal(app, known_principals)
     app.dependency_overrides[get_card_epic_resolver] = card_resolver
     try:
         with TestClient(app) as test_client:
             yield test_client
     finally:
         app.dependency_overrides.clear()
-        reset_auth()
         reset_card_resolution()
         empty()
 
@@ -244,7 +242,7 @@ def backlinks(client: Any, ref: str, token: str = ALICE_TOKEN) -> list[dict[str,
 
 
 def test_backlinks_are_answered_from_kayas_own_database_with_pandan_down(
-    client: Any, identity: FakeIdentityUpstream, pandan: FakeCardEpicUpstream
+    client: Any, pandan: FakeCardEpicUpstream
 ) -> None:
     """SLICES §V5's e2e row, word for word: "lists every note linking to it, answered from kaya's
     own database with pandan down". **[mutate]**
@@ -254,16 +252,14 @@ def test_backlinks_are_answered_from_kayas_own_database_with_pandan_down(
     did not *call* it — a `/backlinks` that resolved something and swallowed the failure would pass
     the first assertion and be exactly the ADR 0003 violation this criterion exists to rule out.
 
-    The principal cache is warmed first, with pandan reachable, because authentication is the one
-    dependency ADR 0002 accepts knowingly — see `test_pandan_down.py`, which argues that boundary at
-    length and draws it in the same place.
+    Identity itself has no "pandan down" state to simulate any more (KAN-1740) — kaya never asks
+    pandan who a caller is, so this test is purely about the card/epic resolution half.
     """
     target = create(client, title="Deploy runbook", body="the steps")
     create(client, title="Monday", body="see [[Deploy runbook]] before standup")
     create(client, title="Tuesday", body="still [[Deploy runbook]], plus [[KAN-501]]")
     create(client, title="Unrelated", body="no links here")
 
-    identity.available = False
     pandan.available = False
 
     found = backlinks(client, target["ref"])
@@ -593,18 +589,22 @@ def test_resolution_uses_the_callers_pat_so_an_unreadable_cards_title_never_leak
     """SLICES §V5's integration row: "a note referencing a card the reader cannot see renders
     unresolved rather than leaking the title." **[mutate]**
 
-    Both callers write a note naming `KAN-501`. Only Alice's bearer can see that card upstream, so
-    Alice gets the title and Bob gets three nulls — and the assertion checks Bob's *whole response
-    body* for the title string, not just the `title` key, because a leak that arrived under another
-    name would satisfy a key-wise assertion.
+    Both callers write a note naming `KAN-501`. Only Alice's linked pandan PAT can see that card
+    upstream, so Alice gets the title and Bob gets three nulls — and the assertion checks Bob's
+    *whole response body* for the title string, not just the `title` key, because a leak that
+    arrived under another name would satisfy a key-wise assertion.
 
-    The two things this rules out are a kaya-owned service credential (there is none: the bearer is
-    the caller's own, forwarded) and a cache keyed on the bare ticket number, which would hand Bob
-    Alice's answer. Alice goes **first**, deliberately: a cache that leaked would be warm by the
-    time Bob asks, so the ordering is what makes the second assertion mean anything.
+    The two things this rules out are a kaya-owned service credential (there is none: the bearer
+    forwarded is the caller's own **linked pandan PAT**, `app/identity/pandan_link.py` —
+    `ALICE_PANDAN_PAT`/`BOB_PANDAN_PAT` here, deliberately distinct strings from the kaya-side
+    `ALICE_TOKEN`/`BOB_TOKEN` used to authenticate *to kaya*, so a regression back to forwarding
+    the kaya bearer instead would fail the final assertion rather than pass it by coincidence) and
+    a cache keyed on the bare ticket number, which would hand Bob Alice's answer. Alice goes
+    **first**, deliberately: a cache that leaked would be warm by the time Bob asks, so the
+    ordering is what makes the second assertion mean anything.
     """
-    pandan.cards_by_bearer[ALICE_TOKEN] = {"KAN-501": card("KAN-501", "MCP read tools")}
-    pandan.cards_by_bearer[BOB_TOKEN] = {}
+    pandan.cards_by_bearer[ALICE_PANDAN_PAT] = {"KAN-501": card("KAN-501", "MCP read tools")}
+    pandan.cards_by_bearer[BOB_PANDAN_PAT] = {}
 
     alices = create(client, ALICE_TOKEN, title="Alice's note", body="tracked in [[KAN-501]]")
     bobs = create(client, BOB_TOKEN, title="Bob's note", body="also [[KAN-501]]")
@@ -622,9 +622,35 @@ def test_resolution_uses_the_callers_pat_so_an_unreadable_cards_title_never_leak
     assert "MCP read tools" not in response.text, (
         "the title must not reach a caller pandan would not show it to, under any key"
     )
-    assert [bearer for bearer, _ in pandan.card_calls] == [ALICE_TOKEN, BOB_TOKEN], (
-        "Bob's read must reach pandan with Bob's own bearer rather than being served from Alice's "
-        "cache entry — the cache is keyed on (sha256(bearer), ticket_number) for this reason"
+    assert [bearer for bearer, _ in pandan.card_calls] == [ALICE_PANDAN_PAT, BOB_PANDAN_PAT], (
+        "Bob's read must reach pandan with Bob's own linked PAT rather than being served from "
+        "Alice's cache entry — the cache is keyed on (sha256(bearer), ticket_number) for this "
+        "reason — and neither bearer may be the caller's kaya-side token"
+    )
+
+
+def test_a_caller_with_no_linked_pandan_account_gets_unresolved_links_and_no_upstream_call(
+    client: Any, pandan: FakeCardEpicUpstream
+) -> None:
+    """The other half of the fix this file's constants document: a caller who has never connected a
+    pandan account (or has since disconnected) gets the ADR 0003 answer — three nulls, no upstream
+    call — rather than a `401`/`403`/`500` from a bearer kaya cannot forward.
+
+    Disconnects Alice's fixture-seeded link (`DELETE /api/v1/pandan-link`, KAN-1741) rather than
+    starting from a fresh account with no link at all, so this exercises the same code path a real
+    "connect, then later disconnect" caller hits.
+    """
+    disconnect = client.delete("/api/v1/pandan-link", headers=auth(ALICE_TOKEN))
+    assert disconnect.status_code == 200, disconnect.text
+
+    note = create(client, title="Tracked", body="tracked in [[KAN-501]]")
+
+    [link] = links(client, note["ref"])
+
+    assert (link["resolved_ref"], link["title"], link["column"]) == (None, None, None)
+    assert pandan.call_count == 0, (
+        "no linked account means nothing to forward — resolution must not run at all, the same "
+        "way `app/api/embeds.py`'s `not_connected` state never reaches pandan either"
     )
 
 
@@ -634,7 +660,7 @@ def test_a_second_read_of_the_same_note_costs_no_upstream_request(
     """Spike 0001's acceptance line, at the endpoint that finally has a caller. The cache is
     process-wide (`app/integrations/dependencies.py`), so the saving is across requests, which is
     the only place a note render happens twice."""
-    pandan.cards_by_bearer[ALICE_TOKEN] = {"KAN-501": card("KAN-501", "MCP read tools")}
+    pandan.cards_by_bearer[ALICE_PANDAN_PAT] = {"KAN-501": card("KAN-501", "MCP read tools")}
     note = create(client, title="Tracked", body="[[KAN-501]] and [[KAN-501]] again")
 
     first = links(client, note["ref"])
@@ -647,7 +673,7 @@ def test_a_second_read_of_the_same_note_costs_no_upstream_request(
 
 
 def test_links_stay_a_200_with_unresolved_rows_when_pandan_is_stopped(
-    client: Any, identity: FakeIdentityUpstream, pandan: FakeCardEpicUpstream
+    client: Any, pandan: FakeCardEpicUpstream
 ) -> None:
     """ADR 0003 at the endpoint that is allowed to call pandan: with pandan stopped, `/links` is a
     `200` carrying every edge, unresolved. Never a `503`, never an empty list, never a `500`.
@@ -661,7 +687,6 @@ def test_links_stay_a_200_with_unresolved_rows_when_pandan_is_stopped(
         client, title="Monday", body="see [[Deploy runbook]], [[KAN-501]] and [[EPIC-3]]"
     )
 
-    identity.available = False
     pandan.available = False
 
     found = links(client, note["ref"])
@@ -684,7 +709,7 @@ def test_an_outage_is_not_remembered_as_a_ref_that_does_not_exist(
     The failure this rules out is the nasty one: a `/links` read during a thirty-second pandan blip
     poisoning the cache for its whole TTL, so the link stays unresolved long after pandan came back.
     """
-    pandan.cards_by_bearer[ALICE_TOKEN] = {"KAN-501": card("KAN-501", "MCP read tools")}
+    pandan.cards_by_bearer[ALICE_PANDAN_PAT] = {"KAN-501": card("KAN-501", "MCP read tools")}
     note = create(client, title="Tracked", body="[[KAN-501]]")
 
     pandan.available = False
@@ -699,7 +724,7 @@ def test_an_outage_is_not_remembered_as_a_ref_that_does_not_exist(
 def test_an_epic_resolves_with_no_column_rather_than_an_invented_one(
     client: Any, pandan: FakeCardEpicUpstream
 ) -> None:
-    pandan.epics_by_bearer[ALICE_TOKEN] = [epic("EPIC-3", "The V5 slice")]
+    pandan.epics_by_bearer[ALICE_PANDAN_PAT] = [epic("EPIC-3", "The V5 slice")]
     note = create(client, title="Tracked", body="part of [[EPIC-3]]")
 
     [link] = links(client, note["ref"])
@@ -762,7 +787,7 @@ def test_links_for_another_users_note_is_403_and_asks_pandan_nothing(
 ) -> None:
     """The refusal happens in `NoteFromRef`, before the route body runs, so a caller cannot use
     `/links` to make kaya resolve refs out of a note they may not read."""
-    pandan.cards_by_bearer[BOB_TOKEN] = {"KAN-501": card("KAN-501", "secret")}
+    pandan.cards_by_bearer[BOB_PANDAN_PAT] = {"KAN-501": card("KAN-501", "secret")}
     bobs = create(client, BOB_TOKEN, title="Bob's note", body="[[KAN-501]]")
 
     response = client.get(f"{NOTES}/{bobs['ref']}/links", headers=auth(ALICE_TOKEN))
@@ -795,7 +820,7 @@ def test_links_does_not_hold_a_postgres_connection_across_the_upstream_call(
 
     from app.db import get_engine, get_sessionmaker
 
-    pandan.cards_by_bearer[ALICE_TOKEN] = {"KAN-501": card("KAN-501", "MCP read tools")}
+    pandan.cards_by_bearer[ALICE_PANDAN_PAT] = {"KAN-501": card("KAN-501", "MCP read tools")}
     note = create(client, title="Tracked", body="[[KAN-501]]")
 
     with get_sessionmaker()() as probe:

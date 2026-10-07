@@ -1,11 +1,16 @@
 """``GET /api/v1/meta`` — the one thing a visitor with no credential is allowed to ask.
 
-KAN-555's landing state has to tell a visitor *where to mint a PAT*, and the answer is
-``KAYA_PANDAN_URL``. That is backend configuration and a browser cannot read it, so it has to arrive
-over the wire. The two obvious alternatives were both rejected with reasons worth keeping:
+Originally KAN-555's landing state used this to tell a visitor *where to mint a PAT*. ADR 0012's
+cutover (KAN-1740) retired that use — kaya mints its own PATs now, from its own ``/tokens`` page,
+and ``Landing.svelte`` no longer calls this route at all. What is left is KAN-1157's authenticated
+nav link: ``App.svelte`` reads ``pandan_url`` to render a link to the linked pandan board once a
+caller is signed in. The route stays unauthenticated regardless (see below), and the value it
+carries, ``KAYA_PANDAN_URL``, is still backend configuration a browser cannot read any other way.
+The two obvious alternatives were both rejected with reasons worth keeping:
 
 - **Hard-coding pandan's origin in the SPA** duplicates configuration that already has exactly one
-  home, and breaks any self-hosted pandan — which ADR 0002 explicitly supports.
+  home, and breaks any self-hosted pandan — which this route's design has always supported and ADR
+  0012 does not change.
 - **A build-time ``VITE_PANDAN_URL``** is the thing ``frontend/src/lib/api.ts`` already refuses in
   prose: "an origin baked in at build time is how a frontend ends up needing a per-environment
   build and a CORS policy to go with it." ADR 0001 promises one artifact; a per-environment bundle
@@ -43,19 +48,22 @@ class Meta(BaseModel):
     """One key. See this module's docstring before adding a second."""
 
     pandan_url: str
-    """Origin of the pandan deployment that resolves principals (ADR 0002).
+    """Origin of the linked pandan deployment (team-default access, ADR 0011) — no longer the
+    identity provider since ADR 0012's cutover (KAN-1740) retired that role.
 
     Verbatim from ``KAYA_PANDAN_URL``, not normalised: it is the operator's own string, and the
-    landing state only ever puts it in an ``href``."""
+    authenticated shell (`App.svelte`, KAN-1157) only ever puts it in an ``href``."""
 
 
-@router.get("/meta", summary="Public configuration a visitor needs before signing in")
+@router.get("/meta", summary="Public configuration a caller needs before pandan is reachable")
 def read_meta(settings: CurrentSettings) -> Meta:
-    """Where identity comes from.
+    """Where the linked pandan board lives.
 
     No ``get_principal`` dependency, deliberately (see the module docstring), and no database
-    session either — so this route answers with pandan unreachable *and* with Postgres down, which
-    is what the landing state needs from it. That also keeps ADR 0003's rule intact by construction:
-    the route that tells you about pandan does not talk to pandan.
+    session either — so this route answers with pandan unreachable *and* with Postgres down. That
+    also keeps ADR 0003's rule intact by construction: the route that tells you about pandan does
+    not talk to pandan. Unauthenticated on purpose still — nothing about ADR 0012's cutover made
+    `pandan_url` a secret, and gating it behind `get_principal` would just be one more thing to call
+    before this route can answer.
     """
     return Meta(pandan_url=settings.pandan_url)

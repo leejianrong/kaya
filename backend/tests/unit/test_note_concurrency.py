@@ -382,3 +382,22 @@ def test_an_unknown_precondition_spelling_is_refused_rather_than_ignored() -> No
     believe it had the guarantee, and would be wrong in the direction that loses work."""
     with pytest.raises(ValidationError):
         update(body="mine", updated_at=STORED_AT.isoformat())
+
+
+# --- KAN-1814: `format: true` is a body write, whether or not a body is sent ----------------------
+
+
+def test_format_alone_is_guarded_like_a_body_write() -> None:
+    """It rewrites the stored body — the exact prose ADR 0009 protects — so a stale precondition
+    must refuse it even though no ``body`` key was sent."""
+    guarded = NoteUpdate.model_validate({"format": True, "if_updated_at": STORED_AT.isoformat()})
+    unguarded = NoteUpdate.model_validate({"if_updated_at": STORED_AT.isoformat()})
+
+    assert guarded.guards_the_body()
+    assert not unguarded.guards_the_body()
+
+
+def test_format_is_an_instruction_not_a_content_field() -> None:
+    update = NoteUpdate.model_validate({"format": True, "title": "t"})
+
+    assert update.changes() == {"title": "t"}

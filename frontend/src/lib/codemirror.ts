@@ -58,12 +58,18 @@ import {
   type Completion,
   type CompletionContext,
   type CompletionResult,
+  startCompletion,
 } from '@codemirror/autocomplete'
-import { defaultKeymap, history, historyKeymap, isolateHistory } from '@codemirror/commands'
+import { defaultKeymap, history, historyKeymap, isolateHistory, undo } from '@codemirror/commands'
 import { markdownKeymap, markdownLanguage } from '@codemirror/lang-markdown'
-import { defaultHighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language'
+import {
+  defaultHighlightStyle,
+  HighlightStyle,
+  syntaxHighlighting,
+  syntaxTree,
+} from '@codemirror/language'
 import type { Annotation } from '@codemirror/state'
-import { EditorState, StateEffect, StateField } from '@codemirror/state'
+import { EditorSelection, EditorState, StateEffect, StateField } from '@codemirror/state'
 import {
   Decoration,
   type DecorationSet,
@@ -75,7 +81,9 @@ import {
 } from '@codemirror/view'
 
 import { uploadAttachment } from './attachments'
+import { applyFormat } from './formatting'
 import { listNotes } from './notes'
+import type { EditorCommands, ToolbarAction } from './toolbar'
 import type { Link } from './types'
 import {
   excludeFenced,
@@ -120,6 +128,11 @@ export interface EditorSpec {
    * same convention as every other optional callback here.
    */
   onAttachmentError?: (message: string) => void
+  /**
+   * KAN-1826: the editor gained or lost focus. The mobile toolbar shows only while the editor is
+   * focused, which is also when a soft keyboard is up. Optional, like `onAttachmentError`.
+   */
+  onFocusChange?: (focused: boolean) => void
 }
 
 /**
@@ -143,18 +156,18 @@ export const HISTORY_ISOLATION: readonly Annotation<unknown>[] = [isolateHistory
 const theme = EditorView.theme({
   '&': {
     backgroundColor: 'transparent',
-    color: 'var(--text)',
+    color: 'var(--on-surface)',
     fontFamily: 'var(--mono)',
     fontSize: '0.9rem',
     height: '100%',
   },
   '.cm-scroller': { fontFamily: 'inherit', lineHeight: '1.6' },
-  '.cm-content': { caretColor: 'var(--accent)' },
-  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)' },
-  '.cm-gutters': { backgroundColor: 'transparent', borderRight: '1px solid var(--border)' },
-  '.cm-activeLine': { backgroundColor: 'color-mix(in srgb, var(--accent) 6%, transparent)' },
+  '.cm-content': { caretColor: 'var(--primary)' },
+  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--primary)' },
+  '.cm-gutters': { backgroundColor: 'transparent', borderRight: '1px solid var(--outline-variant)' },
+  '.cm-activeLine': { backgroundColor: 'color-mix(in srgb, var(--primary) 6%, transparent)' },
   '&.cm-focused': { outline: 'none' },
-  '.cm-placeholder': { color: 'var(--muted)' },
+  '.cm-placeholder': { color: 'var(--on-surface-variant)' },
   // KAN-567's pill, `Decoration.mark` over the raw `[[...]]` span — the text stays exactly what the
   // caret can edit, and only the styling changes. The two states mirror the app's existing visual
   // language rather than inventing a new one: `.cm-wikilink-resolved` is the same accent-tinted
@@ -163,14 +176,37 @@ const theme = EditorView.theme({
   // could not be confirmed reads the same way in the editor as it does in the preview beside it.
   '.cm-wikilink': { borderRadius: '0.25rem', padding: '0 0.15rem' },
   '.cm-wikilink-resolved': {
-    backgroundColor: 'color-mix(in srgb, var(--accent) 14%, transparent)',
-    color: 'var(--accent)',
+    backgroundColor: 'color-mix(in srgb, var(--primary) 14%, transparent)',
+    color: 'var(--primary)',
   },
   '.cm-wikilink-unresolved': {
-    color: 'var(--muted)',
-    borderBottom: '1px dotted var(--muted)',
+    color: 'var(--on-surface-variant)',
+    borderBottom: '1px dotted var(--on-surface-variant)',
   },
 })
+
+/**
+ * KAN-1828: the default highlight style with its hard-coded colours (blue links, dark-green strings)
+ * swapped for the colour tokens, so markdown source stays legible in the dark scheme. Built from
+ * `defaultHighlightStyle.specs`, which keeps every tag mapping and changes only the colour: this
+ * module needs no `@lezer/highlight` import for the tags.
+ */
+const HIGHLIGHT_ROLES: Record<string, string> = {
+  '#404740': 'var(--on-surface-variant)',
+  '#940': 'var(--on-surface-variant)',
+  '#f00': 'var(--error)',
+  '#164': 'var(--tertiary)',
+  '#a11': 'var(--tertiary)',
+  '#085': 'var(--tertiary)',
+  '#256': 'var(--tertiary)',
+  '#e40': 'var(--tertiary)',
+}
+const tokenHighlight = HighlightStyle.define(
+  defaultHighlightStyle.specs.map((spec) => {
+    const color = typeof spec.color === 'string' ? spec.color : undefined
+    return color === undefined ? spec : { ...spec, color: HIGHLIGHT_ROLES[color] ?? 'var(--primary)' }
+  }),
+)
 
 /** KAN-567: what {@link setWikilinks} carries into a live view, outside any transaction the caller
  *  already has in flight. */
@@ -456,7 +492,7 @@ export function createView(spec: EditorSpec): EditorView {
         // cost paid on opening a note rather than on loading the page, which makes it cheaper and
         // not free — KAN-767 moved where the bytes are, not whether they exist.
         markdownLanguage.extension,
-        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+        syntaxHighlighting(tokenHighlight, { fallback: true }),
         EditorView.lineWrapping,
         EditorView.editable.of(spec.editable),
         // The zero states, as CM6's own placeholder rather than as a Svelte node — the container has
@@ -468,6 +504,9 @@ export function createView(spec: EditorSpec): EditorView {
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             spec.onChange(update.state.doc.toString())
+          }
+          if (update.focusChanged) {
+            spec.onFocusChange?.(update.view.hasFocus)
           }
         }),
         theme,
@@ -484,4 +523,59 @@ export function createView(spec: EditorSpec): EditorView {
       ],
     }),
   })
+}
+
+// --- KAN-1826: the mobile formatting toolbar's commands -----------------------------------------
+
+/**
+ * What the toolbar's buttons do to a live view. The text rules are `lib/formatting.ts`'s pure
+ * `applyFormat`; this only reads the selection, dispatches the answer as **one** transaction (one
+ * tap is one undo step) and puts the caret where the rules said.
+ *
+ * `scrollIntoView: true` keeps the caret visible after a change that moves it (a link's `](|)`).
+ * Focus is never taken here: the toolbar's buttons refuse focus on pointer-down, so the editor
+ * still has it and the soft keyboard stays up. `view.focus()` is called anyway, because it is free
+ * when the view is focused and it is the recovery when something stole focus.
+ *
+ * `[[` completion: the pure rule types `[[` at a bare caret and says to open the list. Typing `[[`
+ * through a transaction tagged `input.type` is what CM6's own typing handler would produce, and
+ * `startCompletion` opens the list explicitly rather than hoping the activation heuristic fires
+ * for a programmatic change.
+ */
+export function commandsFor(view: EditorView): EditorCommands {
+  function run(action: ToolbarAction): void {
+    view.focus()
+    if (action === 'undo') {
+      undo(view)
+      return
+    }
+    const { main } = view.state.selection
+    const result = applyFormat(action, view.state.doc.toString(), {
+      anchor: main.anchor,
+      head: main.head,
+    })
+    if (result === null) {
+      return
+    }
+    view.dispatch({
+      changes: { from: result.from, to: result.to, insert: result.insert },
+      selection: EditorSelection.single(result.anchor, result.head),
+      scrollIntoView: true,
+      userEvent: action === 'wikilink' ? 'input.type' : 'input.format',
+    })
+    if (result.opensWikilinkCompletion) {
+      startCompletion(view)
+    }
+  }
+
+  function revealCaret(): void {
+    view.dispatch({
+      effects: EditorView.scrollIntoView(view.state.selection.main.head, {
+        y: 'nearest',
+        yMargin: 24,
+      }),
+    })
+  }
+
+  return { run, revealCaret }
 }

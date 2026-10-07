@@ -48,8 +48,8 @@ from collections.abc import Iterable
 from fastapi import HTTPException, status
 from sqlalchemy import Select, func, or_, select
 
+from app.auth.errors import error_body
 from app.auth.principal import Principal
-from app.auth.resolver import error_body
 from app.models import Note
 from app.models.note_link import TARGET_KIND_NOTE, NoteLink
 

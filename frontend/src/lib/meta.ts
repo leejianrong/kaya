@@ -1,12 +1,14 @@
 /**
- * `GET /api/v1/meta` — where the landing state learns pandan's origin (KAN-555).
+ * `GET /api/v1/meta` — where the authenticated shell learns pandan's origin (KAN-555, now KAN-1157's
+ * nav link; `Landing.svelte` stopped calling this when ADR 0012's cutover, KAN-1740, gave it its own
+ * `/tokens` page instead of a pandan link).
  *
  * The SPA cannot read `KAYA_PANDAN_URL`: it is backend configuration and this is a browser. It also
  * must not learn it any of the other two ways — a literal in the source duplicates configuration
- * that has one home and breaks a self-hosted pandan (which ADR 0002 supports), and a build-time
- * `VITE_PANDAN_URL` is the per-environment bundle `api.ts` refuses in its header and ADR 0001's
- * one-artifact promise forbids. So it comes over the wire, from a route with no credential in front
- * of it, which is the one shape that works for a visitor who has no credential yet.
+ * that has one home and breaks a self-hosted pandan, and a build-time `VITE_PANDAN_URL` is the
+ * per-environment bundle `api.ts` refuses in its header and ADR 0001's one-artifact promise forbids.
+ * So it comes over the wire, from a route with no credential in front of it, which is also the one
+ * shape that still works for a visitor who has no credential yet.
  */
 
 import { publicRequest, type PublicOptions } from './api'

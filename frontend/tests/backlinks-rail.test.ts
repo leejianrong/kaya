@@ -65,6 +65,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  localStorage.clear()
   for (const instance of mounted.splice(0)) {
     unmount(instance as never)
   }
@@ -75,6 +76,9 @@ afterEach(() => {
 })
 
 function renderApp(): void {
+  // KAN-1827: the pane is closed by default; these tests are about the open rail, so they open it
+  // the way a person who had left it open would arrive.
+  localStorage.setItem('kaya.supportPane.expanded', 'open')
   mounted.push(mount(App, { target: host, props: {} }))
   flushSync()
 }
@@ -150,7 +154,7 @@ describe('the rail is a region of the shell, beside the document rather than ins
   })
 })
 
-describe('the preview toggle cannot reach the rail', () => {
+describe('the mode switch cannot reach the rail', () => {
   beforeEach(() => globalThis.history.pushState({}, '', `/notes/${NOTE.ref}`))
 
   it('keeps the very same element, with its rows, across a hide and a show', async () => {
@@ -160,9 +164,11 @@ describe('the preview toggle cannot reach the rail', () => {
     const rail = host.querySelector<HTMLElement>('aside.rail')!
     const row = host.querySelector<HTMLElement>('a[href="/notes/NOTE-2"]')!
 
-    click('toggle-preview')
+    // Edit (no preview) -> Split (preview) -> Edit: the preview comes and goes around the rail.
+    click('mode-split')
+    expect(host.querySelector('[data-testid="preview"]')).not.toBeNull()
+    click('mode-edit')
     expect(host.querySelector('[data-testid="preview"]')).toBeNull()
-    click('toggle-preview')
 
     // Element **identity**, not presence. A rail placed inside `.split` would be a fresh component
     // instance here — a new fetch, a flash of `Loading…`, and the panel's state discarded — and a
@@ -180,8 +186,8 @@ describe('the preview toggle cannot reach the rail', () => {
         .mock.calls.filter(([input]) => String(input).endsWith('/backlinks')).length
 
     expect(backlinkCalls()).toBe(1)
-    click('toggle-preview')
-    click('toggle-preview')
+    click('mode-split')
+    click('mode-edit')
     await vi.waitFor(() => {
       flushSync()
       expect(backlinkCalls()).toBe(1)
@@ -225,7 +231,7 @@ describe('the rail is absent where it would have nothing to say', () => {
     renderApp()
     flushSync()
 
-    expect(host.querySelector('[data-testid="paste-form"]')).not.toBeNull()
+    expect(host.querySelector('[data-testid="github-signin"]')).not.toBeNull()
     expect(host.querySelector('aside.rail')).toBeNull()
     expect(host.querySelector('.shell')!.classList.contains('railed')).toBe(false)
   })
@@ -255,11 +261,11 @@ describe('a 401 from the rail reaches the shell’s credential lifecycle', () =>
     renderApp()
     await vi.waitFor(() => {
       flushSync()
-      expect(host.querySelector('[data-testid="paste-form"]')).not.toBeNull()
+      expect(host.querySelector('[data-testid="github-signin"]')).not.toBeNull()
     })
 
     expect(host.querySelector('aside.rail')).toBeNull()
-    expect(host.querySelector('[data-testid="credential-state"]')!.textContent).toBe('token not set')
+    expect(auth.credentialState()).toBe('not set')
     // The API's own words, on the landing state, and never a fragment of the credential.
     expect(host.textContent).toContain('That token is not valid.')
     for (let start = 0; start + 4 <= FAKE_TOKEN.length; start += 1) {

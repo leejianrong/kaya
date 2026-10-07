@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="4.8 4.3 34.4 34.4" width="32" height="32">
+  <style>
+    :root { --k: #33403d; --toast: #d98a1f; --kaya: #1fa37a; --lt: #d5f7ea; }
+    @media (prefers-color-scheme: dark) {
+      :root { --k: #e3ebe8; --toast: #f2b45c; --kaya: #34c79a; --lt: #d5f7ea; }
+    }
+  </style>
+  <path d="M11.5 33V20.4A5.2 5.2 0 0 1 11.5 10.4H28.5A5.2 5.2 0 0 1 28.5 20.4V33Z" fill="var(--toast)" stroke="var(--toast)" stroke-width="2.2" stroke-linejoin="round"/>
+  <rect x="13.6" y="14" width="12.8" height="14" rx="2.4" fill="var(--kaya)"/>
+  <path d="M16.6 18.4h6.6M16.6 22.2h4" stroke="var(--lt)" stroke-width="1.8" stroke-linecap="round"/>
+  <g transform="rotate(-14 22 28)" fill="var(--k)">
+    <rect x="11" y="26.1" width="14" height="4" rx="2"/>
+    <rect x="24" y="27.1" width="14" height="2" rx="1"/>
+  </g>
+</svg>

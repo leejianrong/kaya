@@ -180,22 +180,22 @@
 
   h2 {
     margin: 0;
-    color: var(--muted);
-    font-size: 0.7rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-label-medium-size);
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
 
   .count {
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-family: var(--mono);
-    font-size: 0.7rem;
+    font-size: var(--type-label-medium-size);
   }
 
   .empty {
     margin: 0;
-    color: var(--muted);
+    color: var(--on-surface-variant);
     font-size: 0.9rem;
   }
 
@@ -205,39 +205,39 @@
     max-width: 34rem;
     margin: 0;
     padding: 0.75rem 1rem;
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--accent);
-    border-radius: 0.35rem;
-    font-size: 0.85rem;
+    border: 1px solid var(--outline-variant);
+    border-left: 3px solid var(--primary);
+    border-radius: var(--shape-md);
+    font-size: var(--type-body-medium-size);
   }
 
   .canvas {
     flex: 1;
     min-height: 0;
-    border: 1px solid var(--border);
-    border-radius: 0.4rem;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--shape-md);
   }
 
   .edge {
-    stroke: var(--border);
+    stroke: var(--outline-variant);
     stroke-width: 1.5;
   }
 
   .node-circle {
-    fill: var(--accent);
+    fill: var(--primary);
   }
 
   a:hover .node-circle {
-    fill: color-mix(in srgb, var(--accent) 70%, var(--text));
+    fill: color-mix(in srgb, var(--primary) 70%, var(--on-surface));
   }
 
   .node-label {
-    fill: var(--text);
+    fill: var(--on-surface);
     font-family: var(--mono);
     font-size: 11px;
   }
 
   a:hover .node-label {
-    fill: var(--accent);
+    fill: var(--primary);
   }
 </style>

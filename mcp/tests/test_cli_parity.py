@@ -560,6 +560,30 @@ def test_the_readers_are_not_fooled_by_prose_or_by_a_lookalike() -> None:
 # --------------------------------------------------------------------------------- the guard
 
 
+ARGUMENT_CLI_EQUIVALENT: Mapping[tuple[str, str], tuple[str, ...]] = {
+    ("edit_note", "format"): ("note", "format"),
+}
+"""KAN-1816: an MCP *argument* that is a CLI *verb* of its own. `edit_note(format=True)` is the
+request `kaya note format` makes (ADR 0015 is only accepted on paper: there is no operation list
+yet, so the format operation is a boolean here and folds into the list when that lands)."""
+
+
+def test_every_argument_with_a_cli_verb_names_a_real_verb_and_a_real_argument() -> None:
+    """MCP stays a subset of the CLI for the new argument too: the tool must really take it, and the
+    verb must really be in the CLI's dispatch tables — read from source, like every guard here."""
+    import inspect
+
+    from kaya_mcp import server as server_module
+
+    words = dispatch_words(VERBS_SOURCE.read_text(encoding="utf-8"))
+    for (tool, argument), row in ARGUMENT_CLI_EQUIVALENT.items():
+        parameters = inspect.signature(getattr(server_module, tool)).parameters
+        assert argument in parameters, f"{tool} no longer takes `{argument}`"
+        assert (row[0], row[1] if len(row) > 1 else None) in words, (
+            f"{tool}({argument}=...) maps to `kaya {' '.join(row)}`, which the CLI does not have"
+        )
+
+
 def test_every_frozen_tool_has_a_row() -> None:
     """ADR 0006 §4 rule 2, first half: no tool without a CLI equivalent written down.
 
