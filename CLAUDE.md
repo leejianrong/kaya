@@ -82,10 +82,21 @@ unit-tested without a browser, decide everything; components only consume them.
   toggle, which is gone. Split exists only at `expanded` and is *hidden*, never disabled, below 840;
   expanded opens in Edit, narrower opens a saved note in Read and a just-created one in Edit. The mode
   changes the layout around `EditorPane`, never its mount.
+- **`lib/panels.ts`** owns the side-panel widths (KAY-165): list 200-460 (default 272), pane 240-480
+  (300), clamped to what the window leaves the note, remembered per class through `lib/shell.ts`. They
+  reach CSS as `--left-col`/`--right-col` on `.shell`; a drag sets the property and commits once on
+  release (`Resizer.svelte`). Resizing and the list collapse (top-bar button, Ctrl/Cmd+B) exist at
+  medium and expanded only, and the pane has a handle only where it sits *beside* the note.
 - **Colour, type, shape and state layers are Material 3 tokens in `frontend/src/tokens.css`** (seed `#0d9488`, light and
   dark by `prefers-color-scheme`; the generation command is in its header). Components use role names
   (`--primary`, `--surface-container-low`, `--shape-full`); `tests/tokens-shape.test.ts` fails on a raw colour
   outside that file and `tests/tokens-contrast.test.ts` holds WCAG contrast. Old names (`--accent`, `--muted`) are aliases.
+- **"New note" creates at once** (KAY-166; `lib/newNote.ts`, `App.svelte`'s `createAndOpen`): a note
+  titled `Untitled`/`Untitled 1`... in the current folder (the folder of the last note opened or folder
+  row clicked), opened in Edit with the title field focused and selected; Enter in the title moves the
+  caret into the body. There is no title prompt. Shortcut is `N` with the list focused (never inside a
+  field), not Ctrl/Cmd+N, which the browser owns. The unsaved-changes question is asked *before* the
+  create, and an active search is cleared.
 - Tokens, the pandan link and format-on-save live under **Settings** now (routes `/tokens`,
   `/pandan` unchanged); `tokens` and `device` render in `main` alone and are reachable with no
   credential.
@@ -126,7 +137,7 @@ These have tests; you will meet them as a failing build otherwise. Full accounts
   reads nothing** (`lib/codemirror.ts`, `lib/markdown.ts`). `tests/module-graph.ts` guards that
   nothing else in `src/` imports `@codemirror/*`.
 - **A search is never rendered by the folder tree** (`Sidebar.svelte`): grouping by `path` destroys
-  `ts_rank` order, so a search forces the flat list and hides the view toggle.
+  `ts_rank` order, so a search renders the flat ranked list (the sidebar is otherwise tree-only; there is no view toggle).
 - **One module owns "the bearer for a request"** (`lib/auth.ts`): the token lives in
   `sessionStorage`, never `localStorage` or a cookie, and `credentialState()` returns `set`/`not set`
   only. It is separate from `lib/identity.ts`'s cookie-session seam on purpose.

@@ -25,7 +25,7 @@ test('the Links button opens a sheet with two tabs, and every way out returns fo
     await page.goto(`/notes/${target.ref}`)
     await expect(page.getByTestId('title-input')).toHaveValue(target.title)
     const links = page.getByTestId('toggle-details')
-    await expect(links).toHaveText('Links')
+    await expect(links).toHaveAttribute('aria-label', 'Links and history')
     await expect(links).toHaveAttribute('aria-expanded', 'false')
     await expect(page.getByRole('dialog')).toHaveCount(0)
 

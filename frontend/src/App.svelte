@@ -12,6 +12,7 @@
   import PandanConnect from './components/PandanConnect.svelte'
   import PreviewPane from './components/PreviewPane.svelte'
   import BottomSheet from './components/BottomSheet.svelte'
+  import Resizer from './components/Resizer.svelte'
   import RightRail from './components/RightRail.svelte'
   import Sidebar from './components/Sidebar.svelte'
   import Settings from './components/Settings.svelte'
@@ -19,7 +20,10 @@
   import { ApiError } from './lib/api'
   import { clearToken, credentialState } from './lib/auth'
   import { fetchCurrentUser } from './lib/identity'
-  import { createNote, getNote, listNotes } from './lib/notes'
+  import { createNote, getNote, listBacklinks, listNotes } from './lib/notes'
+  import { folderOf, newNoteDraft } from './lib/newNote'
+  import { readFullWidthReading, readingMeasure, watchFullWidthReading } from './lib/preferences'
+  import NavIcon from './components/NavIcon.svelte'
   import {
     currentRoute,
     interceptClick,
@@ -37,10 +41,23 @@
     type NoteMode,
   } from './lib/noteMode'
   import {
+    clampWidth,
+    effectiveLeft,
+    effectiveRight,
+    LEFT_WIDTH,
+    leftMax,
+    RIGHT_WIDTH,
+    rightMax,
+  } from './lib/panels'
+  import {
+    panelsResizable,
     readStoredPaneOpen,
+    readStoredPanels,
     resolvePaneOpen,
     shellRegions,
+    supportingResizable,
     writeStoredPaneOpen,
+    writeStoredPanels,
   } from './lib/shell'
 import { type EditorCommands, toolbarShown } from './lib/toolbar'
 import { watchViewport } from './lib/viewport'
@@ -120,23 +137,73 @@ import { watchViewport } from './lib/viewport'
   }
 
   /**
-   * `Sidebar`'s `oncreate` (KAN-1040, BREADBOARD.md A1): create the note, then navigate to it.
-   *
-   * `navigate()` runs before the list refresh below, so a same-tab guard veto (KAN-969, unsaved
-   * editor content elsewhere) is asked before this file does any more work — and either way the
-   * note now exists, so the list is refreshed to include it regardless of whether the navigation
-   * itself went through. A `404`-flavoured failure has no home here; the only failures `createNote`
-   * can produce are validation and auth, both already `absorb()`'s job.
+   * The folder a new note lands in (KAY-166), `''` for none: the folder of the note most recently
+   * opened, or of the folder row most recently clicked, whichever came last. Set from the fetched
+   * `note` rather than the list, so a deep link whose list has not loaded yet still resolves, and it
+   * survives going back to the list on compact, where no note is open.
    */
-  async function createAndOpen(title: string): Promise<void> {
+  let contextFolder = $state('')
+
+  /** `Sidebar`'s `onfolder`: the clicked folder is the current one. */
+  function folderClicked(key: string): void {
+    contextFolder = key
+  }
+
+  $effect(() => {
+    if (note !== null) {
+      contextFolder = folderOf(note.path)
+    }
+  })
+
+  /** The ref whose title field should take focus once it renders (KAY-166), until `EditorPane` says
+   *  it has. Separate from `justCreatedRef`, which the mode resolution consumes. */
+  let focusTitleRef: string | null = $state(null)
+
+  /** A create already in flight: a second press would pick the same `Untitled` before the first lands. */
+  let creatingNote = false
+
+  /**
+   * `Sidebar`'s `oncreate` (KAY-166, replacing KAN-1040's inline prompt): create `Untitled` (or
+   * `Untitled 1`...) in the current folder at once, open it in Edit with the title focused.
+   *
+   * Nothing is added to the list before the server answers, so a `401` (existing `discard()` path)
+   * or a validation/network failure leaves no phantom row. An active search is cleared: the new note
+   * is rarely a match, and a tree that hides the row you just made reads as a failed create.
+   *
+   * The unsaved-changes question (KAN-969) is asked first, before anything is created.
+   */
+  async function createAndOpen(): Promise<void> {
+    if (creatingNote) {
+      return
+    }
+    // Ask about unsaved edits *before* creating: a vetoed navigation after the fact would leave an
+    // empty `Untitled` behind for a click the person then cancelled. Answered once, so `navigate()`
+    // below does not ask a second time.
+    if (!confirmNavigation()) {
+      return
+    }
+    const wasDirty = editorDirty
+    editorDirty = false
+    creatingNote = true
     try {
-      const created = await createNote({ title })
+      const draft = newNoteDraft(notes, contextFolder)
+      let created: Note
+      try {
+        created = await createNote(draft)
+      } catch (error) {
+        editorDirty = wasDirty // nothing was created; the unsaved edits are still here to protect
+        throw error
+      }
       justCreatedRef = created.ref
+      focusTitleRef = created.ref
+      notes = [created, ...notes.filter((found) => found.ref !== created.ref)]
+      query = ''
       navigate(routeHref({ name: 'note', ref: created.ref }))
-      const term = query.trim()
-      notes = await listNotes({ q: term === '' ? undefined : term })
+      notes = await listNotes({})
     } catch (error) {
       absorb(error)
+    } finally {
+      creatingNote = false
     }
   }
 
@@ -489,6 +556,126 @@ import { watchViewport } from './lib/viewport'
 
   const railed = $derived(supporting.kind === 'pane' && paneOpen)
 
+  /**
+   * KAY-165: the two side panels' widths and the list's collapsed state. `lib/panels.ts` holds the
+   * arithmetic; this file owns the state and the one place it reaches the layout, two CSS custom
+   * properties on `.shell` that `grid-template-columns` reads.
+   *
+   * Remembered per window class (re-read when the class changes, like the mode). Only medium and
+   * expanded have anything to resize: on compact the list is a full screen and Links a sheet. The
+   * pane has a width only where it sits *beside* the note (`supportingResizable`); at medium it is
+   * below the note, so it has no resizer and no column.
+   *
+   * What renders is the stored preference clamped to what the window can spare, so a narrow window
+   * never rewrites the choice. A drag does not touch state: `Resizer` hands each clamped width to
+   * `setLive`, which sets the property directly, and commits once on release.
+   */
+  let panelPrefs = $derived(readStoredPanels(windowClass))
+  let viewportWidth = $state(typeof window === 'undefined' ? 1440 : window.innerWidth)
+  $effect(() => {
+    const onResize = (): void => {
+      viewportWidth = window.innerWidth
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  })
+
+  const resizable = $derived(authed && panelsResizable(windowClass))
+  const listShown = $derived(regions.list && resizable)
+  const leftOpen = $derived(!listShown || panelPrefs.leftOpen)
+  const besideRail = $derived(railed && supportingResizable(supporting))
+  const rightPref = $derived(clampWidth(panelPrefs.right ?? RIGHT_WIDTH.default, RIGHT_WIDTH))
+  const leftWidth = $derived(
+    effectiveLeft(
+      panelPrefs.left ?? LEFT_WIDTH.default,
+      viewportWidth,
+      windowClass,
+      besideRail ? rightPref : 0,
+    ),
+  )
+  const rightWidth = $derived(
+    effectiveRight(rightPref, viewportWidth, windowClass, leftOpen ? leftWidth : 0),
+  )
+  const leftLimit = $derived(leftMax(viewportWidth, windowClass, besideRail ? rightPref : 0))
+  const rightLimit = $derived(rightMax(viewportWidth, windowClass, leftOpen ? leftWidth : 0))
+
+  let shellEl: HTMLElement | null = $state(null)
+  let collapsingTimer: ReturnType<typeof setTimeout> | undefined
+
+  function setLive(property: '--left-col' | '--right-col', width: number): void {
+    shellEl?.style.setProperty(property, `${width}px`)
+  }
+
+  function commitPanels(next: Partial<typeof panelPrefs>): void {
+    panelPrefs = { ...panelPrefs, ...next }
+    writeStoredPanels(windowClass, panelPrefs)
+  }
+
+  /** The width animation belongs to collapse and expand only: during a drag it would lag the pointer. */
+  let animateColumns = $state(false)
+
+  function toggleList(): void {
+    animateColumns = true
+    clearTimeout(collapsingTimer)
+    collapsingTimer = setTimeout(() => (animateColumns = false), 300)
+    commitPanels({ leftOpen: !panelPrefs.leftOpen })
+  }
+
+  function onShortcut(event: KeyboardEvent): void {
+    if (
+      listShown &&
+      (event.ctrlKey || event.metaKey) &&
+      !event.altKey &&
+      !event.shiftKey &&
+      event.key.toLowerCase() === 'b' &&
+      !event.defaultPrevented
+    ) {
+      event.preventDefault()
+      toggleList()
+    }
+  }
+  $effect(() => {
+    window.addEventListener('keydown', onShortcut)
+    return () => window.removeEventListener('keydown', onShortcut)
+  })
+
+  /**
+   * KAN-1995: the number on the Links and history button. The rail is not mounted while closed, so
+   * it cannot say how many notes link here; this is one `GET /backlinks` per opened note, counted
+   * as the length of the rows downloaded (ADR 0004: a label, not an aggregate). `null` hides the
+   * badge: nothing open, still loading, or the request failed (the rail reports its own failure).
+   */
+  let backlinkCount: number | null = $state(null)
+
+  let countedRef: string | null = null
+
+  $effect(() => {
+    const ref = route.name === 'note' && authed ? route.ref : null
+    const railOpen = railed || sheetOpen
+    if (ref !== countedRef) {
+      countedRef = ref
+      backlinkCount = null
+    }
+    // While the rail is open it is the one asking, and tells us the size (`oncount`).
+    if (ref === null || railOpen || supporting.kind === 'none') {
+      return
+    }
+    const abort = new AbortController()
+    listBacklinks(ref, { signal: abort.signal }).then(
+      (found) => {
+        if (!abort.signal.aborted && Array.isArray(found)) {
+          backlinkCount = found.length
+        }
+      },
+      () => {},
+    )
+    return () => abort.abort()
+  })
+
+  /** KAN-1997: "Full-width reading" (Settings), a per-browser choice that `Settings` writes. */
+  let fullWidthReading = $state(readFullWidthReading())
+  $effect(() => watchFullWidthReading((value) => (fullWidthReading = value)))
+
   $effect(() => onNavigate((next) => (route = next)))
 
   $effect(() => {
@@ -608,10 +795,30 @@ import { watchViewport } from './lib/viewport'
   class:tokens-or-device={authed && (route.name === 'tokens' || route.name === 'device')}
   class:railed
   class:compact
+  class:animate-columns={animateColumns}
+  bind:this={shellEl}
+  style:--left-col="{leftOpen ? leftWidth : 0}px"
+  style:--right-col="{rightWidth}px"
   class:toolbar-open={toolbarOn}
   data-window-class={windowClass}
 >
   <header class="topbar">
+    {#if listShown}
+      <!-- KAY-165: collapses the note list to zero width. Ctrl/Cmd+B does the same. -->
+      <button
+        class="toggle list-toggle"
+        class:on={!leftOpen}
+        aria-expanded={leftOpen}
+        aria-controls="list-panel"
+        aria-keyshortcuts="Control+B Meta+B"
+        onclick={toggleList}
+        aria-label={leftOpen ? 'Hide note list' : 'Show note list'}
+        title={leftOpen ? 'Hide note list (Ctrl+B)' : 'Show note list (Ctrl+B)'}
+        data-testid="toggle-list"
+      >
+        <NavIcon name={leftOpen ? 'left-close' : 'left-open'} />
+      </button>
+    {/if}
     {#if compact && authed && route.name === 'note'}
       <!-- KAN-1818: real navigation (a link to `/`), so the browser's and the OS's back button and
            this arrow agree. -->
@@ -635,15 +842,20 @@ import { watchViewport } from './lib/viewport'
       <!-- KAN-1827: one button, two surfaces. A sheet is a dialog the button opens; a pane is a
            region the button shows and hides. -->
       <button
-        class="toggle"
+        class="toggle details-toggle"
         class:on={supporting.kind === 'sheet' ? sheetOpen : paneOpen}
         aria-expanded={supporting.kind === 'sheet' ? sheetOpen : paneOpen}
         aria-haspopup={supporting.kind === 'sheet' ? 'dialog' : undefined}
         aria-controls={supporting.kind === 'pane' ? 'supporting-pane' : undefined}
         onclick={toggleSupporting}
+        aria-label="Links and history"
+        title="Links and history"
         data-testid="toggle-details"
       >
-        Links
+        <NavIcon name={(supporting.kind === 'sheet' ? sheetOpen : paneOpen) ? 'panel-open' : 'panel'} />
+        {#if backlinkCount !== null && backlinkCount > 0}
+          <span class="badge" data-testid="toggle-details-count">{backlinkCount > 99 ? '99+' : backlinkCount}</span>
+        {/if}
       </button>
     {/if}
   </header>
@@ -662,7 +874,24 @@ import { watchViewport } from './lib/viewport'
     </main>
   {:else if authed}
     {#if regions.list}
-      <Sidebar {notes} {route} loading={listing} {query} onsearch={search} oncreate={createAndOpen} />
+      <!-- KAY-165: the wrapper is what collapses (and goes `inert`, so a zero-width list is not
+           tabbable); the sidebar inside keeps its own layout. -->
+      <div class="list-panel" id="list-panel" inert={!leftOpen}>
+        <Sidebar {notes} {route} loading={listing} {query} onsearch={search} oncreate={createAndOpen} onfolder={folderClicked} />
+      </div>
+      {#if listShown && leftOpen}
+        <Resizer
+          side="left"
+          label="Resize note list"
+          controls="list-panel"
+          value={leftWidth}
+          min={LEFT_WIDTH.min}
+          max={leftLimit}
+          fallback={clampWidth(LEFT_WIDTH.default, { ...LEFT_WIDTH, max: leftLimit })}
+          onlive={(w) => setLive('--left-col', w)}
+          oncommit={(w) => commitPanels({ left: w })}
+        />
+      {/if}
     {/if}
     {#if regions.main}
       <main>
@@ -702,7 +931,11 @@ import { watchViewport } from './lib/viewport'
                 <ModeSwitch mode={shownMode} {windowClass} onchange={chooseMode} />
               </div>
             {/if}
-            <div class="split" data-mode={shownMode}>
+            <div
+              class="split"
+              data-mode={shownMode}
+              style:--reading-measure={readingMeasure(fullWidthReading)}
+            >
               <EditorPane
                 {note}
                 mode={shownMode}
@@ -713,6 +946,8 @@ import { watchViewport } from './lib/viewport'
                 onupdated={noteUpdated}
                 oncommands={(next) => (editorCommands = next)}
                 onfocuschange={(focused) => (editorFocused = focused)}
+                focusTitle={note !== null && note.ref === focusTitleRef}
+                ontitlefocused={() => (focusTitleRef = null)}
               />
               {#if shownMode !== 'edit'}
                 <PreviewPane {note} source={liveDocument} reading={shownMode === 'read'} />
@@ -735,11 +970,24 @@ import { watchViewport } from './lib/viewport'
         tab needed from this file, because a restore has to reach the open `note`, not just the
         sidebar row (see `noteRestored`).
       -->
-      <RightRail {note} onexpired={discard} onrestored={noteRestored} />
+      <RightRail {note} onexpired={discard} onrestored={noteRestored} oncount={(n) => (backlinkCount = n)} />
+      {#if besideRail}
+        <Resizer
+          side="right"
+          label="Resize links and history"
+          controls="supporting-pane"
+          value={rightWidth}
+          min={RIGHT_WIDTH.min}
+          max={rightLimit}
+          fallback={clampWidth(RIGHT_WIDTH.default, { ...RIGHT_WIDTH, max: rightLimit })}
+          onlive={(w) => setLive('--right-col', w)}
+          oncommit={(w) => commitPanels({ right: w })}
+        />
+      {/if}
     {/if}
     {#if supporting.kind === 'sheet' && sheetOpen}
       <BottomSheet label="Links and history" onclose={() => (sheetOpen = false)}>
-        <RightRail id="sheet-rail" {note} onexpired={discard} onrestored={noteRestored} />
+        <RightRail id="sheet-rail" {note} onexpired={discard} onrestored={noteRestored} oncount={(n) => (backlinkCount = n)} />
       </BottomSheet>
     {/if}
   {:else}
@@ -766,9 +1014,20 @@ import { watchViewport } from './lib/viewport'
   }
 
   /* The list region, whenever there is one (`Sidebar` places itself by class, below). */
-  .shell:has(> :global(.sidebar)) {
+  .shell:has(> .list-panel) {
     grid-template-areas: 'topbar topbar topbar' 'nav sidebar main';
-    grid-template-columns: 3.75rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr);
+    grid-template-columns: 3.75rem var(--left-col, 272px) minmax(0, 1fr);
+  }
+
+  /* KAY-165: only collapse and expand animate; a drag sets the property directly and must not lag. */
+  .shell.animate-columns {
+    transition: grid-template-columns 200ms ease;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .shell.animate-columns {
+      transition: none;
+    }
   }
 
   /* KAN-568's fourth region, present only while a note route is open (see `railed`): below the
@@ -776,7 +1035,7 @@ import { watchViewport } from './lib/viewport'
      a column, not something that stacks. */
   .shell.railed {
     grid-template-areas: 'topbar topbar topbar' 'nav sidebar main' 'nav sidebar rail';
-    grid-template-columns: 3.75rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr);
+    grid-template-columns: 3.75rem var(--left-col, 272px) minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr) auto;
   }
 
@@ -799,13 +1058,13 @@ import { watchViewport } from './lib/viewport'
       grid-template-columns: 7rem minmax(0, 1fr);
     }
 
-    .shell:has(> :global(.sidebar)) {
-      grid-template-columns: 7rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr);
+    .shell:has(> .list-panel) {
+      grid-template-columns: 7rem var(--left-col, 272px) minmax(0, 1fr);
     }
 
     .shell.railed {
       grid-template-areas: 'topbar topbar topbar topbar' 'nav sidebar main rail';
-      grid-template-columns: 7rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr) clamp(10rem, 16vw, 14rem);
+      grid-template-columns: 7rem var(--left-col, 272px) minmax(0, 1fr) var(--right-col, 300px);
       grid-template-rows: auto minmax(0, 1fr);
     }
 
@@ -831,9 +1090,13 @@ import { watchViewport } from './lib/viewport'
     border-bottom: 1px solid var(--outline-variant);
   }
 
-  /* The toggles sit at the right edge of the bar. */
-  .topbar > .toggle:first-of-type {
+  /* The right-panel toggle sits at the right edge of the bar (the list toggle is on the left). */
+  .topbar > .details-toggle {
     margin-left: auto;
+  }
+
+  .topbar > .list-toggle {
+    margin-left: -0.5rem;
   }
 
   .brand {
@@ -856,8 +1119,28 @@ import { watchViewport } from './lib/viewport'
     font-size: var(--type-body-medium-size);
   }
 
-  .shell > :global(.sidebar) {
+  /* KAY-165: the list's wrapper collapses by width, so it clips; the sidebar fills it. */
+  .list-panel {
     grid-area: sidebar;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .list-panel > :global(.sidebar) {
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* The resizers sit on the edge of the panel they resize (`Resizer.svelte` offsets them). */
+  .shell > :global(.resizer.left) {
+    grid-area: sidebar;
+  }
+
+  .shell > :global(.resizer.right) {
+    grid-area: rail;
   }
 
   /* R13/KAN-1064 wrapped the fourth region in `RightRail.svelte` (the tab strip beside Backlinks),
@@ -911,26 +1194,19 @@ import { watchViewport } from './lib/viewport'
     min-height: 0;
   }
 
-  /* Edit: the editor alone. Capped to a readable measure and centred so it does not stretch across
-     a wide pane. */
+  /* Edit: the editor fills the pane (KAN-1997); there is no measure to protect while typing. */
   .split[data-mode='edit'] > :global(.pane) {
     width: 100%;
-    max-width: 72ch;
-    margin-inline: auto;
   }
 
-  /* Read: the document alone, as a column of text (~65ch) centred in the pane. The editor is still
-     mounted inside `.pane`, hidden by `EditorPane`'s own `reading` class; the page scrolls, not the
-     box. */
+  /* Read: the document alone, in a full-width pane. The editor is still mounted inside `.pane`,
+     hidden by `EditorPane`'s own `reading` class; the page scrolls, not the box. The comfortable
+     line length is not a cap on the pane (that would also squeeze tables, code and images): the
+     preview applies `--reading-measure` (set on `.split` from `lib/preferences.ts`, `none` for
+     "Full-width reading") to its running text only. */
   .split[data-mode='read'] {
     display: block;
     overflow-y: auto;
-  }
-
-  .split[data-mode='read'] > :global(.pane),
-  .split[data-mode='read'] > :global(.preview) {
-    max-width: 65ch;
-    margin-inline: auto;
   }
 
   /* Split (expanded only): editor 55 / preview 45. */
@@ -948,21 +1224,45 @@ import { watchViewport } from './lib/viewport'
     }
   }
 
+  /* KAN-1995: an icon button (the right-panel icon) with the backlink count as a badge. */
   .toggle {
-    padding: 0.2rem 0.5rem;
-    border: 1px solid var(--outline);
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    padding: 0;
+    border: 0;
     border-radius: var(--shape-full);
     background: transparent;
     color: var(--on-surface-variant);
     cursor: pointer;
     font: inherit;
-    font-size: var(--type-body-small-size);
+  }
+
+  .toggle:hover {
+    background: var(--layer-hover);
   }
 
   .toggle.on {
-    border-color: transparent;
     background: var(--secondary-container);
     color: var(--on-secondary-container);
+  }
+
+  .toggle .badge {
+    position: absolute;
+    top: 0.1rem;
+    right: 0.05rem;
+    min-width: 1.1rem;
+    padding: 0 0.25rem;
+    border-radius: var(--shape-full);
+    background: var(--primary);
+    color: var(--on-primary);
+    font-size: var(--type-label-small-size);
+    font-weight: 600;
+    line-height: 1.1rem;
+    text-align: center;
   }
 
   .notice {
@@ -976,7 +1276,7 @@ import { watchViewport } from './lib/viewport'
      coexist here (`shellRegions`), so both claim the one content area. */
   @media (max-width: 599.98px) {
     .shell,
-    .shell:has(> :global(.sidebar)),
+    .shell:has(> .list-panel),
     .shell.unauthenticated {
       grid-template-areas: 'topbar' 'main' 'rail' 'nav';
       grid-template-columns: minmax(0, 1fr);
@@ -1009,8 +1309,11 @@ import { watchViewport } from './lib/viewport'
       padding-block: 0.5rem;
     }
 
-    .shell > :global(.sidebar) {
+    .list-panel {
       grid-area: main;
+    }
+
+    .list-panel > :global(.sidebar) {
       border-right: 0;
     }
 
@@ -1035,9 +1338,8 @@ import { watchViewport } from './lib/viewport'
     }
 
     .toggle {
-      min-height: 2.75rem;
-      padding: 0 0.75rem;
-      font-size: var(--type-body-medium-size);
+      width: 2.75rem;
+      height: 2.75rem;
     }
 
     .mode-bar {

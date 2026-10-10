@@ -445,6 +445,13 @@
     padding: 0 1.5rem 1.5rem;
   }
 
+  /* KAN-1997: the comfortable measure applies to running text only, left-aligned in the full-width
+     pane. Tables, code blocks, images, embeds and rules keep the whole width. `--reading-measure`
+     comes from `App.svelte` (`lib/preferences.ts`); `none` is "Full-width reading". */
+  .preview.reading .rendered :global(> :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6)) {
+    max-width: var(--reading-measure, none);
+  }
+
   .preview.reading header {
     display: none;
   }

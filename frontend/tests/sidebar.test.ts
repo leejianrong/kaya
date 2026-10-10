@@ -55,8 +55,13 @@ afterEach(() => {
   host.remove()
 })
 
-function render(notes: Note[], route: Route = { name: 'home' }, loading = false): HTMLDivElement {
-  mounted.push(mount(Sidebar, { target: host, props: { notes, route, loading } }))
+function render(
+  notes: Note[],
+  route: Route = { name: 'home' },
+  loading = false,
+  query = '',
+): HTMLDivElement {
+  mounted.push(mount(Sidebar, { target: host, props: { notes, route, loading, query } }))
   flushSync()
   return host
 }
@@ -78,19 +83,9 @@ function folder(name: string): HTMLButtonElement {
   return found!
 }
 
-function switchTo(view: 'Tree' | 'List'): void {
-  const button = Array.from(host.querySelectorAll('button')).find(
-    (candidate) => candidate.textContent?.trim() === view,
-  )
-  expect(button).not.toBeUndefined()
-  button!.click()
-  flushSync()
-}
-
-describe('the note list', () => {
+describe('the flat result list (a search)', () => {
   it('shows every note the API returned, in that order', () => {
-    render(NOTES)
-    switchTo('List')
+    render(NOTES, { name: 'home' }, false, 'x')
 
     // The list is the corpus, unsorted and ungrouped, which is exactly why it exists beside the tree:
     // "the tree is hiding a note" is one click from being disproved.
@@ -99,16 +94,14 @@ describe('the note list', () => {
   })
 
   it('shows an em dash rather than a blank line for a note with no path', () => {
-    render([note('NOTE-4', '', 'No path at all')])
-    switchTo('List')
+    render([note('NOTE-4', '', 'No path at all')], { name: 'home' }, false, 'x')
 
     expect(host.textContent).toContain('No path at all')
     expect(host.textContent).toContain('—')
   })
 
   it('marks the open note as the current page', () => {
-    render(NOTES, { name: 'note', ref: 'NOTE-3' })
-    switchTo('List')
+    render(NOTES, { name: 'note', ref: 'NOTE-3' }, false, 'x')
 
     const current = host.querySelectorAll('a[aria-current="page"]')
     expect(current).toHaveLength(1)
@@ -128,10 +121,11 @@ describe('the note list', () => {
 })
 
 describe('the folder tree', () => {
-  it('is the default view', () => {
+  it('is the only browse view, with no view toggle', () => {
     render(NOTES)
     expect(host.querySelector('[data-testid="note-tree"]')).not.toBeNull()
     expect(host.querySelector('[data-testid="note-list"]')).toBeNull()
+    expect(host.querySelector('[aria-label="Sidebar view"]')).toBeNull()
   })
 
   it('shows every note exactly once, tree rows and unpathed rows together', () => {
@@ -233,107 +227,65 @@ describe('the folder tree', () => {
   })
 })
 
-describe('"+ New note" (KAN-1040)', () => {
-  function renderWithCreate(oncreate: (title: string) => void) {
+describe('"New note" (KAY-166)', () => {
+  function renderWithCreate(oncreate: () => void, onfolder: (key: string) => void = () => {}) {
     mounted.push(
       mount(Sidebar, {
         target: host,
-        props: { notes: NOTES, route: { name: 'home' }, loading: false, oncreate },
+        props: { notes: NOTES, route: { name: 'home' }, loading: false, oncreate, onfolder },
       }),
     )
     flushSync()
     return host
   }
 
-  function button(testid: string): HTMLButtonElement {
-    return host.querySelector<HTMLButtonElement>(`[data-testid="${testid}"]`)!
+  function button(): HTMLButtonElement {
+    return host.querySelector<HTMLButtonElement>('[data-testid="new-note-button"]')!
   }
 
-  function titleInput(): HTMLInputElement {
-    return host.querySelector<HTMLInputElement>('[data-testid="create-title-input"]')!
-  }
-
-  it('shows the button and no prompt to start with', () => {
+  it('is a labelled button with a plus icon, and there is no inline prompt', () => {
     renderWithCreate(vi.fn())
 
-    expect(button('new-note-button')).not.toBeNull()
+    expect(button().textContent?.trim()).toBe('New note')
+    expect(button().querySelector('svg[aria-hidden="true"]')).not.toBeNull()
     expect(host.querySelector('[data-testid="create-form"]')).toBeNull()
   })
 
-  it('opens an inline title prompt in place of the button on click', () => {
-    renderWithCreate(vi.fn())
-
-    button('new-note-button').click()
-    flushSync()
-
-    expect(host.querySelector('[data-testid="create-form"]')).not.toBeNull()
-    expect(host.querySelector('[data-testid="new-note-button"]')).toBeNull()
-  })
-
-  it('fires oncreate with the trimmed title on submit, and closes the prompt', () => {
+  it('fires oncreate immediately on click, with nothing to type first', () => {
     const oncreate = vi.fn()
     renderWithCreate(oncreate)
 
-    button('new-note-button').click()
-    flushSync()
-    titleInput().value = '  A fresh note  '
-    titleInput().dispatchEvent(new Event('input'))
-    host.querySelector('form[data-testid="create-form"]')!.dispatchEvent(
-      new Event('submit', { cancelable: true }),
-    )
+    button().click()
     flushSync()
 
     expect(oncreate).toHaveBeenCalledTimes(1)
-    expect(oncreate).toHaveBeenCalledWith('A fresh note')
-    expect(host.querySelector('[data-testid="create-form"]')).toBeNull()
-    expect(host.querySelector('[data-testid="new-note-button"]')).not.toBeNull()
+    expect(host.querySelector('input[aria-label="New note title"]')).toBeNull()
   })
 
-  it('refuses a blank title — no call, prompt stays open', () => {
+  it('creates on N from a tree row, but never from a text field or with a modifier', () => {
     const oncreate = vi.fn()
     renderWithCreate(oncreate)
+    const press = (el: Element, init: KeyboardEventInit = {}) =>
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true, cancelable: true, ...init }))
 
-    button('new-note-button').click()
-    flushSync()
-    titleInput().value = '   '
-    titleInput().dispatchEvent(new Event('input'))
-    host.querySelector('form[data-testid="create-form"]')!.dispatchEvent(
-      new Event('submit', { cancelable: true }),
-    )
-    flushSync()
+    press(host.querySelector('a.row')!)
+    expect(oncreate).toHaveBeenCalledTimes(1)
 
-    expect(oncreate).not.toHaveBeenCalled()
-    expect(host.querySelector('[data-testid="create-form"]')).not.toBeNull()
+    press(host.querySelector('a.row')!, { ctrlKey: true })
+    press(host.querySelector('a.row')!, { metaKey: true })
+    press(host.querySelector('[data-testid="search-input"]')!)
+    expect(oncreate).toHaveBeenCalledTimes(1)
   })
 
-  it('Cancel closes the prompt without calling oncreate', () => {
-    const oncreate = vi.fn()
-    renderWithCreate(oncreate)
+  it('reports a clicked folder through onfolder', () => {
+    const onfolder = vi.fn()
+    renderWithCreate(vi.fn(), onfolder)
 
-    button('new-note-button').click()
-    flushSync()
-    titleInput().value = 'Discarded'
-    titleInput().dispatchEvent(new Event('input'))
-    button('create-cancel').click()
+    host.querySelector<HTMLButtonElement>('button.folder')!.click()
     flushSync()
 
-    expect(oncreate).not.toHaveBeenCalled()
-    expect(host.querySelector('[data-testid="create-form"]')).toBeNull()
-  })
-
-  it('starts a fresh prompt empty even after a previous title was typed', () => {
-    renderWithCreate(vi.fn())
-
-    button('new-note-button').click()
-    flushSync()
-    titleInput().value = 'Leftover'
-    titleInput().dispatchEvent(new Event('input'))
-    button('create-cancel').click()
-    flushSync()
-
-    button('new-note-button').click()
-    flushSync()
-    expect(titleInput().value).toBe('')
+    expect(onfolder).toHaveBeenCalledTimes(1)
+    expect(typeof onfolder.mock.calls[0][0]).toBe('string')
   })
 })
 
@@ -440,7 +392,7 @@ describe('the search box (KAN-559)', () => {
   })
 })
 
-describe('a search renders flat, and the toggle stops saying otherwise (KAN-962)', () => {
+describe('a search renders flat (KAN-962)', () => {
   /**
    * The card's measured case, reproduced: `GET /api/v1/notes?q=reading list` came back
    * `NOTE-9, NOTE-2, NOTE-6` and the tree rendered `NOTE-6, NOTE-9, NOTE-2`.
@@ -498,10 +450,6 @@ describe('a search renders flat, and the toggle stops saying otherwise (KAN-962)
     flushSync()
   }
 
-  function toggleGroup(): Element | null {
-    return host.querySelector('[role="group"][aria-label="Sidebar view"]')
-  }
-
   it('positive control: these three notes really do render in a different order in the tree', () => {
     // Without this, every assertion below could be passing against a corpus whose folder order
     // happens to equal its rank order, and the whole block would be vacuous. Unsearched, in the
@@ -524,14 +472,6 @@ describe('a search renders flat, and the toggle stops saying otherwise (KAN-962)
     expect(host.querySelector('[data-testid="note-tree"]')).toBeNull()
   })
 
-  it("keeps the API's relevance order for a search made in List view too", () => {
-    renderLive()
-    switchTo('List')
-    commit('reading list')
-
-    expect(links()).toEqual(RANKED)
-  })
-
   it('shows every matched note exactly once, including the one with no path', () => {
     // The rendered twin of `countNotes`, for the search rendering: a flat list has no unpathed
     // group and no collapsed folder, so a note going missing here would be a different bug from the
@@ -544,22 +484,7 @@ describe('a search renders flat, and the toggle stops saying otherwise (KAN-962)
     expect(host.querySelectorAll('button.folder')).toHaveLength(0)
   })
 
-  it('takes the view toggle off the screen while a search is active', () => {
-    // Not disabled and not merely ignored. A control reading `Tree` above a flat list is the card's
-    // option (a) arriving through the back door — the setting silently overridden, with the toggle
-    // still claiming it holds.
-    const committed = renderLive()
-
-    expect(toggleGroup()).not.toBeNull()
-    commit('reading list')
-    expect(committed.value).toBe('reading list')
-    expect(toggleGroup()).toBeNull()
-
-    clearSearch()
-    expect(toggleGroup()).not.toBeNull()
-  })
-
-  it('says why the notes are not grouped, in place of the toggle', () => {
+  it('says why the notes are not grouped', () => {
     renderLive()
     expect(host.querySelector('[data-testid="search-ordering"]')).toBeNull()
 
@@ -569,14 +494,13 @@ describe('a search renders flat, and the toggle stops saying otherwise (KAN-962)
     expect(notice).not.toBeNull()
     expect(notice!.textContent).toContain('Ordered by relevance')
     expect(notice!.textContent).toContain('not grouped by folder')
-    // And it says where the toggle went, because it is the toggle that vanished.
-    expect(notice!.textContent).toContain('clear the search')
+    expect(notice!.textContent).toContain('best first')
 
     clearSearch()
     expect(host.querySelector('[data-testid="search-ordering"]')).toBeNull()
   })
 
-  it('restores the Tree view when the search is cleared', () => {
+  it('returns to the Tree when the search is cleared', () => {
     // The half that option (a) cannot have: nothing writes the chosen view, so clearing a search
     // puts a person back where they were rather than leaving them in a flat list they never picked.
     renderLive()
@@ -590,15 +514,5 @@ describe('a search renders flat, and the toggle stops saying otherwise (KAN-962)
       'the chosen Tree view did not come back when the search was cleared',
     ).not.toBeNull()
     expect(links()).toEqual(GROUPED)
-  })
-
-  it('leaves a chosen List view alone when the search is cleared', () => {
-    renderLive()
-    switchTo('List')
-    commit('reading list')
-    clearSearch()
-
-    expect(host.querySelector('[data-testid="note-list"]')).not.toBeNull()
-    expect(host.querySelector('[data-testid="note-tree"]')).toBeNull()
   })
 })

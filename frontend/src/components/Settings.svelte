@@ -1,5 +1,6 @@
 <!--
-  KAN-1815: the Settings page, `/settings`. One toggle today, "Format on save".
+  KAN-1815: the Settings page, `/settings`. "Format on save" (account-level, below) and, since
+  KAN-1997, "Full-width reading" (per browser, `localStorage` via `lib/preferences.ts`).
 
   Stored server-side per kaya account (`/api/v1/preferences`), so the choice follows the account
   across browsers. An account that never chose reads ON — the server applies that default, so there
@@ -26,8 +27,10 @@
   import {
     DEFAULT_FORMAT_ON_SAVE,
     fetchPreferences,
+    readFullWidthReading,
     rememberFormatOnSave,
     updatePreferences,
+    writeFullWidthReading,
   } from '../lib/preferences'
   import { resolvePandanHref } from '../lib/meta'
   import { interceptClick } from '../lib/router'
@@ -77,6 +80,13 @@
     }
   }
 
+  let fullWidthReading: boolean = $state(readFullWidthReading())
+
+  function toggleFullWidth(event: Event): void {
+    fullWidthReading = (event.currentTarget as HTMLInputElement).checked
+    writeFullWidthReading(fullWidthReading)
+  }
+
   let pandanHref: string | null = $state(null)
 
   $effect(() => {
@@ -118,6 +128,25 @@
       </p>
     </div>
   {/if}
+
+  <!-- KAN-1997: a per-browser choice (`localStorage`), so it needs no load and is always shown. -->
+  <div class="setting">
+    <label for="full-width-reading">
+      <input
+        id="full-width-reading"
+        type="checkbox"
+        checked={fullWidthReading}
+        onchange={toggleFullWidth}
+        data-testid="full-width-reading"
+      />
+      Full-width reading
+    </label>
+    <p class="help" data-testid="full-width-reading-help">
+      Read mode keeps text to a comfortable line length by default. Turn this on to let it fill the
+      whole pane. Tables, code and images always use the available width. This applies to this
+      browser only.
+    </p>
+  </div>
 
   <nav class="links" aria-label="Account and connections" data-testid="settings-links">
     <a href="/tokens" onclick={(event) => interceptClick(event, '/tokens')} data-testid="settings-tokens">
@@ -162,6 +191,10 @@
     align-items: center;
     gap: 0.5rem;
     font-weight: 500;
+  }
+
+  .setting + .setting {
+    margin-top: 1.25rem;
   }
 
   .help {

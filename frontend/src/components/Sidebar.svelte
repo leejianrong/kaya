@@ -1,6 +1,7 @@
 <script lang="ts">
   import { SvelteSet } from 'svelte/reactivity'
 
+  import NavIcon from './NavIcon.svelte'
   import { interceptClick, routeHref, type Route } from '../lib/router'
   import { buildTree, type NoteTree, type TreeNode } from '../lib/tree'
   import type { Note } from '../lib/types'
@@ -8,7 +9,8 @@
   /**
    * KAN-554's sidebar: a folder tree over the `path` column, and the flat note list beside it.
    *
-   * **Two views rather than one, and the second is a safety property rather than a preference.** The
+   * **Tree-only since KAN-1996.** The Tree/List toggle is gone; the flat list survives only as how a
+   * search renders (KAN-962). What follows is the history of why it existed. The
    * tree is a *view* of paths (`lib/tree.ts`), and a view can be wrong about structure in ways nobody
    * notices — a segment rule that swallows a level, a sort that hides a row below a fold. The list is
    * the corpus in the order the API returned it, so "the tree is hiding a note" is always one click
@@ -27,6 +29,7 @@
     query = '',
     onsearch = () => {},
     oncreate = () => {},
+    onfolder = () => {},
   }: {
     notes: Note[]
     route: Route
@@ -36,12 +39,13 @@
     /** Fired with the trimmed term on submit, and with `''` when the search is cleared. */
     onsearch?: (term: string) => void
     /**
-     * KAN-1040's "+ New note": fired with the trimmed, non-empty title once the inline prompt is
-     * submitted. `App.svelte` owns the actual `createNote()` call and the navigation afterwards —
-     * same split as `onsearch`, and for the same reason: this component has no client of its own,
-     * and a `401` from a stale credential has to reach `App`'s `discard()`, not stop here.
+     * KAY-166's "New note": fired with no arguments. `App.svelte` generates the `Untitled` title and
+     * the path (`lib/newNote.ts`), owns the `createNote()` call and navigates afterwards, so a `401`
+     * reaches its `discard()`.
      */
-    oncreate?: (title: string) => void
+    oncreate?: () => void
+    /** A folder row was clicked: its full path, the "current folder" for the next new note. */
+    onfolder?: (key: string) => void
   } = $props()
 
   /**
@@ -70,67 +74,29 @@
     onsearch('')
   }
 
-  /** Whether the inline title prompt (A1-UI2) is on screen in place of the "+ New note" button. */
-  let creating = $state(false)
-  let newTitle = $state('')
-
-  function openCreate(): void {
-    creating = true
-    newTitle = ''
-  }
-
-  function cancelCreate(): void {
-    creating = false
-    newTitle = ''
-  }
-
-  /** A blank title is refused here rather than sent — `title` is required server-side and a prompt
-   *  that submits nothing should say nothing happened, not round-trip a `422`. */
-  function submitCreate(event: SubmitEvent): void {
-    event.preventDefault()
-    const title = newTitle.trim()
-    if (title === '') {
+  /**
+   * KAY-166: "New note" asks `App` to create a note called `Untitled` at once; there is no prompt.
+   * `N` with the tree focused does the same (Ctrl/Cmd+N belongs to the browser, so it is not used).
+   * Never from a text field: the search box must still be able to type the letter.
+   */
+  function treeKeydown(event: KeyboardEvent): void {
+    if (event.key.toLowerCase() !== 'n' || event.ctrlKey || event.metaKey || event.altKey) {
       return
     }
-    oncreate(title)
-    creating = false
-    newTitle = ''
+    const target = event.target as HTMLElement | null
+    if (target?.closest('input, textarea, select, [contenteditable]')) {
+      return
+    }
+    event.preventDefault()
+    oncreate()
   }
-
-  type View = 'tree' | 'list'
-
-  /**
-   * Which view the **user** chose — not necessarily the one on screen (KAN-962).
-   *
-   * A search always renders as a flat list (`view` below), so this rune has to survive one: the
-   * toggle writes it and nothing else does, which is what makes clearing a search put a person back
-   * where they were. Option (a) on the card — flipping this to `'list'` when a search commits — looks
-   * identical on screen and is not the same thing at all, because nothing would ever flip it back.
-   */
-  let chosen: View = $state('tree')
 
   /** Whether `notes` is a *result set* rather than the corpus. `query` is the committed term. */
   const searching = $derived(query !== '')
 
-  /**
-   * The view that actually renders: the flat list whenever a search is active.
-   *
-   * KAN-962, and the defect was at this layer rather than in KAN-558 or KAN-559. The API ranks a
-   * search `ts_rank DESC, note.id DESC` and went to real trouble to make equal ranks order
-   * deterministically, because they are common — two notes on the seeded corpus tie at 0.9910 on
-   * `reading list`. The tree groups by the `path` column, so it *cannot* carry an arbitrary row
-   * order: a folder exists because some note's path names it, and every ordering the server chose
-   * is destroyed by the grouping. The tree is not sorting wrongly, it is answering a different
-   * question — and since TREE is the default, the *default* rendering of a search was the one that
-   * threw the ranking away, silently. "These are your notes, arranged" and "these matched, best
-   * first" are two objects and one toggle cannot mean both, so a search is rendered by the view
-   * that can hold an order.
-   *
-   * The toggle is **off the screen while a search is active** (the template below), not merely
-   * ignored. A visible control reading `Tree` above a flat list is the same lie as silently
-   * overriding the choice; what takes its place says what the ordering is instead.
-   */
-  const view: View = $derived(searching ? 'list' : chosen)
+  // KAN-1996: the tree is the only browse view; the Tree/List toggle and its `chosen` state are gone.
+  // A search is still rendered as the flat list (KAN-962): the API ranks `ts_rank DESC, note.id DESC`
+  // and the tree groups by `path`, so it has nowhere to put a relevance order.
 
   const tree: NoteTree = $derived(buildTree(notes))
 
@@ -196,7 +162,10 @@
         class="row folder"
         style:padding-left={inset(depth)}
         aria-expanded={!closed.has(node.key)}
-        onclick={() => toggle(node.key)}
+        onclick={() => {
+          toggle(node.key)
+          onfolder(node.key)
+        }}
       >
         <span class="twist" aria-hidden="true">{closed.has(node.key) ? '▸' : '▾'}</span>
         <span class="title">{node.name}</span>
@@ -215,31 +184,14 @@
   {/if}
 {/snippet}
 
-<nav class="sidebar" aria-label="Notes">
-  <!--
-    KAN-1040's "+ New note", A1 in BREADBOARD.md: the button opens an inline title prompt in place
-    of itself, and Create hands the trimmed title up to `oncreate` — this component makes no
-    network call and does not navigate itself.
-  -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<nav class="sidebar" aria-label="Notes" onkeydown={treeKeydown}>
+  <!-- KAY-166: a tonal button; the note is created immediately, see `oncreate`. -->
   <div class="create">
-    {#if creating}
-      <form class="create-form" onsubmit={submitCreate} data-testid="create-form">
-        <input
-          type="text"
-          class="create-input"
-          placeholder="Note title…"
-          bind:value={newTitle}
-          aria-label="New note title"
-          data-testid="create-title-input"
-        />
-        <button type="submit" data-testid="create-confirm">Create</button>
-        <button type="button" data-testid="create-cancel" onclick={cancelCreate}>Cancel</button>
-      </form>
-    {:else}
-      <button type="button" class="new-note" onclick={openCreate} data-testid="new-note-button">
-        + New note
-      </button>
-    {/if}
+    <button type="button" class="new-note" onclick={() => oncreate()} data-testid="new-note-button">
+      <NavIcon name="add" size={20} />
+      New note
+    </button>
   </div>
 
   <!--
@@ -264,24 +216,8 @@
     {/if}
   </form>
 
-  <!--
-    The view toggle — or, while a search is active, the one line saying why there is no choice to make
-    (KAN-962). Two arms of one `{#if}` rather than two conditions, so "a toggle reading Tree above a
-    flat search result" is unreachable rather than merely untested.
-  -->
   {#if searching}
-    <p class="ordering" data-testid="search-ordering">
-      Ordered by relevance, not grouped by folder. The view toggle returns when you clear the search.
-    </p>
-  {:else}
-    <div class="views" role="group" aria-label="Sidebar view">
-      <button type="button" class:active={chosen === 'tree'} onclick={() => (chosen = 'tree')}>
-        Tree
-      </button>
-      <button type="button" class:active={chosen === 'list'} onclick={() => (chosen = 'list')}>
-        List
-      </button>
-    </div>
+    <p class="ordering" data-testid="search-ordering">Matches, best first. Ordered by relevance, not grouped by folder.</p>
   {/if}
 
   {#if loading}
@@ -291,11 +227,11 @@
          count from here) — only the wording tells a "you own nothing yet" apart from a search
          that matched nothing. -->
     <p class="empty">{query === '' ? 'No notes yet. Create one, or ask your agent to.' : `No notes match "${query}".`}</p>
-  {:else if view === 'list'}
+  {:else if searching}
     <!-- Every note, in the order `GET /api/v1/notes` returned them: `updated_at DESC, id DESC` for
          the corpus, `ts_rank DESC, id DESC` for a search (KAN-558). Nothing is grouped, sorted or
          hidden here, which is the whole reason this view exists — and, since KAN-962, the whole
-         reason a search renders through it whatever the toggle was set to. -->
+         reason a search renders through it . -->
     <ul data-testid="note-list">
       {#each notes as note (note.ref)}
         <!-- `path` is legitimately empty (ADR 0008), and an em dash beats a blank line that reads
@@ -348,8 +284,12 @@
   }
 
   .new-note {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
     width: 100%;
-    padding: 0.5rem 0.9rem;
+    padding: 0.65rem 1rem;
     border: 0;
     border-radius: var(--shape-full);
     background: var(--secondary-container);
@@ -357,40 +297,16 @@
     cursor: pointer;
     font: inherit;
     font-size: var(--type-body-medium-size);
-    text-align: left;
+    font-weight: 500;
   }
 
   .new-note:hover {
-    background: var(--layer-hover);
+    background: color-mix(in srgb, var(--on-secondary-container) calc(var(--state-hover) * 100%), var(--secondary-container));
   }
 
-  .create-form {
-    display: flex;
-    gap: 0.3rem;
-  }
-
-  .create-input {
-    flex: 1;
-    min-width: 0;
-    padding: 0.3rem 0.5rem;
-    border: 1px solid var(--outline);
-    border-radius: var(--shape-xs);
-    background: transparent;
-    color: inherit;
-    font: inherit;
-    font-size: var(--type-body-medium-size);
-  }
-
-  .create-form button {
-    flex: none;
-    padding: 0.2rem 0.5rem;
-    border: 1px solid var(--outline);
-    border-radius: var(--shape-full);
-    background: transparent;
-    color: var(--on-surface-variant);
-    cursor: pointer;
-    font: inherit;
-    font-size: var(--type-label-medium-size);
+  .new-note:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
   }
 
   .search {
@@ -431,31 +347,6 @@
     color: var(--on-surface-variant);
     font-size: var(--type-label-medium-size);
     line-height: 1.35;
-  }
-
-  .views {
-    display: flex;
-    gap: 0.25rem;
-    padding: 0 0.5rem;
-  }
-
-  .views button {
-    padding: 0.2rem 0.55rem;
-    border: 1px solid var(--outline);
-    border-radius: var(--shape-full);
-    background: transparent;
-    color: var(--on-surface-variant);
-    cursor: pointer;
-    font: inherit;
-    font-size: var(--type-label-medium-size);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-
-  .views button.active {
-    border-color: transparent;
-    background: var(--secondary-container);
-    color: var(--on-secondary-container);
   }
 
   ul {
@@ -556,17 +447,9 @@
   @media (max-width: 599.98px) {
     .new-note,
     .search-input,
-    .create-input,
-    .create-form button,
-    .clear-search,
-    .views button {
+    .clear-search {
       min-height: 3rem;
       font-size: 1rem;
-    }
-
-    .views button {
-      padding: 0 1rem;
-      font-size: var(--type-body-medium-size);
     }
 
     .row {
@@ -576,9 +459,12 @@
       min-height: 3rem;
     }
 
+    /* `.row` centres its content (vertically, in a column); a folder row is a row, so the inherited
+       `justify-content: center` would centre the name and caret horizontally. */
     .row.folder {
       flex-direction: row;
       align-items: center;
+      justify-content: flex-start;
     }
   }
 </style>
