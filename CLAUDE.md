@@ -125,6 +125,10 @@ These have tests; you will meet them as a failing build otherwise. Full accounts
 - **The formatter protects every `[[…]]` span and declines rather than change a note's link edges**
   (`app/markdown_format.py`): bare `mdformat` turns `[[KAN-12]]` into `\[[KAN-12]\]` and one save
   would delete a graph edge. `format: true` is a body write, so `if_updated_at` guards it.
+- **A `note_version`'s actor is a snapshot written by `cut_version` from the request's `Principal`**
+  (account, channel, token id/prefix/name; `actor_token_id` has no foreign key on purpose). Old rows
+  are NULL and render as "before tracking"; never backfill a guess. A version diff is computed from
+  two bodies in the client (`kaya_client/history.py`, `frontend/src/lib/diff.ts`), not by an endpoint.
 - **Search order is `ts_rank DESC, note.id DESC`**; the `id` tie-break is load-bearing (equal ranks
   are common, and `updated_at` can't substitute: `now()` is transaction start).
 - **A backlink is found by `resolved_id`, never by title.** An edge with `resolved_id IS NULL` is a
