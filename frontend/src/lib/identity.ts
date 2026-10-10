@@ -41,7 +41,7 @@ export interface CurrentUser {
   email: string
 }
 
-export type TokenScope = 'read' | 'write'
+export type TokenScope = 'read' | 'write' | 'write-no-delete'
 
 export interface TokenSummary {
   id: number

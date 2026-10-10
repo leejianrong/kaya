@@ -121,3 +121,5 @@ linked pandan PAT since KAN-1741's follow-up (`card_resolution_bearer`). Team-de
 (ADR 0011) was the remaining caller still forwarding the kaya bearer, and it also asked pandan's
 retired `/api/v1/teams`. It now asks `GET /api/v1/workspaces` with the linked PAT
 (`tests/integration/test_pandan_contract_api.py`).
+
+**Amendment (KAY-141): `write-no-delete`.** The preset scopes KAN-1803 held back now exist, mirroring pandan ADR 0027: `personal_access_token.scope` (and `device_authorization.requested_scope`) accept `write-no-delete` beside `read` and `write` (migration `0014`; no row is rewritten, so no existing token changes capability). It is enforced in the same place as `read`, `get_principal`, and refuses every `DELETE` with `403 insufficient_scope` and a message naming the preset. `kaya auth login --scope`, the device flow, the hosted `/authorize` `scope` parameter and **Settings > Tokens** can all request it; the defaults stay `write`. Pandan's finer scopes (`cards:move`, `approve`) have no kaya analogue yet.

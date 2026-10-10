@@ -41,6 +41,7 @@
     type DeviceAuthorization,
     type TokenScope,
   } from '../lib/identity'
+  import { parseScope } from '../lib/tokenPresets'
 
   type Phase = 'checking' | 'signed-out' | 'entering-code' | 'loaded' | 'not-found'
   type Mode = 'device' | 'authorize'
@@ -69,7 +70,7 @@
     if (!clientId || !redirectUri || !codeChallenge || !codeChallengeMethod || !resource) {
       return null
     }
-    const scope: TokenScope = params.get('scope') === 'read' ? 'read' : 'write'
+    const scope: TokenScope = parseScope(params.get('scope'))
     return {
       client_id: clientId,
       redirect_uri: redirectUri,
