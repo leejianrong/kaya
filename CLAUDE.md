@@ -97,6 +97,12 @@ unit-tested without a browser, decide everything; components only consume them.
   caret into the body. There is no title prompt. Shortcut is `N` with the list focused (never inside a
   field), not Ctrl/Cmd+N, which the browser owns. The unsaved-changes question is asked *before* the
   create, and an active search is cleared.
+- **Organising happens in the tree (KAY-168), and `Sidebar.svelte` only asks.** Every row has a `...` menu
+  (Move to, Rename; folders also New note here, New subfolder), the keyboard path via Shift+F10/F2; drag
+  onto a folder is a pointer shortcut and is off on coarse pointers (it fights scrolling). Moves and renames
+  are `App.svelte`'s writes (so a `401` reaches `discard()`); a note move is one `PATCH` to `path`, a folder
+  rename is `POST /notes/move-folder`. A new folder is a client-only placeholder owned by `App`, pruned
+  once a note lands in it (ADR 0008 amendment). Name rules and path maths are pure helpers in `lib/tree.ts`.
 - Tokens, the pandan link and format-on-save live under **Settings** now (routes `/tokens`,
   `/pandan` unchanged); `tokens` and `device` render in `main` alone and are reachable with no
   credential.
