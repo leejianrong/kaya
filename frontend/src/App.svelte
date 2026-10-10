@@ -20,6 +20,7 @@
   import { clearToken, credentialState } from './lib/auth'
   import { fetchCurrentUser } from './lib/identity'
   import { createNote, getNote, listBacklinks, listNotes } from './lib/notes'
+  import { folderOf, newNoteDraft } from './lib/newNote'
   import { readFullWidthReading, readingMeasure, watchFullWidthReading } from './lib/preferences'
   import NavIcon from './components/NavIcon.svelte'
   import {
@@ -122,23 +123,73 @@ import { watchViewport } from './lib/viewport'
   }
 
   /**
-   * `Sidebar`'s `oncreate` (KAN-1040, BREADBOARD.md A1): create the note, then navigate to it.
-   *
-   * `navigate()` runs before the list refresh below, so a same-tab guard veto (KAN-969, unsaved
-   * editor content elsewhere) is asked before this file does any more work — and either way the
-   * note now exists, so the list is refreshed to include it regardless of whether the navigation
-   * itself went through. A `404`-flavoured failure has no home here; the only failures `createNote`
-   * can produce are validation and auth, both already `absorb()`'s job.
+   * The folder a new note lands in (KAY-166), `''` for none: the folder of the note most recently
+   * opened, or of the folder row most recently clicked, whichever came last. Set from the fetched
+   * `note` rather than the list, so a deep link whose list has not loaded yet still resolves, and it
+   * survives going back to the list on compact, where no note is open.
    */
-  async function createAndOpen(title: string): Promise<void> {
+  let contextFolder = $state('')
+
+  /** `Sidebar`'s `onfolder`: the clicked folder is the current one. */
+  function folderClicked(key: string): void {
+    contextFolder = key
+  }
+
+  $effect(() => {
+    if (note !== null) {
+      contextFolder = folderOf(note.path)
+    }
+  })
+
+  /** The ref whose title field should take focus once it renders (KAY-166), until `EditorPane` says
+   *  it has. Separate from `justCreatedRef`, which the mode resolution consumes. */
+  let focusTitleRef: string | null = $state(null)
+
+  /** A create already in flight: a second press would pick the same `Untitled` before the first lands. */
+  let creatingNote = false
+
+  /**
+   * `Sidebar`'s `oncreate` (KAY-166, replacing KAN-1040's inline prompt): create `Untitled` (or
+   * `Untitled 1`...) in the current folder at once, open it in Edit with the title focused.
+   *
+   * Nothing is added to the list before the server answers, so a `401` (existing `discard()` path)
+   * or a validation/network failure leaves no phantom row. An active search is cleared: the new note
+   * is rarely a match, and a tree that hides the row you just made reads as a failed create.
+   *
+   * The unsaved-changes question (KAN-969) is asked first, before anything is created.
+   */
+  async function createAndOpen(): Promise<void> {
+    if (creatingNote) {
+      return
+    }
+    // Ask about unsaved edits *before* creating: a vetoed navigation after the fact would leave an
+    // empty `Untitled` behind for a click the person then cancelled. Answered once, so `navigate()`
+    // below does not ask a second time.
+    if (!confirmNavigation()) {
+      return
+    }
+    const wasDirty = editorDirty
+    editorDirty = false
+    creatingNote = true
     try {
-      const created = await createNote({ title })
+      const draft = newNoteDraft(notes, contextFolder)
+      let created: Note
+      try {
+        created = await createNote(draft)
+      } catch (error) {
+        editorDirty = wasDirty // nothing was created; the unsaved edits are still here to protect
+        throw error
+      }
       justCreatedRef = created.ref
+      focusTitleRef = created.ref
+      notes = [created, ...notes.filter((found) => found.ref !== created.ref)]
+      query = ''
       navigate(routeHref({ name: 'note', ref: created.ref }))
-      const term = query.trim()
-      notes = await listNotes({ q: term === '' ? undefined : term })
+      notes = await listNotes({})
     } catch (error) {
       absorb(error)
+    } finally {
+      creatingNote = false
     }
   }
 
@@ -706,7 +757,7 @@ import { watchViewport } from './lib/viewport'
     </main>
   {:else if authed}
     {#if regions.list}
-      <Sidebar {notes} {route} loading={listing} {query} onsearch={search} oncreate={createAndOpen} />
+      <Sidebar {notes} {route} loading={listing} {query} onsearch={search} oncreate={createAndOpen} onfolder={folderClicked} />
     {/if}
     {#if regions.main}
       <main>
@@ -761,6 +812,8 @@ import { watchViewport } from './lib/viewport'
                 onupdated={noteUpdated}
                 oncommands={(next) => (editorCommands = next)}
                 onfocuschange={(focused) => (editorFocused = focused)}
+                focusTitle={note !== null && note.ref === focusTitleRef}
+                ontitlefocused={() => (focusTitleRef = null)}
               />
               {#if shownMode !== 'edit'}
                 <PreviewPane {note} source={liveDocument} reading={shownMode === 'read'} />

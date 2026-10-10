@@ -1,6 +1,7 @@
 <script lang="ts">
   import { SvelteSet } from 'svelte/reactivity'
 
+  import NavIcon from './NavIcon.svelte'
   import { interceptClick, routeHref, type Route } from '../lib/router'
   import { buildTree, type NoteTree, type TreeNode } from '../lib/tree'
   import type { Note } from '../lib/types'
@@ -28,6 +29,7 @@
     query = '',
     onsearch = () => {},
     oncreate = () => {},
+    onfolder = () => {},
   }: {
     notes: Note[]
     route: Route
@@ -37,12 +39,13 @@
     /** Fired with the trimmed term on submit, and with `''` when the search is cleared. */
     onsearch?: (term: string) => void
     /**
-     * KAN-1040's "+ New note": fired with the trimmed, non-empty title once the inline prompt is
-     * submitted. `App.svelte` owns the actual `createNote()` call and the navigation afterwards —
-     * same split as `onsearch`, and for the same reason: this component has no client of its own,
-     * and a `401` from a stale credential has to reach `App`'s `discard()`, not stop here.
+     * KAY-166's "New note": fired with no arguments. `App.svelte` generates the `Untitled` title and
+     * the path (`lib/newNote.ts`), owns the `createNote()` call and navigates afterwards, so a `401`
+     * reaches its `discard()`.
      */
-    oncreate?: (title: string) => void
+    oncreate?: () => void
+    /** A folder row was clicked: its full path, the "current folder" for the next new note. */
+    onfolder?: (key: string) => void
   } = $props()
 
   /**
@@ -71,31 +74,21 @@
     onsearch('')
   }
 
-  /** Whether the inline title prompt (A1-UI2) is on screen in place of the "+ New note" button. */
-  let creating = $state(false)
-  let newTitle = $state('')
-
-  function openCreate(): void {
-    creating = true
-    newTitle = ''
-  }
-
-  function cancelCreate(): void {
-    creating = false
-    newTitle = ''
-  }
-
-  /** A blank title is refused here rather than sent — `title` is required server-side and a prompt
-   *  that submits nothing should say nothing happened, not round-trip a `422`. */
-  function submitCreate(event: SubmitEvent): void {
-    event.preventDefault()
-    const title = newTitle.trim()
-    if (title === '') {
+  /**
+   * KAY-166: "New note" asks `App` to create a note called `Untitled` at once; there is no prompt.
+   * `N` with the tree focused does the same (Ctrl/Cmd+N belongs to the browser, so it is not used).
+   * Never from a text field: the search box must still be able to type the letter.
+   */
+  function treeKeydown(event: KeyboardEvent): void {
+    if (event.key.toLowerCase() !== 'n' || event.ctrlKey || event.metaKey || event.altKey) {
       return
     }
-    oncreate(title)
-    creating = false
-    newTitle = ''
+    const target = event.target as HTMLElement | null
+    if (target?.closest('input, textarea, select, [contenteditable]')) {
+      return
+    }
+    event.preventDefault()
+    oncreate()
   }
 
   /** Whether `notes` is a *result set* rather than the corpus. `query` is the committed term. */
@@ -169,7 +162,10 @@
         class="row folder"
         style:padding-left={inset(depth)}
         aria-expanded={!closed.has(node.key)}
-        onclick={() => toggle(node.key)}
+        onclick={() => {
+          toggle(node.key)
+          onfolder(node.key)
+        }}
       >
         <span class="twist" aria-hidden="true">{closed.has(node.key) ? '▸' : '▾'}</span>
         <span class="title">{node.name}</span>
@@ -188,31 +184,14 @@
   {/if}
 {/snippet}
 
-<nav class="sidebar" aria-label="Notes">
-  <!--
-    KAN-1040's "+ New note", A1 in BREADBOARD.md: the button opens an inline title prompt in place
-    of itself, and Create hands the trimmed title up to `oncreate` — this component makes no
-    network call and does not navigate itself.
-  -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<nav class="sidebar" aria-label="Notes" onkeydown={treeKeydown}>
+  <!-- KAY-166: a tonal button; the note is created immediately, see `oncreate`. -->
   <div class="create">
-    {#if creating}
-      <form class="create-form" onsubmit={submitCreate} data-testid="create-form">
-        <input
-          type="text"
-          class="create-input"
-          placeholder="Note title…"
-          bind:value={newTitle}
-          aria-label="New note title"
-          data-testid="create-title-input"
-        />
-        <button type="submit" data-testid="create-confirm">Create</button>
-        <button type="button" data-testid="create-cancel" onclick={cancelCreate}>Cancel</button>
-      </form>
-    {:else}
-      <button type="button" class="new-note" onclick={openCreate} data-testid="new-note-button">
-        + New note
-      </button>
-    {/if}
+    <button type="button" class="new-note" onclick={() => oncreate()} data-testid="new-note-button">
+      <NavIcon name="add" size={20} />
+      New note
+    </button>
   </div>
 
   <!--
@@ -305,8 +284,12 @@
   }
 
   .new-note {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
     width: 100%;
-    padding: 0.5rem 0.9rem;
+    padding: 0.65rem 1rem;
     border: 0;
     border-radius: var(--shape-full);
     background: var(--secondary-container);
@@ -314,40 +297,16 @@
     cursor: pointer;
     font: inherit;
     font-size: var(--type-body-medium-size);
-    text-align: left;
+    font-weight: 500;
   }
 
   .new-note:hover {
-    background: var(--layer-hover);
+    background: color-mix(in srgb, var(--on-secondary-container) calc(var(--state-hover) * 100%), var(--secondary-container));
   }
 
-  .create-form {
-    display: flex;
-    gap: 0.3rem;
-  }
-
-  .create-input {
-    flex: 1;
-    min-width: 0;
-    padding: 0.3rem 0.5rem;
-    border: 1px solid var(--outline);
-    border-radius: var(--shape-xs);
-    background: transparent;
-    color: inherit;
-    font: inherit;
-    font-size: var(--type-body-medium-size);
-  }
-
-  .create-form button {
-    flex: none;
-    padding: 0.2rem 0.5rem;
-    border: 1px solid var(--outline);
-    border-radius: var(--shape-full);
-    background: transparent;
-    color: var(--on-surface-variant);
-    cursor: pointer;
-    font: inherit;
-    font-size: var(--type-label-medium-size);
+  .new-note:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
   }
 
   .search {
@@ -488,8 +447,6 @@
   @media (max-width: 599.98px) {
     .new-note,
     .search-input,
-    .create-input,
-    .create-form button,
     .clear-search {
       min-height: 3rem;
       font-size: 1rem;

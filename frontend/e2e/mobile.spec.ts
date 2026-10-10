@@ -191,16 +191,18 @@ test('a note just created through New note opens in Edit, even when Read is what
     await page.getByTestId('back-to-list').click()
 
     await page.getByTestId('new-note-button').click()
-    await page.getByTestId('create-title-input').fill(title)
-    await page.getByTestId('create-title-input').press('Enter')
     await expect(page).toHaveURL(/\/notes\/NOTE-\d+$/)
+    // KAY-166: the title is focused and selected, so typing names the note; Enter drops into the body.
+    await expect(page.getByTestId('title-input')).toBeFocused()
+    await page.keyboard.type(title)
+    await page.keyboard.press('Enter')
     await expect(page.getByTestId('mode-edit')).toHaveAttribute('aria-pressed', 'true')
     await expect(page.locator('.cm-content')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Save' })).toBeVisible()
     await noHorizontalScroll(page)
 
-    // Typing works straight away, with nothing to tap first beyond the editor itself.
-    await page.locator('.cm-content').click()
+    // Enter in the title moved focus into the body: typing works with nothing to tap.
+    await expect(page.locator('.cm-content')).toBeFocused()
     await page.keyboard.type('hello')
     await expect(page.getByTestId('save-state')).toHaveText(/unsaved changes/)
 

@@ -49,13 +49,13 @@ function json(body: unknown, status = 200): Response {
   })
 }
 
-function stubNetwork(afterCreate: Note[]): void {
+function stubNetwork(afterCreate: Note[], before: Note[] = [EXISTING]): void {
   posted = null
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const method = init?.method ?? 'GET'
     if (url === '/api/v1/notes' && method === 'GET') {
-      return json({ notes: posted === null ? [EXISTING] : afterCreate })
+      return json({ notes: posted === null ? before : afterCreate })
     }
     if (url === '/api/v1/notes' && method === 'POST') {
       posted = { url, body: JSON.parse(String(init?.body)) }
@@ -108,53 +108,79 @@ async function ready(): Promise<void> {
   })
 }
 
-async function createNoteThroughUI(title: string): Promise<void> {
+function createNoteThroughUI(): void {
   host.querySelector<HTMLButtonElement>('[data-testid="new-note-button"]')!.click()
-  flushSync()
-  const input = host.querySelector<HTMLInputElement>('[data-testid="create-title-input"]')!
-  input.value = title
-  input.dispatchEvent(new Event('input'))
-  host
-    .querySelector('[data-testid="create-form"]')!
-    .dispatchEvent(new Event('submit', { cancelable: true }))
   flushSync()
 }
 
-describe('creating a note from the browser (KAN-1040)', () => {
-  it('posts the trimmed title and lands in the editor on the new note', async () => {
+describe('creating a note from the browser (KAY-166)', () => {
+  it('posts Untitled at once, with a path, and lands in the editor on the new note', async () => {
     renderApp()
     await ready()
 
-    await createNoteThroughUI('  A fresh note  ')
+    createNoteThroughUI()
     await vi.waitFor(() => {
       flushSync()
       expect(globalThis.location.pathname).toBe(`/notes/${CREATED.ref}`)
     })
 
-    expect(posted).toEqual({ url: '/api/v1/notes', body: { title: 'A fresh note' } })
+    // EXISTING lives in journal/2026/08, but no note is open yet and no folder was clicked.
+    expect(posted).toEqual({ url: '/api/v1/notes', body: { title: 'Untitled', path: 'untitled.md' } })
     await editorArrived(host)
     await vi.waitFor(() => {
       flushSync()
-      // KAN-1791 removed the header's `credential-state` readout this used as its settle marker;
-      // the brand link is always in the header regardless of auth state, so it serves the same
-      // purpose: proving the shell itself has re-rendered before checking the editor's own input.
       expect(host.querySelector('.brand')).not.toBeNull()
     })
     expect(host.querySelector<HTMLInputElement>('[data-testid="title-input"]')?.value).toBe(CREATED.title)
+  })
+
+  it('focuses and selects the title field so typing names the note', async () => {
+    renderApp()
+    await ready()
+
+    createNoteThroughUI()
+    await vi.waitFor(() => {
+      flushSync()
+      const input = host.querySelector<HTMLInputElement>('[data-testid="title-input"]')
+      expect(input).not.toBeNull()
+      expect(document.activeElement).toBe(input)
+      expect(input!.selectionStart).toBe(0)
+      expect(input!.selectionEnd).toBe(input!.value.length)
+    })
+  })
+
+  it('puts the note in the open note\'s folder, and counts past a taken Untitled', async () => {
+    const taken: Note = { ...EXISTING, ref: 'NOTE-7', id: 7, title: 'Untitled', path: 'journal/2026/08/untitled.md' }
+    stubNetwork([EXISTING, taken, CREATED], [EXISTING, taken])
+    globalThis.history.pushState({}, '', `/notes/${EXISTING.ref}`)
+    renderApp()
+    await ready()
+    await vi.waitFor(() => {
+      flushSync()
+      expect(host.querySelector(`a[href="/notes/${taken.ref}"]`)).not.toBeNull()
+    })
+
+    createNoteThroughUI()
+    await vi.waitFor(() => {
+      expect(posted).toEqual({
+        url: '/api/v1/notes',
+        body: { title: 'Untitled 1', path: 'journal/2026/08/untitled-1.md' },
+      })
+    })
   })
 
   it('adds the new note to the sidebar list', async () => {
     renderApp()
     await ready()
 
-    await createNoteThroughUI('A fresh note')
+    createNoteThroughUI()
     await vi.waitFor(() => {
       flushSync()
       expect(host.querySelector(`a[href="/notes/${CREATED.ref}"]`)).not.toBeNull()
     })
   })
 
-  it('surfaces a failure the same way a fetch failure would, and does not navigate', async () => {
+  it('surfaces a failure the same way a fetch failure would, with no phantom row and no navigation', async () => {
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       const method = init?.method ?? 'GET'
@@ -176,11 +202,12 @@ describe('creating a note from the browser (KAN-1040)', () => {
     renderApp()
     await ready()
 
-    await createNoteThroughUI('Doomed note')
+    createNoteThroughUI()
     await vi.waitFor(() => {
       flushSync()
       expect(host.textContent).toContain('Title is required.')
     })
     expect(globalThis.location.pathname).toBe('/')
+    expect(host.querySelector(`a[href="/notes/${CREATED.ref}"]`)).toBeNull()
   })
 })

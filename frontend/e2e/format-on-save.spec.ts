@@ -37,8 +37,9 @@ async function storedBody(page: Page, ref: string): Promise<string> {
 
 async function createAndType(page: Page, title: string): Promise<string> {
   await page.getByTestId('new-note-button').click()
-  await page.getByTestId('create-title-input').fill(title)
-  await page.getByTestId('create-confirm').click()
+  await expect(page.getByTestId('title-input')).toBeFocused()
+  await page.keyboard.type(title)
+  await page.keyboard.press('Enter')
   await expect(page.getByTestId('title-input')).toHaveValue(title)
   const ref = new URL(page.url()).pathname.split('/').pop()!
 
