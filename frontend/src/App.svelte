@@ -19,7 +19,9 @@
   import { ApiError } from './lib/api'
   import { clearToken, credentialState } from './lib/auth'
   import { fetchCurrentUser } from './lib/identity'
-  import { createNote, getNote, listNotes } from './lib/notes'
+  import { createNote, getNote, listBacklinks, listNotes } from './lib/notes'
+  import { readFullWidthReading, readingMeasure, watchFullWidthReading } from './lib/preferences'
+  import NavIcon from './components/NavIcon.svelte'
   import {
     currentRoute,
     interceptClick,
@@ -489,6 +491,43 @@ import { watchViewport } from './lib/viewport'
 
   const railed = $derived(supporting.kind === 'pane' && paneOpen)
 
+  /**
+   * KAN-1995: the number on the Links and history button. The rail is not mounted while closed, so
+   * it cannot say how many notes link here; this is one `GET /backlinks` per opened note, counted
+   * as the length of the rows downloaded (ADR 0004: a label, not an aggregate). `null` hides the
+   * badge: nothing open, still loading, or the request failed (the rail reports its own failure).
+   */
+  let backlinkCount: number | null = $state(null)
+
+  let countedRef: string | null = null
+
+  $effect(() => {
+    const ref = route.name === 'note' && authed ? route.ref : null
+    const railOpen = railed || sheetOpen
+    if (ref !== countedRef) {
+      countedRef = ref
+      backlinkCount = null
+    }
+    // While the rail is open it is the one asking, and tells us the size (`oncount`).
+    if (ref === null || railOpen || supporting.kind === 'none') {
+      return
+    }
+    const abort = new AbortController()
+    listBacklinks(ref, { signal: abort.signal }).then(
+      (found) => {
+        if (!abort.signal.aborted && Array.isArray(found)) {
+          backlinkCount = found.length
+        }
+      },
+      () => {},
+    )
+    return () => abort.abort()
+  })
+
+  /** KAN-1997: "Full-width reading" (Settings), a per-browser choice that `Settings` writes. */
+  let fullWidthReading = $state(readFullWidthReading())
+  $effect(() => watchFullWidthReading((value) => (fullWidthReading = value)))
+
   $effect(() => onNavigate((next) => (route = next)))
 
   $effect(() => {
@@ -641,9 +680,14 @@ import { watchViewport } from './lib/viewport'
         aria-haspopup={supporting.kind === 'sheet' ? 'dialog' : undefined}
         aria-controls={supporting.kind === 'pane' ? 'supporting-pane' : undefined}
         onclick={toggleSupporting}
+        aria-label="Links and history"
+        title="Links and history"
         data-testid="toggle-details"
       >
-        Links
+        <NavIcon name={(supporting.kind === 'sheet' ? sheetOpen : paneOpen) ? 'panel-open' : 'panel'} />
+        {#if backlinkCount !== null && backlinkCount > 0}
+          <span class="badge" data-testid="toggle-details-count">{backlinkCount > 99 ? '99+' : backlinkCount}</span>
+        {/if}
       </button>
     {/if}
   </header>
@@ -702,7 +746,11 @@ import { watchViewport } from './lib/viewport'
                 <ModeSwitch mode={shownMode} {windowClass} onchange={chooseMode} />
               </div>
             {/if}
-            <div class="split" data-mode={shownMode}>
+            <div
+              class="split"
+              data-mode={shownMode}
+              style:--reading-measure={readingMeasure(fullWidthReading)}
+            >
               <EditorPane
                 {note}
                 mode={shownMode}
@@ -735,11 +783,11 @@ import { watchViewport } from './lib/viewport'
         tab needed from this file, because a restore has to reach the open `note`, not just the
         sidebar row (see `noteRestored`).
       -->
-      <RightRail {note} onexpired={discard} onrestored={noteRestored} />
+      <RightRail {note} onexpired={discard} onrestored={noteRestored} oncount={(n) => (backlinkCount = n)} />
     {/if}
     {#if supporting.kind === 'sheet' && sheetOpen}
       <BottomSheet label="Links and history" onclose={() => (sheetOpen = false)}>
-        <RightRail id="sheet-rail" {note} onexpired={discard} onrestored={noteRestored} />
+        <RightRail id="sheet-rail" {note} onexpired={discard} onrestored={noteRestored} oncount={(n) => (backlinkCount = n)} />
       </BottomSheet>
     {/if}
   {:else}
@@ -911,26 +959,19 @@ import { watchViewport } from './lib/viewport'
     min-height: 0;
   }
 
-  /* Edit: the editor alone. Capped to a readable measure and centred so it does not stretch across
-     a wide pane. */
+  /* Edit: the editor fills the pane (KAN-1997); there is no measure to protect while typing. */
   .split[data-mode='edit'] > :global(.pane) {
     width: 100%;
-    max-width: 72ch;
-    margin-inline: auto;
   }
 
-  /* Read: the document alone, as a column of text (~65ch) centred in the pane. The editor is still
-     mounted inside `.pane`, hidden by `EditorPane`'s own `reading` class; the page scrolls, not the
-     box. */
+  /* Read: the document alone, in a full-width pane. The editor is still mounted inside `.pane`,
+     hidden by `EditorPane`'s own `reading` class; the page scrolls, not the box. The comfortable
+     line length is not a cap on the pane (that would also squeeze tables, code and images): the
+     preview applies `--reading-measure` (set on `.split` from `lib/preferences.ts`, `none` for
+     "Full-width reading") to its running text only. */
   .split[data-mode='read'] {
     display: block;
     overflow-y: auto;
-  }
-
-  .split[data-mode='read'] > :global(.pane),
-  .split[data-mode='read'] > :global(.preview) {
-    max-width: 65ch;
-    margin-inline: auto;
   }
 
   /* Split (expanded only): editor 55 / preview 45. */
@@ -948,21 +989,45 @@ import { watchViewport } from './lib/viewport'
     }
   }
 
+  /* KAN-1995: an icon button (the right-panel icon) with the backlink count as a badge. */
   .toggle {
-    padding: 0.2rem 0.5rem;
-    border: 1px solid var(--outline);
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    padding: 0;
+    border: 0;
     border-radius: var(--shape-full);
     background: transparent;
     color: var(--on-surface-variant);
     cursor: pointer;
     font: inherit;
-    font-size: var(--type-body-small-size);
+  }
+
+  .toggle:hover {
+    background: var(--layer-hover);
   }
 
   .toggle.on {
-    border-color: transparent;
     background: var(--secondary-container);
     color: var(--on-secondary-container);
+  }
+
+  .toggle .badge {
+    position: absolute;
+    top: 0.1rem;
+    right: 0.05rem;
+    min-width: 1.1rem;
+    padding: 0 0.25rem;
+    border-radius: var(--shape-full);
+    background: var(--primary);
+    color: var(--on-primary);
+    font-size: var(--type-label-small-size);
+    font-weight: 600;
+    line-height: 1.1rem;
+    text-align: center;
   }
 
   .notice {
@@ -1035,9 +1100,8 @@ import { watchViewport } from './lib/viewport'
     }
 
     .toggle {
-      min-height: 2.75rem;
-      padding: 0 0.75rem;
-      font-size: var(--type-body-medium-size);
+      width: 2.75rem;
+      height: 2.75rem;
     }
 
     .mode-bar {

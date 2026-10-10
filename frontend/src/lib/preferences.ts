@@ -79,3 +79,61 @@ export function rememberFormatOnSave(value: boolean): void {
 export function resetPreferencesCache(): void {
   pending = null
 }
+
+/**
+ * KAN-1997, "Full-width reading": how wide the Read column may be.
+ *
+ * **A per-browser preference, not an account one** (`/api/v1/preferences` knows only
+ * `format_on_save`, and a column width is a fact about a screen, not an account): it lives in
+ * `localStorage`, like the pane and mode choices in `lib/shell.ts` and `lib/noteMode.ts`, and a
+ * blocked or throwing `localStorage` just means the default.
+ */
+
+/** The Read measure, in `ch`: the one place the number is written. `App.svelte` hands it to CSS as
+ *  `--reading-measure` (a stylesheet cannot import it), and a full-width reader gets `none`. */
+export const READING_MEASURE_CH = 75
+
+const FULL_WIDTH_KEY = 'kaya.reading.fullWidth'
+
+/** The CSS value for `--reading-measure`. Pure, so the default and the off-switch are tested. */
+export function readingMeasure(fullWidth: boolean): string {
+  return fullWidth ? 'none' : `${READING_MEASURE_CH}ch`
+}
+
+/** Whether Read is full width. Anything but the stored `'1'` (including no storage) is `false`. */
+export function readFullWidthReading(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(FULL_WIDTH_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+const listeners = new Set<(fullWidth: boolean) => void>()
+
+/** Store the choice and tell this page's subscribers (`storage` events only reach other tabs). */
+export function writeFullWidthReading(fullWidth: boolean): void {
+  try {
+    globalThis.localStorage?.setItem(FULL_WIDTH_KEY, fullWidth ? '1' : '0')
+  } catch {
+    // Unwritable storage: the choice still applies for this page's life through the listeners.
+  }
+  for (const listener of listeners) {
+    listener(fullWidth)
+  }
+}
+
+/** Follow the choice: this page's writes and, through `storage`, another tab's. Returns the unsubscribe. */
+export function watchFullWidthReading(listener: (fullWidth: boolean) => void): () => void {
+  listeners.add(listener)
+  const onStorage = (event: StorageEvent): void => {
+    if (event.key === FULL_WIDTH_KEY || event.key === null) {
+      listener(readFullWidthReading())
+    }
+  }
+  globalThis.addEventListener?.('storage', onStorage)
+  return () => {
+    listeners.delete(listener)
+    globalThis.removeEventListener?.('storage', onStorage)
+  }
+}

@@ -119,7 +119,8 @@ describe('the compact shell', () => {
     expect(host.querySelector('.right-rail')).toBeNull()
     expect(host.querySelector('[role="dialog"]')).toBeNull()
     const links = host.querySelector<HTMLButtonElement>('[data-testid="toggle-details"]')!
-    expect(links.textContent?.trim()).toBe('Links')
+    expect(links.getAttribute('aria-label')).toBe('Links and history')
+    expect(links.getAttribute('title')).toBe('Links and history')
     expect(links.getAttribute('aria-expanded')).toBe('false')
     links.focus()
     links.click()

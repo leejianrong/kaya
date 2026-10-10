@@ -49,8 +49,12 @@
   const {
     note,
     onexpired,
+    oncount = () => {},
   }: {
     note: Note | null
+    /** KAN-1995: told how many rows an answer held, so the top bar's badge needs no second request
+     *  while this rail is the one asking. */
+    oncount?: (count: number) => void
     /**
      * The API refused the credential. **The one failure this component may not handle itself.**
      *
@@ -134,6 +138,7 @@
         if (inflight === abort) {
           found = notes
           loading = false
+          oncount(notes.length)
         }
       },
       (error: unknown) => {

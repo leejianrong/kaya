@@ -126,7 +126,7 @@ These have tests; you will meet them as a failing build otherwise. Full accounts
   reads nothing** (`lib/codemirror.ts`, `lib/markdown.ts`). `tests/module-graph.ts` guards that
   nothing else in `src/` imports `@codemirror/*`.
 - **A search is never rendered by the folder tree** (`Sidebar.svelte`): grouping by `path` destroys
-  `ts_rank` order, so a search forces the flat list and hides the view toggle.
+  `ts_rank` order, so a search renders the flat ranked list (the sidebar is otherwise tree-only; there is no view toggle).
 - **One module owns "the bearer for a request"** (`lib/auth.ts`): the token lives in
   `sessionStorage`, never `localStorage` or a cookie, and `credentialState()` returns `set`/`not set`
   only. It is separate from `lib/identity.ts`'s cookie-session seam on purpose.

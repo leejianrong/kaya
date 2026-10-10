@@ -8,7 +8,8 @@
   /**
    * KAN-554's sidebar: a folder tree over the `path` column, and the flat note list beside it.
    *
-   * **Two views rather than one, and the second is a safety property rather than a preference.** The
+   * **Tree-only since KAN-1996.** The Tree/List toggle is gone; the flat list survives only as how a
+   * search renders (KAN-962). What follows is the history of why it existed. The
    * tree is a *view* of paths (`lib/tree.ts`), and a view can be wrong about structure in ways nobody
    * notices — a segment rule that swallows a level, a sort that hides a row below a fold. The list is
    * the corpus in the order the API returned it, so "the tree is hiding a note" is always one click
@@ -97,40 +98,12 @@
     newTitle = ''
   }
 
-  type View = 'tree' | 'list'
-
-  /**
-   * Which view the **user** chose — not necessarily the one on screen (KAN-962).
-   *
-   * A search always renders as a flat list (`view` below), so this rune has to survive one: the
-   * toggle writes it and nothing else does, which is what makes clearing a search put a person back
-   * where they were. Option (a) on the card — flipping this to `'list'` when a search commits — looks
-   * identical on screen and is not the same thing at all, because nothing would ever flip it back.
-   */
-  let chosen: View = $state('tree')
-
   /** Whether `notes` is a *result set* rather than the corpus. `query` is the committed term. */
   const searching = $derived(query !== '')
 
-  /**
-   * The view that actually renders: the flat list whenever a search is active.
-   *
-   * KAN-962, and the defect was at this layer rather than in KAN-558 or KAN-559. The API ranks a
-   * search `ts_rank DESC, note.id DESC` and went to real trouble to make equal ranks order
-   * deterministically, because they are common — two notes on the seeded corpus tie at 0.9910 on
-   * `reading list`. The tree groups by the `path` column, so it *cannot* carry an arbitrary row
-   * order: a folder exists because some note's path names it, and every ordering the server chose
-   * is destroyed by the grouping. The tree is not sorting wrongly, it is answering a different
-   * question — and since TREE is the default, the *default* rendering of a search was the one that
-   * threw the ranking away, silently. "These are your notes, arranged" and "these matched, best
-   * first" are two objects and one toggle cannot mean both, so a search is rendered by the view
-   * that can hold an order.
-   *
-   * The toggle is **off the screen while a search is active** (the template below), not merely
-   * ignored. A visible control reading `Tree` above a flat list is the same lie as silently
-   * overriding the choice; what takes its place says what the ordering is instead.
-   */
-  const view: View = $derived(searching ? 'list' : chosen)
+  // KAN-1996: the tree is the only browse view; the Tree/List toggle and its `chosen` state are gone.
+  // A search is still rendered as the flat list (KAN-962): the API ranks `ts_rank DESC, note.id DESC`
+  // and the tree groups by `path`, so it has nowhere to put a relevance order.
 
   const tree: NoteTree = $derived(buildTree(notes))
 
@@ -264,24 +237,8 @@
     {/if}
   </form>
 
-  <!--
-    The view toggle — or, while a search is active, the one line saying why there is no choice to make
-    (KAN-962). Two arms of one `{#if}` rather than two conditions, so "a toggle reading Tree above a
-    flat search result" is unreachable rather than merely untested.
-  -->
   {#if searching}
-    <p class="ordering" data-testid="search-ordering">
-      Ordered by relevance, not grouped by folder. The view toggle returns when you clear the search.
-    </p>
-  {:else}
-    <div class="views" role="group" aria-label="Sidebar view">
-      <button type="button" class:active={chosen === 'tree'} onclick={() => (chosen = 'tree')}>
-        Tree
-      </button>
-      <button type="button" class:active={chosen === 'list'} onclick={() => (chosen = 'list')}>
-        List
-      </button>
-    </div>
+    <p class="ordering" data-testid="search-ordering">Matches, best first. Ordered by relevance, not grouped by folder.</p>
   {/if}
 
   {#if loading}
@@ -291,11 +248,11 @@
          count from here) — only the wording tells a "you own nothing yet" apart from a search
          that matched nothing. -->
     <p class="empty">{query === '' ? 'No notes yet. Create one, or ask your agent to.' : `No notes match "${query}".`}</p>
-  {:else if view === 'list'}
+  {:else if searching}
     <!-- Every note, in the order `GET /api/v1/notes` returned them: `updated_at DESC, id DESC` for
          the corpus, `ts_rank DESC, id DESC` for a search (KAN-558). Nothing is grouped, sorted or
          hidden here, which is the whole reason this view exists — and, since KAN-962, the whole
-         reason a search renders through it whatever the toggle was set to. -->
+         reason a search renders through it . -->
     <ul data-testid="note-list">
       {#each notes as note (note.ref)}
         <!-- `path` is legitimately empty (ADR 0008), and an em dash beats a blank line that reads
@@ -433,31 +390,6 @@
     line-height: 1.35;
   }
 
-  .views {
-    display: flex;
-    gap: 0.25rem;
-    padding: 0 0.5rem;
-  }
-
-  .views button {
-    padding: 0.2rem 0.55rem;
-    border: 1px solid var(--outline);
-    border-radius: var(--shape-full);
-    background: transparent;
-    color: var(--on-surface-variant);
-    cursor: pointer;
-    font: inherit;
-    font-size: var(--type-label-medium-size);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
-
-  .views button.active {
-    border-color: transparent;
-    background: var(--secondary-container);
-    color: var(--on-secondary-container);
-  }
-
   ul {
     margin: 0;
     /* The indent is on the row, not on the list: see `inset()` on why it has to be clampable. */
@@ -558,15 +490,9 @@
     .search-input,
     .create-input,
     .create-form button,
-    .clear-search,
-    .views button {
+    .clear-search {
       min-height: 3rem;
       font-size: 1rem;
-    }
-
-    .views button {
-      padding: 0 1rem;
-      font-size: var(--type-body-medium-size);
     }
 
     .row {

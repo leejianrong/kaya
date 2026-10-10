@@ -545,6 +545,31 @@ anything moving in `codemirror-*.js` or `dist-*.js` would mean an import had mig
 fetches **27,968 B gzip** against 27,861 (2 requests either way, **+107 B / +0.4%**); a signed-in load
 fetches **130,362 B** against 130,255 across the same 5 requests.
 
+### KAN-1995/1996/1997: icons, tree-only sidebar, Read measure
+
+The Tree/List toggle above is **gone** (KAN-1996): the tree is the only browse view and a search still
+renders the flat ranked list with its "Matches, best first" line, for the reason this section gives.
+
+`NavIcon.svelte` now draws Material Symbols (Outlined) from `@material-symbols/svg-400`, one `?raw`
+SVG import per icon (`hub`, `description`, `settings`, `right_panel_open`, `right_panel_close`), so
+only those five paths reach the bundle; nothing is fetched at runtime. Measured the same way
+(`vite build`, then `gzip -9`) against the commit this branch started from, for the main
+`index-*.js` / `index-*.css` assets (the CodeMirror, markdown and wikilink chunks are byte-identical):
+
+| | before | after | delta |
+|---|---|---|---|
+| JS raw | 132,212 B | 136,519 B | +4,307 B |
+| JS gzip -9 | 45,310 B | 46,919 B | **+1,609 B** |
+| CSS gzip -9 | 8,689 B | 8,744 B | +55 B |
+
+That delta also carries the other two cards' code (the top bar's backlink badge and its request, the
+"Full-width reading" preference).
+
+Read's measure is `READING_MEASURE_CH` (75) in `lib/preferences.ts`, handed to CSS as
+`--reading-measure` on `.split`; it caps running text only, so tables, code and images use the pane.
+"Full-width reading" is a per-browser `localStorage` choice (`/api/v1/preferences` is account-level
+and knows only `format_on_save`).
+
 ## KAN-568: the backlinks rail
 
 `GET /api/v1/notes/{ref}/backlinks` (KAN-566) reaches the browser as `components/BacklinksPanel.svelte`:
