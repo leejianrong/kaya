@@ -33,11 +33,12 @@ added.
 from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
+from app.auth.principal import Principal
 from app.models.note import Note
 from app.models.note_version import NoteVersion
 
 
-def cut_version(session: Session, note: Note) -> None:
+def cut_version(session: Session, note: Note, principal: Principal) -> None:
     """Snapshot ``note.body`` as a new ``note_version`` row.
 
     Call this **after** ``note.body`` already holds the value being saved — the value ``Note(...)``
@@ -47,12 +48,26 @@ def cut_version(session: Session, note: Note) -> None:
     same one KAN-562's ``reconcile_note_links`` already depends on) or, on the update path, the id
     an already-persisted note has always had.
 
+    ``principal`` is the caller whose save this is (KAY-138): recorded as the version's actor.
+
     Adds to the session without flushing or committing — the caller's own transaction covers this
     the same way it already covers the note write and, on `create`, the `note_link` reconcile: one
     commit, one transaction, so a version can never land without the save that produced it, or the
     reverse.
     """
-    session.add(NoteVersion(note_id=note.id, body=note.body))
+    session.add(
+        NoteVersion(
+            note_id=note.id,
+            body=note.body,
+            actor_user_id=principal.id,
+            actor_channel=principal.channel,
+            actor_token_id=principal.token_id,
+            actor_token_prefix=principal.token_prefix,
+            actor_token_name=principal.token_name,
+            # Presets (KAY-141) may add `token_kind` to Principal; read it only if it exists.
+            actor_token_kind=getattr(principal, "token_kind", None),
+        )
+    )
 
 
 def note_versions(note_id: int) -> Select[tuple[NoteVersion]]:

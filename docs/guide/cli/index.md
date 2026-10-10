@@ -23,6 +23,8 @@ kaya note get NOTE-12
 kaya note create "A new note"
 kaya note edit NOTE-12 --title "A clearer title"
 kaya note move NOTE-12 archive/2026/groceries.md
+kaya note history NOTE-12            # every version, newest first, and who made it
+kaya note diff NOTE-12               # previous version against the latest
 kaya note delete NOTE-12
 kaya note export NOTE-12 --out groceries.md
 kaya note import groceries.md

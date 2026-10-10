@@ -89,6 +89,25 @@ kaya note format NOTE-12 --if-updated-at 2026-08-09T11:02:33.123456+00:00   # gu
 `--check` takes no precondition, because a read has nothing to guard. Like `note move`, `format` has
 no endpoint of its own: it is the same `PATCH` as `note edit` with the server's formatter switched on.
 
+### Who changed it, and what: `note history` and `note diff`
+
+Every save keeps the body it wrote. `note history` lists them newest first, each with an
+oldest-first `version` number and who made it: your account on the web, or the token that wrote it
+by name and its non-secret prefix. A version saved before kaya tracked authors says
+`before tracking`. A token that has since been revoked still shows, because the record is a
+snapshot.
+
+```bash
+kaya note history NOTE-12
+kaya note diff NOTE-12            # previous version against the latest
+kaya note diff NOTE-12 2          # version 2 against the latest
+kaya note diff NOTE-12 2 5        # version 2 against version 5
+```
+
+`note diff` is read-only and prints a unified diff plus the counts of lines added and removed. It has
+no endpoint of its own: the client reads the version list and diffs two bodies. Restoring a version
+is an ordinary `note edit` with that version's body, so it is attributed to whoever restored it.
+
 ### Optimistic concurrency: `--if-updated-at`
 
 A note body is long-form prose, and two writers editing the same one under plain

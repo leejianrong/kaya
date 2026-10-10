@@ -81,7 +81,14 @@ def principal_from_pat(session: Session, bearer: str | None, *, secret: str) -> 
 
     pat.last_used_at = now
     session.commit()
-    return Principal(id=account.id, email=account.email, scope=pat.scope)
+    return Principal(
+        id=account.id,
+        email=account.email,
+        scope=pat.scope,
+        token_id=pat.id,
+        token_prefix=pat.token_prefix,
+        token_name=pat.name,
+    )
 
 
 def resolve_principal(

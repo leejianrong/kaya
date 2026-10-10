@@ -28,6 +28,17 @@ class Principal:
     `get_principal` refuses an unsafe method for it. A cookie session, and any `Principal` built
     without naming a scope, is `write`: the owning account's full access."""
 
+    token_id: int | None = None
+    token_prefix: str | None = None
+    token_name: str | None = None
+    """Which `personal_access_token` authenticated this request (KAY-138: recorded on each note
+    version as its actor). All `None` for a cookie session. Only the non-secret display prefix,
+    never the bearer."""
+
+    @property
+    def channel(self) -> str:
+        return "token" if self.token_id is not None else "session"
+
 
 class UpstreamUnavailable(Exception):
     """Pandan could not be asked, so kaya does not know and says so.

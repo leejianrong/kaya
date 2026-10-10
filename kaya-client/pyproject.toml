@@ -91,7 +91,9 @@ name = "kaya-client"
 # `update_note` (the KAN-1814 wire contract), plus the conditional format hint on `create_note`/
 # `update_note(format_hint=True)`: `Payload.format_changed_lines`, `hints.format_help_lines`, and an
 # in-band `help` key on a structured note. Behavioural, so a minor bump.
-version = "0.18.0"
+# 0.19.0 — KAY-138: `KayaClient.history` and `.diff_versions`, `history.py` (actor label, ordinals,
+# unified diff). Behavioural, so a minor bump.
+version = "0.19.0"
 description = "The shared core for kaya: the API client and the one payload-shaping seam"
 readme = "README.md"
 license = "Apache-2.0"

@@ -21,8 +21,9 @@ The web app has Read, Edit and Split modes and also works on a phone, and everyt
   a list-then-note flow under 600px.
 - **Links that go both ways.** Wikilinks with autocomplete, a backlinks panel, and a graph view of
   how notes connect.
-- **History and search.** Per-note version history, and ranked full-text search from the sidebar,
-  the CLI and the API.
+- **History and search.** Per-note version history that says who made each version (you on the
+  web, or which token) with a line diff between any two, and ranked full-text search from the
+  sidebar, the CLI and the API.
 - **Agent-friendly output.** The CLI and the MCP server share one client that projects fields and
   truncates long bodies, so an agent reads a note without paying for all of it.
 - **Its own accounts.** Sign in with GitHub in the browser, and mint personal access tokens or use

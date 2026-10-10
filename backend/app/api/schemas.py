@@ -14,6 +14,7 @@ on one of these routes would be the bug ADR 0004 exists to prevent. What lives h
 object; deciding how much of it a caller sees is somebody else's job, deliberately.
 """
 
+import uuid
 from datetime import datetime
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
@@ -465,10 +466,57 @@ class NoteVersionRead(BaseModel):
     id: int
     body: str
     created_at: datetime
+    actor: "VersionActor | None" = None
+    """Who cut this version (KAY-138). ``None`` for a version cut before actors were recorded: the
+    clients render that as "before tracking", never as a guess."""
 
     @classmethod
-    def of(cls, version: NoteVersion) -> "NoteVersionRead":
-        return cls.model_validate(version)
+    def of(
+        cls,
+        version: NoteVersion,
+        emails: dict[uuid.UUID, str] | None = None,
+        viewer: uuid.UUID | None = None,
+    ) -> "NoteVersionRead":
+        actor = None
+        if version.actor_channel is not None or version.actor_user_id is not None:
+            token = None
+            if version.actor_token_id is not None:
+                token = VersionActorToken(
+                    id=version.actor_token_id,
+                    prefix=version.actor_token_prefix,
+                    name=version.actor_token_name,
+                    kind=version.actor_token_kind,
+                )
+            actor = VersionActor(
+                user_id=version.actor_user_id,
+                email=(emails or {}).get(version.actor_user_id) if version.actor_user_id else None,
+                channel=version.actor_channel,
+                token=token,
+                is_you=viewer is not None and version.actor_user_id == viewer,
+            )
+        return cls(id=version.id, body=version.body, created_at=version.created_at, actor=actor)
+
+
+class VersionActorToken(BaseModel):
+    """The token that made a save: only what Settings already shows (id, display prefix, name),
+    plus ``kind`` once token presets exist. Never the secret or its hash."""
+
+    id: int
+    prefix: str | None
+    name: str | None
+    kind: str | None
+
+
+class VersionActor(BaseModel):
+    """One version's actor. ``token`` is ``None`` for a cookie session (``channel`` ``session``)."""
+
+    user_id: uuid.UUID | None
+    email: str | None
+    channel: str | None
+    token: VersionActorToken | None
+    is_you: bool = False
+    """Whether the account making this request is the one that made the save, so a client can say
+    "You" without a second round trip to find out who "you" is."""
 
 
 class NoteVersionList(BaseModel):

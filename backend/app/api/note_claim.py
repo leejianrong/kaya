@@ -176,7 +176,7 @@ def claim_note(
     assert note is not None  # the INSERT above just returned this id in this same transaction
     reconcile_note_links(session, note)
     resolve_pending_note_links(session, note)
-    cut_version(session, note)
+    cut_version(session, note, principal)
     session.commit()
     session.refresh(note)
 

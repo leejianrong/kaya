@@ -90,7 +90,7 @@ wheels = [
 
 [[package]]
 name = "kaya-client"
-version = "0.18.0"
+version = "0.19.0"
 source = { editable = "../kaya-client" }
 dependencies = [
     { name = "httpx" },
@@ -106,7 +106,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "kaya-notes"
-version = "0.26.0"
+version = "0.27.0"
 source = { editable = "." }
 dependencies = [
     { name = "kaya-client" },

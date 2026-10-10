@@ -129,6 +129,8 @@ CREATE = "create"
 EDIT = "edit"
 MOVE = "move"
 FORMAT = "format"
+HISTORY = "history"
+DIFF = "diff"
 DELETE = "delete"
 EXPORT = "export"
 IMPORT = "import"
@@ -272,6 +274,17 @@ def _note_format(client: KayaClient, args: Namespace) -> Payload:
     return client.format_note(args.ref, check=args.check, if_updated_at=args.if_updated_at)
 
 
+def _note_history(client: KayaClient, args: Namespace) -> Payload:
+    """`note history <ref>` (KAY-138): every version, newest first, with who made it."""
+    return client.history(args.ref)
+
+
+def _note_diff(client: KayaClient, args: Namespace) -> Payload:
+    """`note diff <ref> [from] [to]` (KAY-138): one client call; the ordinals and the diff itself
+    are `KayaClient.diff_versions`' (ADR 0004)."""
+    return client.diff_versions(args.ref, args.from_version, args.to_version)
+
+
 def _note_delete(client: KayaClient, args: Namespace) -> Payload:
     return client.delete_note(args.ref)
 
@@ -405,6 +418,8 @@ VERBS: Mapping[tuple[str | None, str | None], Verb] = {
     (NOTE, EDIT): _note_edit,
     (NOTE, MOVE): _note_move,
     (NOTE, FORMAT): _note_format,
+    (NOTE, HISTORY): _note_history,
+    (NOTE, DIFF): _note_diff,
     (NOTE, DELETE): _note_delete,
     (NOTE, EXPORT): _note_export,
     (NOTE, IMPORT): _note_import,

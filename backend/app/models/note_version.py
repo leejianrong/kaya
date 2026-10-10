@@ -35,9 +35,10 @@ for its own ``source_note_id`` in the opposite direction (there, the unique cons
 the index; a note_version has no equivalent constraint to reuse).
 """
 
+import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Text, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -67,3 +68,32 @@ class NoteVersion(Base):
     """When this snapshot was cut, i.e. the committing save's transaction start time — the same
     ``now()`` semantics ``note.created_at``/``note.updated_at`` already carry, documented in full in
     ``app/models/note.py``."""
+
+    # ---- actor (KAY-138, ADR 0015 precondition 1). Six nullable columns, all NULL on a row cut
+    # before this card ("before tracking"). Written once by ``cut_version`` from the request's
+    # ``Principal`` and never updated. Snapshots, not joins: a revoked token or a renamed one must
+    # not rewrite who made an old edit, and a revoked token's row is gone.
+
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(), ForeignKey("kaya_account.id", ondelete="SET NULL"), nullable=True
+    )
+    """The account whose credential made the save. For a team note this is not the note's owner."""
+
+    actor_channel: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    """``session`` (a browser cookie session) or ``token`` (a ``kaya_pat_`` bearer: the CLI, a
+    script, or the hosted MCP endpoint, which are indistinguishable server-side because the MCP
+    tools call the REST API with the caller's own bearer)."""
+
+    actor_token_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    """``personal_access_token.id`` at save time. Deliberately **no foreign key**: revoking a token
+    must not erase or null the record of what it did."""
+
+    actor_token_prefix: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    """The same non-secret display hint Settings lists (``kaya_pat_ab12``), never more."""
+
+    actor_token_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    """The token's caller-chosen name (device-flow and OAuth tokens are named by their origin)."""
+
+    actor_token_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    """Reserved for token presets (pandan ADR 0027's kind; the sibling KAY-141). ``cut_version``
+    copies it from ``Principal.token_kind`` when that exists; NULL until then."""

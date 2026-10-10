@@ -2,7 +2,16 @@
   import { untrack } from 'svelte'
 
   import { ApiError } from '../lib/api'
-  import { isSelected, needsFetch, panelState, type PanelState } from '../lib/history'
+  import { diffLines, diffStats, withContext } from '../lib/diff'
+  import {
+    actorLine,
+    isSelected,
+    needsFetch,
+    panelState,
+    previousIndex,
+    versionNumber,
+    type PanelState,
+  } from '../lib/history'
   import { listVersions, restoreVersion } from '../lib/notes'
   import type { Note, NoteVersion } from '../lib/types'
 
@@ -78,6 +87,13 @@
    *  restore starts, so a stale refusal cannot sit under a different selection. */
   let restoreFailure: string | null = $state(null)
 
+  /** The preview's two views of the selected version (KAY-138): its whole text, or what changed. */
+  let view = $state<'text' | 'changes'>('text')
+
+  /** What the Changes view compares against: the version just before the selected one (`previous`),
+   *  or any other version by its id. Reset on every selection. */
+  let compareTo = $state<'previous' | number>('previous')
+
   /** The tab's whole rendering, as one closed value. See `lib/history.ts`. */
   const panel: PanelState = $derived(
     panelState({ ref: subject, loading, failure, versions: found }),
@@ -86,6 +102,37 @@
   /** The selected row itself, or `null` — derived rather than stored twice, so `selected` (an id)
    *  and the row it names can never disagree. */
   const selectedVersion = $derived(found.find((version) => isSelected(selected, version)) ?? null)
+
+  /** The selected row's position in `found` (newest first), or -1. */
+  const selectedIndex = $derived(found.findIndex((version) => isSelected(selected, version)))
+
+  /** The body the Changes view diffs *from*, and a label for it. An empty body (the first version
+   *  has nothing before it) reads as "nothing". */
+  const baseline = $derived.by(() => {
+    if (selectedIndex < 0) {
+      return null
+    }
+    const index =
+      compareTo === 'previous'
+        ? previousIndex(found, selectedIndex)
+        : found.findIndex((version) => version.id === compareTo)
+    if (index === null || index < 0) {
+      return { body: '', label: 'nothing' }
+    }
+    return { body: found[index].body, label: `v${versionNumber(found, index)}` }
+  })
+
+  /** The diff, only computed while the Changes view is actually showing. */
+  const diffRows = $derived(
+    view === 'changes' && selectedVersion !== null && baseline !== null
+      ? withContext(diffLines(baseline.body, selectedVersion.body))
+      : [],
+  )
+  const diffTotals = $derived(
+    view === 'changes' && selectedVersion !== null && baseline !== null
+      ? diffStats(diffLines(baseline.body, selectedVersion.body))
+      : { added: 0, removed: 0 },
+  )
 
   /**
    * Ask the API about one ref, replacing whatever was in flight. See `BacklinksPanel.load` for the
@@ -139,6 +186,7 @@
   /** Toggle a row's selection: clicking the one already previewed closes the preview. */
   function toggle(version: NoteVersion): void {
     selected = isSelected(selected, version) ? null : version.id
+    compareTo = 'previous'
     restoreFailure = null
   }
 
@@ -248,10 +296,14 @@
             onclick={() => toggle(version)}
             data-testid="history-row"
           >
-            <span class="when">{new Date(version.created_at).toLocaleString()}</span>
-            {#if index === 0}
-              <span class="current">current</span>
-            {/if}
+            <span class="line">
+              <span class="num">v{versionNumber(panel.versions, index)}</span>
+              <span class="when">{new Date(version.created_at).toLocaleString()}</span>
+              {#if index === 0}
+                <span class="current">current</span>
+              {/if}
+            </span>
+            <span class="actor" data-testid="history-actor">{actorLine(version.actor)}</span>
           </button>
         </li>
       {/each}
@@ -259,7 +311,69 @@
 
     {#if selectedVersion !== null}
       <div class="preview" data-testid="history-preview">
-        <pre>{selectedVersion.body}</pre>
+        <div class="views" role="group" aria-label="Preview">
+          <button
+            type="button"
+            class="view"
+            aria-pressed={view === 'text'}
+            onclick={() => (view = 'text')}
+            data-testid="history-view-text"
+          >
+            Text
+          </button>
+          <button
+            type="button"
+            class="view"
+            aria-pressed={view === 'changes'}
+            onclick={() => (view = 'changes')}
+            data-testid="history-view-changes"
+          >
+            Changes
+          </button>
+        </div>
+        {#if view === 'text'}
+          <pre>{selectedVersion.body}</pre>
+        {:else if baseline !== null}
+          <label class="compare">
+            <span>Compare with</span>
+            <select bind:value={compareTo} data-testid="history-compare">
+              <option value="previous">Previous version</option>
+              {#each panel.versions as other, otherIndex (other.id)}
+                {#if other.id !== selectedVersion.id}
+                  <option value={other.id}>
+                    v{versionNumber(panel.versions, otherIndex)} · {new Date(other.created_at).toLocaleString()}
+                  </option>
+                {/if}
+              {/each}
+            </select>
+          </label>
+          <p class="stat" data-testid="history-diff-stat">
+            {baseline.label} to v{versionNumber(panel.versions, selectedIndex)}:
+            <span class="plus">+{diffTotals.added}</span>
+            <span class="minus">−{diffTotals.removed}</span>
+          </p>
+          {#if diffRows.length === 0}
+            <p class="empty" data-testid="history-diff-empty">No changes.</p>
+          {:else}
+            <div class="diff" role="table" aria-label="Changes" data-testid="history-diff">
+              {#each diffRows as row, rowIndex (rowIndex)}
+                {#if row.kind === 'skip'}
+                  <div class="drow skip" role="row">
+                    <span class="gutter" aria-hidden="true">⋯</span>
+                    <span class="code">{row.count} unchanged {row.count === 1 ? 'line' : 'lines'}</span>
+                  </div>
+                {:else}
+                  <div class="drow {row.kind}" role="row" data-testid="history-diff-line">
+                    <span class="gutter" aria-hidden="true">
+                      {row.kind === 'add' ? '+' : row.kind === 'del' ? '−' : ''}
+                    </span>
+                    <span class="code">{row.text === '' ? ' ' : row.text}</span>
+                  </div>
+                {/if}
+              {/each}
+            </div>
+          {/if}
+        {/if}
         <button
           type="button"
           class="restore"
@@ -331,8 +445,9 @@
 
   .row {
     display: flex;
-    align-items: baseline;
-    gap: 0.4rem;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.1rem;
     width: 100%;
     padding: 0.3rem 0.5rem;
     border: none;
@@ -350,6 +465,127 @@
 
   .row.selected {
     background: var(--secondary-container);
+  }
+
+  .line {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    max-width: 100%;
+  }
+
+  .num {
+    color: var(--on-surface-variant);
+    font-family: var(--mono);
+    font-size: var(--type-label-medium-size);
+  }
+
+  .actor {
+    max-width: 100%;
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-small-size);
+    overflow-wrap: anywhere;
+  }
+
+  .views {
+    display: flex;
+    gap: 0.25rem;
+  }
+
+  .view {
+    padding: 0.15rem 0.6rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-full);
+    background: transparent;
+    color: var(--on-surface-variant);
+    cursor: pointer;
+    font: inherit;
+    font-size: var(--type-label-medium-size);
+  }
+
+  .view[aria-pressed='true'] {
+    border-color: transparent;
+    background: var(--secondary-container);
+    color: var(--on-secondary-container);
+  }
+
+  .compare {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    color: var(--on-surface-variant);
+    font-size: var(--type-label-medium-size);
+  }
+
+  .compare select {
+    max-width: 100%;
+    padding: 0.3rem 0.4rem;
+    border: 1px solid var(--outline);
+    border-radius: var(--shape-sm);
+    background: var(--surface-container-lowest);
+    color: var(--on-surface);
+    font: inherit;
+    font-size: var(--type-body-medium-size);
+  }
+
+  .stat {
+    margin: 0;
+    color: var(--on-surface-variant);
+    font-size: var(--type-body-small-size);
+  }
+
+  .plus {
+    color: var(--on-primary-container);
+    font-family: var(--mono);
+  }
+
+  .minus {
+    color: var(--on-error-container);
+    font-family: var(--mono);
+  }
+
+  .diff {
+    max-height: 18rem;
+    overflow: auto;
+    border: 1px solid var(--outline-variant);
+    border-radius: var(--shape-sm);
+    font-family: var(--mono);
+    font-size: var(--type-body-small-size);
+  }
+
+  .drow {
+    display: flex;
+    gap: 0.4rem;
+    padding: 0 0.4rem;
+  }
+
+  .drow .gutter {
+    flex: none;
+    width: 1ch;
+    color: var(--on-surface-variant);
+    user-select: none;
+  }
+
+  .drow .code {
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .drow.add {
+    background: var(--primary-container);
+    color: var(--on-primary-container);
+  }
+
+  .drow.del {
+    background: var(--error-container);
+    color: var(--on-error-container);
+  }
+
+  .drow.skip {
+    background: var(--surface-container);
+    color: var(--on-surface-variant);
+    font-style: italic;
   }
 
   .when {

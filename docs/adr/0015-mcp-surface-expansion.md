@@ -58,7 +58,13 @@ Outline's patch tool and breadcrumbs, Notion's markdown-first agent API.
 ## Preconditions, in order
 
 1. **Actor on note versions** (who, and through which token). Without it a bad agent edit cannot be
-   attributed.
+   attributed. *Done (KAY-138):* each new `note_version` row snapshots the account, the channel
+   (`session` or `token`) and the token's id, display prefix and name; `kind` is a reserved column for
+   token presets (precondition 4). The hosted MCP endpoint calls the REST API with the caller's own
+   bearer, so an MCP write is recorded as that token, named by its origin (an OAuth token is named
+   after its client); a separate `mcp` channel would need a header the client sends, which no one
+   has asked for. `kaya note history` and `kaya note diff` are the CLI side; `list_versions` and
+   `diff_version` stay CLI-first per decision 4.
 2. **A trash** (soft delete and restore) before `delete_note` is exposed at all.
 3. **Paging on `GET /notes`.**
 4. **Kaya token presets** mirroring pandan ADR 0027: read-only, no-delete, and a scope for structural

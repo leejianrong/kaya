@@ -211,7 +211,8 @@ four MCP-only capabilities that made the surface hard to retire.
 
 What that means for an agent picking a tool:
 
-- **CLI-only, no MCP tool at all:** `note move`, `note delete`, `kaya links` (the outbound,
+- **CLI-only, no MCP tool at all:** `note history`, `note diff` (who changed a note and what; an
+  MCP tool for them is ADR 0015's `list_versions`/`diff_version`), `note move`, `note delete`, `kaya links` (the outbound,
   possibly-pandan-crossing read — only `get_backlinks`/`kaya backlinks` has an MCP twin),
   `note export`/`note import`/`export-all`/`import-all`, everything under `kaya config`, and all of
   `kaya context`. An MCP-driven agent cannot move or delete a note, or install its own ambient
