@@ -20,8 +20,9 @@
   import { ApiError } from './lib/api'
   import { clearToken, credentialState } from './lib/auth'
   import { fetchCurrentUser } from './lib/identity'
-  import { createNote, getNote, listBacklinks, listNotes } from './lib/notes'
+  import { createNote, getNote, listBacklinks, listNotes, moveFolder, updateNote } from './lib/notes'
   import { folderOf, newNoteDraft } from './lib/newNote'
+  import { type Outcome, movePath, pathSegments, renameFolderPrefix } from './lib/tree'
   import { readFullWidthReading, readingMeasure, watchFullWidthReading } from './lib/preferences'
   import NavIcon from './components/NavIcon.svelte'
   import {
@@ -155,6 +156,110 @@ import { watchViewport } from './lib/viewport'
     }
   })
 
+  /**
+   * KAY-168: client-only empty folders (ADR 0008 amendment: a folder exists only because a note is
+   * saved beneath it). Held here, not in `Sidebar`, so they survive the list unmounting on compact;
+   * never persisted, so a reload drops them. Pruned as soon as a real note lands under one.
+   */
+  let placeholders: string[] = $state([])
+
+  $effect(() => {
+    const live = placeholders.filter(
+      (folder) => !notes.some((found) => renameFolderPrefix(found.path, folder, folder) !== null),
+    )
+    if (live.length !== placeholders.length) {
+      placeholders = live
+    }
+  })
+
+  /** The open note, brought in line with a title/path/stamp the tree just wrote (body untouched, so
+   *  a body with unsaved edits is never replaced). `EditorPane` adopts the new fields. */
+  function syncOpenNote(stored: Note): void {
+    if (note !== null && note.ref === stored.ref) {
+      note = { ...note, title: stored.title, path: stored.path, updated_at: stored.updated_at }
+    }
+  }
+
+  /** An error as an {@link Outcome}; a `401` still goes to `discard()` like every other call. */
+  function failed(error: unknown): Outcome {
+    if (error instanceof ApiError && error.isUnauthenticated) {
+      discard(error.message)
+      return { ok: false, message: '' }
+    }
+    return { ok: false, message: describe(error) }
+  }
+
+  /** `Sidebar`'s move (drag, or Move to...): one `PATCH` to `path`, the same as `kaya note move`. */
+  async function moveNoteTo(target: Note, folder: string): Promise<Outcome> {
+    const path = movePath(target, folder)
+    if (path === target.path) {
+      return { ok: true, message: `"${target.title}" is already there.` }
+    }
+    try {
+      const stored = await updateNote(target.ref, { path })
+      const index = notes.findIndex((found) => found.ref === stored.ref)
+      if (index !== -1) {
+        notes[index] = stored
+      }
+      syncOpenNote(stored)
+      return {
+        ok: true,
+        message: `Moved "${stored.title}" to ${folder === '' ? 'the top level' : folder}.`,
+      }
+    } catch (error) {
+      return failed(error)
+    }
+  }
+
+  /** `Sidebar`'s note rename: the title only, the filename stays separate. */
+  async function renameNoteTitle(target: Note, title: string): Promise<Outcome> {
+    try {
+      const stored = await updateNote(target.ref, { title })
+      const index = notes.findIndex((found) => found.ref === stored.ref)
+      if (index !== -1) {
+        notes[index] = stored
+      }
+      syncOpenNote(stored)
+      return { ok: true, message: `Renamed to "${stored.title}".` }
+    } catch (error) {
+      return failed(error)
+    }
+  }
+
+  /**
+   * `Sidebar`'s folder rename: `POST /notes/move-folder`, then a re-list (the server restamped every
+   * moved note, and this is the one place the list is re-read rather than patched). A folder with no
+   * real notes under it is a placeholder and is renamed locally. The open note keeps its ref, so the
+   * route does not change (ADR 0008).
+   */
+  async function renameFolderTo(from: string, to: string): Promise<Outcome> {
+    try {
+      const hasNotes = notes.some((found) => renameFolderPrefix(found.path, from, to) !== null)
+      let moved = 0
+      if (hasNotes) {
+        moved = (await moveFolder(from, to)).moved
+        notes = await listNotes({})
+        if (note !== null) {
+          const fresh = notes.find((found) => found.ref === note?.ref)
+          if (fresh !== undefined) {
+            syncOpenNote(fresh)
+          }
+        }
+      }
+      placeholders = placeholders.map((folder) => renameFolderPrefix(folder, from, to, false) ?? folder)
+      return { ok: true, message: hasNotes ? `Renamed folder (${moved} note${moved === 1 ? '' : 's'}).` : 'Renamed folder.' }
+    } catch (error) {
+      return failed(error)
+    }
+  }
+
+  /** `Sidebar`'s new folder: a placeholder only, nothing is sent to the server. */
+  function addPlaceholder(folder: string): void {
+    if (pathSegments(folder).length > 0 && !placeholders.includes(folder)) {
+      placeholders = [...placeholders, folder]
+    }
+  }
+
   /** The ref whose title field should take focus once it renders (KAY-166), until `EditorPane` says
    *  it has. Separate from `justCreatedRef`, which the mode resolution consumes. */
   let focusTitleRef: string | null = $state(null)
@@ -172,7 +277,7 @@ import { watchViewport } from './lib/viewport'
    *
    * The unsaved-changes question (KAN-969) is asked first, before anything is created.
    */
-  async function createAndOpen(): Promise<void> {
+  async function createAndOpen(folder?: string): Promise<void> {
     if (creatingNote) {
       return
     }
@@ -186,7 +291,7 @@ import { watchViewport } from './lib/viewport'
     editorDirty = false
     creatingNote = true
     try {
-      const draft = newNoteDraft(notes, contextFolder)
+      const draft = newNoteDraft(notes, folder ?? contextFolder)
       let created: Note
       try {
         created = await createNote(draft)
@@ -877,7 +982,21 @@ import { watchViewport } from './lib/viewport'
       <!-- KAY-165: the wrapper is what collapses (and goes `inert`, so a zero-width list is not
            tabbable); the sidebar inside keeps its own layout. -->
       <div class="list-panel" id="list-panel" inert={!leftOpen}>
-        <Sidebar {notes} {route} loading={listing} {query} onsearch={search} oncreate={createAndOpen} onfolder={folderClicked} />
+        <Sidebar
+          {notes}
+          {route}
+          loading={listing}
+          {query}
+          {placeholders}
+          {contextFolder}
+          onsearch={search}
+          oncreate={(folder) => createAndOpen(folder)}
+          onfolder={folderClicked}
+          onmove={moveNoteTo}
+          onrenamenote={renameNoteTitle}
+          onrenamefolder={renameFolderTo}
+          onnewfolder={addPlaceholder}
+        />
       </div>
       {#if listShown && leftOpen}
         <Resizer

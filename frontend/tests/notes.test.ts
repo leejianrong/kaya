@@ -11,6 +11,7 @@ import {
   deleteNote,
   listBacklinks,
   listNotes,
+  moveFolder,
   moveNote,
   notePath,
   updateNote,
@@ -96,6 +97,30 @@ describe('moveNote', () => {
 
     const [, init] = vi.mocked(fetchImpl).mock.calls[0] as [string, RequestInit]
     expect(JSON.parse(init.body as string)).toEqual({ path: 'a/b.md' })
+  })
+})
+
+describe('moveFolder', () => {
+  it('POSTs {from, to} to /notes/move-folder and returns the count', async () => {
+    const fetchImpl = recorder({ moved: 3 })
+    await expect(moveFolder('journal', 'diary', { fetchImpl })).resolves.toEqual({ moved: 3 })
+
+    const [url, init] = vi.mocked(fetchImpl).mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('/api/v1/notes/move-folder')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toEqual({ from: 'journal', to: 'diary' })
+  })
+
+  it('surfaces a 422 invalid_folder_move with the server message', async () => {
+    const fetchImpl = recorder(
+      { error: { code: 'invalid_folder_move', message: 'cannot move a folder into itself' } },
+      422,
+    )
+    await expect(moveFolder('a', 'a/b', { fetchImpl })).rejects.toMatchObject({
+      status: 422,
+      code: 'invalid_folder_move',
+      message: 'cannot move a folder into itself',
+    })
   })
 })
 

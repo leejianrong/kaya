@@ -88,6 +88,24 @@ export function moveNote(ref: string, path: string, options: Options = {}): Prom
 }
 
 /**
+ * Move or rename a folder: `POST /api/v1/notes/move-folder` (KAN-2000, ADR 0008 amendment). The
+ * server rewrites the leading path prefix `from` to `to` on every note of the caller's under it, in
+ * one transaction, and answers how many it changed. A bad name is a `422 invalid_folder_move` whose
+ * message is written for a person.
+ */
+export async function moveFolder(
+  from: string,
+  to: string,
+  options: Options = {},
+): Promise<{ moved: number }> {
+  return apiRequest<{ moved: number }>('notes/move-folder', {
+    ...options,
+    method: 'POST',
+    body: { from, to },
+  })
+}
+
+/**
  * Every note of the caller's whose body links to this one — `GET /notes/{ref}/backlinks` (KAN-568).
  *
  * **It returns `Note[]` because the API returns the same `NoteList` a plain list does**, so this is

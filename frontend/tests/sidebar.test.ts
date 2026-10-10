@@ -162,7 +162,7 @@ describe('the folder tree', () => {
     expect(group!.textContent).toContain('NOTE-4')
 
     // And no folder row is an empty or whitespace-only name.
-    for (const button of host.querySelectorAll('[data-testid="note-tree"] button')) {
+    for (const button of host.querySelectorAll('[data-testid="note-tree"] button.folder')) {
       expect(button.textContent?.replace(/[▸▾]/g, '').trim()).not.toBe('')
     }
   })
