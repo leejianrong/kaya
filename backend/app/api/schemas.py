@@ -489,3 +489,19 @@ class FormatCheck(BaseModel):
     changed: bool
     changed_lines: int
     reason: str | None = None
+
+
+class FolderMove(BaseModel):
+    """``POST /api/v1/notes/move-folder`` (KAN-2000). A folder is a view of ``note.path``, so this
+    names two path prefixes. Normalisation and validation are ``app/folders.py``'s."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    source: str = Field(alias="from", max_length=PATH_MAX)
+    target: str = Field(alias="to", max_length=PATH_MAX)
+
+
+class FolderMoved(BaseModel):
+    """How many notes had their ``path`` rewritten."""
+
+    moved: int

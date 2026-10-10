@@ -39,6 +39,7 @@ from app.auth.authorization import (
     notes_named_by_id,
     notes_owned_by,
     notes_titled,
+    notes_with_paths,
 )
 from app.auth.dependencies import (
     get_principal,
@@ -81,6 +82,7 @@ __all__ = [
     "notes_matching",
     "notes_named_by_id",
     "notes_owned_by",
+    "notes_with_paths",
     "notes_titled",
     "principal_from_cookie",
     "principal_from_pat",

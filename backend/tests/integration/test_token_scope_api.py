@@ -137,6 +137,7 @@ MUTATING_BEARER_ROUTES: list[tuple[str, str, dict[str, Any]]] = [
     ("PATCH", "/api/v1/notes/{ref}", {"json": {"title": "renamed"}}),
     ("PATCH", "/api/v1/notes/{ref}", {"json": {"format": True}}),
     ("PATCH", "/api/v1/notes/{ref}", {"json": {"path": "moved/here"}}),
+    ("POST", "/api/v1/notes/move-folder", {"json": {"from": "a", "to": "b"}}),
     ("PUT", "/api/v1/notes/NOTE-424242", {"json": {"title": "claimed"}}),
     ("DELETE", "/api/v1/notes/{ref}", {}),
     (

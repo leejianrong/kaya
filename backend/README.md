@@ -15,6 +15,7 @@ slices and epics landed.
 | `GET /api/v1/notes` | `{"notes": [...]}`, owner-scoped in SQL, newest first. `?q=` ranks by `ts_rank DESC, note.id DESC` (KAN-558/559) |
 | `GET /api/v1/notes/{ref}` | `ref` is `NOTE-12`, `note-12` **or** `12` |
 | `PATCH /api/v1/notes/{ref}` | Partial. Omitted fields are unchanged. Moving a note is `{"path": …}`. Optional `if_updated_at` → `409` on a stale one |
+| `POST /api/v1/notes/move-folder` | `{"from","to"}` → `{"moved": n}`. Bulk path-prefix rewrite of the caller's notes in one transaction (KAN-2000, ADR 0008). `422` for empty/blank/self-nested/too-long; `from == to` is `{"moved": 0}` |
 | `DELETE /api/v1/notes/{ref}` | `204`. The ref is never reused |
 | `GET /api/v1/notes/{ref}/links` | Resolves the note's `[[wikilinks]]` against pandan with the caller's own PAT; unresolved on failure, never an error (KAN-566, ADR 0003) |
 | `GET /api/v1/notes/{ref}/backlinks` | Every note linking to this one, answered from kaya's own tables — no upstream call (KAN-566) |
