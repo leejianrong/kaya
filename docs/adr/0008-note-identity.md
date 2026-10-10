@@ -82,3 +82,15 @@ sequences after ADR 0018, and it's the cheapest possible insurance.
   is a reason to be sure of it now rather than a cost later.
 - **Now has to be true:** the ref resolver is central and lands in **V1** (API) and **V2a** (CLI), before any
   verb that takes an identifier. A per-call-site resolver is the shape that produced pandan's inconsistency.
+
+## Amendment (2026-10-10, KAN-2000): folders stay derived
+
+- A folder is still only a view of `note.path`. There is no folder table and there must never be one;
+  `frontend/src/lib/tree.ts` derives the tree, and the last path segment is a note's filename, not a folder.
+- An **empty folder** has no representation in the database. It exists only as a client-side placeholder
+  until a note is saved beneath it.
+- **Renaming or moving a folder is a bulk path-prefix rewrite**: `POST /api/v1/notes/move-folder`
+  (`{"from", "to"}` → `{"moved": n}`) rewrites the leading whole segments of every one of the caller's notes
+  under `from` to `to`, in one transaction. It is the bulk form of `PATCH {"path": …}`: no link rewriting
+  (identity is the `NOTE-n` ref), no version cut, `updated_at` restamped. A note whose path is exactly `from`
+  is a leaf named like the folder and is not moved; moving a folder into itself or a descendant is a `422`.

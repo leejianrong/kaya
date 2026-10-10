@@ -34,6 +34,7 @@ the exception ``links.py`` is.
 Deliberately absent: paging of any shape.
 """
 
+from http import HTTPStatus
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -42,6 +43,8 @@ from sqlalchemy.orm import Session
 from app.api.concurrency import enforce_precondition
 from app.api.refs import NoteFromRef
 from app.api.schemas import (
+    FolderMove,
+    FolderMoved,
     FormatCheck,
     NoteCreate,
     NoteList,
@@ -60,8 +63,10 @@ from app.auth import (
     get_team_access_resolver,
     notes_matching,
     notes_owned_by,
+    notes_with_paths,
 )
 from app.db import get_session
+from app.folders import FolderMoveError, plan_move, rewrite
 from app.integrations.dependencies import PandanBearer
 from app.markdown_format import format_markdown
 from app.models import Note
@@ -238,6 +243,41 @@ def list_note_versions(note: NoteFromRef, session: DbSession) -> NoteVersionList
     return NoteVersionList(
         versions=[NoteVersionRead.of(version) for version in session.scalars(statement)]
     )
+
+
+@router.post("/notes/move-folder", summary="Move or rename a folder")
+def move_folder(
+    payload: FolderMove, principal: CurrentPrincipal, session: DbSession
+) -> FolderMoved:
+    """Rewrite the leading path prefix ``from`` to ``to`` on every one of the caller's notes under
+    it, in one transaction (KAN-2000, ADR 0008 amendment). Returns ``{"moved": n}``.
+
+    A folder is only a view of ``note.path``; there is no folder table to rename, so this is the
+    bulk form of ``PATCH {"path": ...}`` and behaves the same per note: ``path`` is the one column
+    that changes, ``updated_at`` is restamped by the column's ``onupdate``, no body is touched so
+    no version is cut and no link is rewritten (identity is ``NOTE-n``). ``from == to`` (after
+    normalising slashes) is a no-op returning ``0``. A note whose path is exactly ``from`` is a leaf
+    named like the folder and is left alone. Scoped to the caller in SQL by ``notes_with_paths``.
+    Unguarded by ``if_updated_at``, like any metadata-only write (ADR 0009).
+    """
+    try:
+        origin, destination = plan_move(payload.source, payload.target)
+        if origin == destination:
+            return FolderMoved(moved=0)
+        changes: dict[Note, str] = {}
+        for note in session.scalars(notes_with_paths(principal)):
+            moved_path = rewrite(note.path, origin, destination)
+            if moved_path is not None:
+                changes[note] = moved_path
+    except FolderMoveError as error:
+        raise HTTPException(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail=error_body("invalid_folder_move", str(error)),
+        ) from error
+    for note, moved_path in changes.items():
+        note.path = moved_path
+    session.commit()
+    return FolderMoved(moved=len(changes))
 
 
 @router.patch("/notes/{ref}", summary="Edit a note, or move it")

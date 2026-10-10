@@ -47,6 +47,7 @@ from collections.abc import Iterable
 
 from fastapi import HTTPException, status
 from sqlalchemy import Select, func, or_, select
+from sqlalchemy.orm import load_only
 
 from app.auth.errors import error_body
 from app.auth.principal import Principal
@@ -171,6 +172,18 @@ def notes_owned_by(
     depending on a reviewer noticing.
     """
     return select(Note).where(or_(Note.owner_id == principal.id, Note.team_id.in_(team_ids)))
+
+
+def notes_with_paths(
+    principal: Principal, team_ids: frozenset[int] = frozenset()
+) -> Select[tuple[Note]]:
+    """The caller's notes with only ``id`` and ``path`` loaded, for a folder move (KAN-2000).
+
+    ``notes_owned_by`` with the prose left on the shelf: a bulk path rewrite reads every path and
+    never a body, and ``load_only`` keeps it that way. Scoping is inherited from
+    ``notes_owned_by``, so a move cannot reach another user's note.
+    """
+    return notes_owned_by(principal, team_ids).options(load_only(Note.id, Note.path))
 
 
 SEARCH_CONFIG = "english"
