@@ -459,9 +459,12 @@
       min-height: 3rem;
     }
 
+    /* `.row` centres its content (vertically, in a column); a folder row is a row, so the inherited
+       `justify-content: center` would centre the name and caret horizontally. */
     .row.folder {
       flex-direction: row;
       align-items: center;
+      justify-content: flex-start;
     }
   }
 </style>

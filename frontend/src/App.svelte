@@ -12,6 +12,7 @@
   import PandanConnect from './components/PandanConnect.svelte'
   import PreviewPane from './components/PreviewPane.svelte'
   import BottomSheet from './components/BottomSheet.svelte'
+  import Resizer from './components/Resizer.svelte'
   import RightRail from './components/RightRail.svelte'
   import Sidebar from './components/Sidebar.svelte'
   import Settings from './components/Settings.svelte'
@@ -40,10 +41,23 @@
     type NoteMode,
   } from './lib/noteMode'
   import {
+    clampWidth,
+    effectiveLeft,
+    effectiveRight,
+    LEFT_WIDTH,
+    leftMax,
+    RIGHT_WIDTH,
+    rightMax,
+  } from './lib/panels'
+  import {
+    panelsResizable,
     readStoredPaneOpen,
+    readStoredPanels,
     resolvePaneOpen,
     shellRegions,
+    supportingResizable,
     writeStoredPaneOpen,
+    writeStoredPanels,
   } from './lib/shell'
 import { type EditorCommands, toolbarShown } from './lib/toolbar'
 import { watchViewport } from './lib/viewport'
@@ -543,6 +557,89 @@ import { watchViewport } from './lib/viewport'
   const railed = $derived(supporting.kind === 'pane' && paneOpen)
 
   /**
+   * KAY-165: the two side panels' widths and the list's collapsed state. `lib/panels.ts` holds the
+   * arithmetic; this file owns the state and the one place it reaches the layout, two CSS custom
+   * properties on `.shell` that `grid-template-columns` reads.
+   *
+   * Remembered per window class (re-read when the class changes, like the mode). Only medium and
+   * expanded have anything to resize: on compact the list is a full screen and Links a sheet. The
+   * pane has a width only where it sits *beside* the note (`supportingResizable`); at medium it is
+   * below the note, so it has no resizer and no column.
+   *
+   * What renders is the stored preference clamped to what the window can spare, so a narrow window
+   * never rewrites the choice. A drag does not touch state: `Resizer` hands each clamped width to
+   * `setLive`, which sets the property directly, and commits once on release.
+   */
+  let panelPrefs = $derived(readStoredPanels(windowClass))
+  let viewportWidth = $state(typeof window === 'undefined' ? 1440 : window.innerWidth)
+  $effect(() => {
+    const onResize = (): void => {
+      viewportWidth = window.innerWidth
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  })
+
+  const resizable = $derived(authed && panelsResizable(windowClass))
+  const listShown = $derived(regions.list && resizable)
+  const leftOpen = $derived(!listShown || panelPrefs.leftOpen)
+  const besideRail = $derived(railed && supportingResizable(supporting))
+  const rightPref = $derived(clampWidth(panelPrefs.right ?? RIGHT_WIDTH.default, RIGHT_WIDTH))
+  const leftWidth = $derived(
+    effectiveLeft(
+      panelPrefs.left ?? LEFT_WIDTH.default,
+      viewportWidth,
+      windowClass,
+      besideRail ? rightPref : 0,
+    ),
+  )
+  const rightWidth = $derived(
+    effectiveRight(rightPref, viewportWidth, windowClass, leftOpen ? leftWidth : 0),
+  )
+  const leftLimit = $derived(leftMax(viewportWidth, windowClass, besideRail ? rightPref : 0))
+  const rightLimit = $derived(rightMax(viewportWidth, windowClass, leftOpen ? leftWidth : 0))
+
+  let shellEl: HTMLElement | null = $state(null)
+  let collapsingTimer: ReturnType<typeof setTimeout> | undefined
+
+  function setLive(property: '--left-col' | '--right-col', width: number): void {
+    shellEl?.style.setProperty(property, `${width}px`)
+  }
+
+  function commitPanels(next: Partial<typeof panelPrefs>): void {
+    panelPrefs = { ...panelPrefs, ...next }
+    writeStoredPanels(windowClass, panelPrefs)
+  }
+
+  /** The width animation belongs to collapse and expand only: during a drag it would lag the pointer. */
+  let animateColumns = $state(false)
+
+  function toggleList(): void {
+    animateColumns = true
+    clearTimeout(collapsingTimer)
+    collapsingTimer = setTimeout(() => (animateColumns = false), 300)
+    commitPanels({ leftOpen: !panelPrefs.leftOpen })
+  }
+
+  function onShortcut(event: KeyboardEvent): void {
+    if (
+      listShown &&
+      (event.ctrlKey || event.metaKey) &&
+      !event.altKey &&
+      !event.shiftKey &&
+      event.key.toLowerCase() === 'b' &&
+      !event.defaultPrevented
+    ) {
+      event.preventDefault()
+      toggleList()
+    }
+  }
+  $effect(() => {
+    window.addEventListener('keydown', onShortcut)
+    return () => window.removeEventListener('keydown', onShortcut)
+  })
+
+  /**
    * KAN-1995: the number on the Links and history button. The rail is not mounted while closed, so
    * it cannot say how many notes link here; this is one `GET /backlinks` per opened note, counted
    * as the length of the rows downloaded (ADR 0004: a label, not an aggregate). `null` hides the
@@ -698,10 +795,30 @@ import { watchViewport } from './lib/viewport'
   class:tokens-or-device={authed && (route.name === 'tokens' || route.name === 'device')}
   class:railed
   class:compact
+  class:animate-columns={animateColumns}
+  bind:this={shellEl}
+  style:--left-col="{leftOpen ? leftWidth : 0}px"
+  style:--right-col="{rightWidth}px"
   class:toolbar-open={toolbarOn}
   data-window-class={windowClass}
 >
   <header class="topbar">
+    {#if listShown}
+      <!-- KAY-165: collapses the note list to zero width. Ctrl/Cmd+B does the same. -->
+      <button
+        class="toggle list-toggle"
+        class:on={!leftOpen}
+        aria-expanded={leftOpen}
+        aria-controls="list-panel"
+        aria-keyshortcuts="Control+B Meta+B"
+        onclick={toggleList}
+        aria-label={leftOpen ? 'Hide note list' : 'Show note list'}
+        title={leftOpen ? 'Hide note list (Ctrl+B)' : 'Show note list (Ctrl+B)'}
+        data-testid="toggle-list"
+      >
+        <NavIcon name={leftOpen ? 'left-close' : 'left-open'} />
+      </button>
+    {/if}
     {#if compact && authed && route.name === 'note'}
       <!-- KAN-1818: real navigation (a link to `/`), so the browser's and the OS's back button and
            this arrow agree. -->
@@ -725,7 +842,7 @@ import { watchViewport } from './lib/viewport'
       <!-- KAN-1827: one button, two surfaces. A sheet is a dialog the button opens; a pane is a
            region the button shows and hides. -->
       <button
-        class="toggle"
+        class="toggle details-toggle"
         class:on={supporting.kind === 'sheet' ? sheetOpen : paneOpen}
         aria-expanded={supporting.kind === 'sheet' ? sheetOpen : paneOpen}
         aria-haspopup={supporting.kind === 'sheet' ? 'dialog' : undefined}
@@ -757,7 +874,24 @@ import { watchViewport } from './lib/viewport'
     </main>
   {:else if authed}
     {#if regions.list}
-      <Sidebar {notes} {route} loading={listing} {query} onsearch={search} oncreate={createAndOpen} onfolder={folderClicked} />
+      <!-- KAY-165: the wrapper is what collapses (and goes `inert`, so a zero-width list is not
+           tabbable); the sidebar inside keeps its own layout. -->
+      <div class="list-panel" id="list-panel" inert={!leftOpen}>
+        <Sidebar {notes} {route} loading={listing} {query} onsearch={search} oncreate={createAndOpen} onfolder={folderClicked} />
+      </div>
+      {#if listShown && leftOpen}
+        <Resizer
+          side="left"
+          label="Resize note list"
+          controls="list-panel"
+          value={leftWidth}
+          min={LEFT_WIDTH.min}
+          max={leftLimit}
+          fallback={clampWidth(LEFT_WIDTH.default, { ...LEFT_WIDTH, max: leftLimit })}
+          onlive={(w) => setLive('--left-col', w)}
+          oncommit={(w) => commitPanels({ left: w })}
+        />
+      {/if}
     {/if}
     {#if regions.main}
       <main>
@@ -837,6 +971,19 @@ import { watchViewport } from './lib/viewport'
         sidebar row (see `noteRestored`).
       -->
       <RightRail {note} onexpired={discard} onrestored={noteRestored} oncount={(n) => (backlinkCount = n)} />
+      {#if besideRail}
+        <Resizer
+          side="right"
+          label="Resize links and history"
+          controls="supporting-pane"
+          value={rightWidth}
+          min={RIGHT_WIDTH.min}
+          max={rightLimit}
+          fallback={clampWidth(RIGHT_WIDTH.default, { ...RIGHT_WIDTH, max: rightLimit })}
+          onlive={(w) => setLive('--right-col', w)}
+          oncommit={(w) => commitPanels({ right: w })}
+        />
+      {/if}
     {/if}
     {#if supporting.kind === 'sheet' && sheetOpen}
       <BottomSheet label="Links and history" onclose={() => (sheetOpen = false)}>
@@ -867,9 +1014,20 @@ import { watchViewport } from './lib/viewport'
   }
 
   /* The list region, whenever there is one (`Sidebar` places itself by class, below). */
-  .shell:has(> :global(.sidebar)) {
+  .shell:has(> .list-panel) {
     grid-template-areas: 'topbar topbar topbar' 'nav sidebar main';
-    grid-template-columns: 3.75rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr);
+    grid-template-columns: 3.75rem var(--left-col, 272px) minmax(0, 1fr);
+  }
+
+  /* KAY-165: only collapse and expand animate; a drag sets the property directly and must not lag. */
+  .shell.animate-columns {
+    transition: grid-template-columns 200ms ease;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .shell.animate-columns {
+      transition: none;
+    }
   }
 
   /* KAN-568's fourth region, present only while a note route is open (see `railed`): below the
@@ -877,7 +1035,7 @@ import { watchViewport } from './lib/viewport'
      a column, not something that stacks. */
   .shell.railed {
     grid-template-areas: 'topbar topbar topbar' 'nav sidebar main' 'nav sidebar rail';
-    grid-template-columns: 3.75rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr);
+    grid-template-columns: 3.75rem var(--left-col, 272px) minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr) auto;
   }
 
@@ -900,13 +1058,13 @@ import { watchViewport } from './lib/viewport'
       grid-template-columns: 7rem minmax(0, 1fr);
     }
 
-    .shell:has(> :global(.sidebar)) {
-      grid-template-columns: 7rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr);
+    .shell:has(> .list-panel) {
+      grid-template-columns: 7rem var(--left-col, 272px) minmax(0, 1fr);
     }
 
     .shell.railed {
       grid-template-areas: 'topbar topbar topbar topbar' 'nav sidebar main rail';
-      grid-template-columns: 7rem clamp(11rem, 28vw, 16rem) minmax(0, 1fr) clamp(10rem, 16vw, 14rem);
+      grid-template-columns: 7rem var(--left-col, 272px) minmax(0, 1fr) var(--right-col, 300px);
       grid-template-rows: auto minmax(0, 1fr);
     }
 
@@ -932,9 +1090,13 @@ import { watchViewport } from './lib/viewport'
     border-bottom: 1px solid var(--outline-variant);
   }
 
-  /* The toggles sit at the right edge of the bar. */
-  .topbar > .toggle:first-of-type {
+  /* The right-panel toggle sits at the right edge of the bar (the list toggle is on the left). */
+  .topbar > .details-toggle {
     margin-left: auto;
+  }
+
+  .topbar > .list-toggle {
+    margin-left: -0.5rem;
   }
 
   .brand {
@@ -957,8 +1119,28 @@ import { watchViewport } from './lib/viewport'
     font-size: var(--type-body-medium-size);
   }
 
-  .shell > :global(.sidebar) {
+  /* KAY-165: the list's wrapper collapses by width, so it clips; the sidebar fills it. */
+  .list-panel {
     grid-area: sidebar;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .list-panel > :global(.sidebar) {
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* The resizers sit on the edge of the panel they resize (`Resizer.svelte` offsets them). */
+  .shell > :global(.resizer.left) {
+    grid-area: sidebar;
+  }
+
+  .shell > :global(.resizer.right) {
+    grid-area: rail;
   }
 
   /* R13/KAN-1064 wrapped the fourth region in `RightRail.svelte` (the tab strip beside Backlinks),
@@ -1094,7 +1276,7 @@ import { watchViewport } from './lib/viewport'
      coexist here (`shellRegions`), so both claim the one content area. */
   @media (max-width: 599.98px) {
     .shell,
-    .shell:has(> :global(.sidebar)),
+    .shell:has(> .list-panel),
     .shell.unauthenticated {
       grid-template-areas: 'topbar' 'main' 'rail' 'nav';
       grid-template-columns: minmax(0, 1fr);
@@ -1127,8 +1309,11 @@ import { watchViewport } from './lib/viewport'
       padding-block: 0.5rem;
     }
 
-    .shell > :global(.sidebar) {
+    .list-panel {
       grid-area: main;
+    }
+
+    .list-panel > :global(.sidebar) {
       border-right: 0;
     }
 

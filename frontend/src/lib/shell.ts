@@ -12,31 +12,41 @@
  * supportingSurface} is the one place that decides which kind renders.
  */
 
-import type { Route } from './router'
-import type { WindowClass } from './windowClass'
+import {
+  decodePanels,
+  encodePanels,
+  panelsStorageKey,
+  type PanelPrefs,
+} from "./panels";
+import type { Route } from "./router";
+import type { WindowClass } from "./windowClass";
 
 export interface Regions {
   /** The primary navigation (a bottom bar on compact, a rail otherwise). */
-  nav: boolean
+  nav: boolean;
   /** The note list (`Sidebar`). */
-  list: boolean
+  list: boolean;
   /** `main`: the document, or graph/settings/etc. */
-  main: boolean
+  main: boolean;
   /** The backlinks/history surface (KAN-1827): a sheet, a pane, or nothing. */
-  supporting: Supporting
+  supporting: Supporting;
 }
 
-export type SupportingKind = 'sheet' | 'pane' | 'none'
+export type SupportingKind = "sheet" | "pane" | "none";
 
 export interface Supporting {
-  kind: SupportingKind
+  kind: SupportingKind;
   /** Where a pane sits. `null` for a sheet (it floats above everything) and for `none`. */
-  placement: 'beside' | 'below' | null
+  placement: "beside" | "below" | null;
   /** Whether it starts open. Always `false`: the document keeps the width until asked. */
-  defaultOpen: boolean
+  defaultOpen: boolean;
 }
 
-const NO_SUPPORT: Supporting = { kind: 'none', placement: null, defaultOpen: false }
+const NO_SUPPORT: Supporting = {
+  kind: "none",
+  placement: null,
+  defaultOpen: false,
+};
 
 /**
  * Which supporting surface a window class gets for a route. Only a note has anything to say about
@@ -51,29 +61,29 @@ export function supportingSurface(
   route: Route,
   authed: boolean,
 ): Supporting {
-  if (!authed || route.name !== 'note') {
-    return NO_SUPPORT
+  if (!authed || route.name !== "note") {
+    return NO_SUPPORT;
   }
-  if (windowClass === 'compact') {
-    return { kind: 'sheet', placement: null, defaultOpen: false }
+  if (windowClass === "compact") {
+    return { kind: "sheet", placement: null, defaultOpen: false };
   }
   return {
-    kind: 'pane',
-    placement: windowClass === 'medium' ? 'below' : 'beside',
+    kind: "pane",
+    placement: windowClass === "medium" ? "below" : "beside",
     defaultOpen: false,
-  }
+  };
 }
 
 /** One key per class, like `noteMode.ts`: medium and expanded are different amounts of room. */
 export function paneStorageKey(windowClass: WindowClass): string {
-  return `kaya.supportPane.${windowClass}`
+  return `kaya.supportPane.${windowClass}`;
 }
 
 function defaultStorage(): Storage | null {
   try {
-    return globalThis.localStorage ?? null
+    return globalThis.localStorage ?? null;
   } catch {
-    return null
+    return null;
   }
 }
 
@@ -83,10 +93,10 @@ export function readStoredPaneOpen(
   storage: Storage | null = defaultStorage(),
 ): boolean | null {
   try {
-    const value = storage?.getItem(paneStorageKey(windowClass))
-    return value === 'open' ? true : value === 'closed' ? false : null
+    const value = storage?.getItem(paneStorageKey(windowClass));
+    return value === "open" ? true : value === "closed" ? false : null;
   } catch {
-    return null
+    return null;
   }
 }
 
@@ -97,56 +107,112 @@ export function writeStoredPaneOpen(
   storage: Storage | null = defaultStorage(),
 ): void {
   try {
-    storage?.setItem(paneStorageKey(windowClass), open ? 'open' : 'closed')
+    storage?.setItem(paneStorageKey(windowClass), open ? "open" : "closed");
   } catch {
     // Not remembered.
   }
 }
 
-/** Open or closed on arrival: the remembered answer for a pane, otherwise the default. */
-export function resolvePaneOpen(supporting: Supporting, stored: boolean | null): boolean {
-  if (supporting.kind !== 'pane') {
-    return false
+/** The remembered panel widths and left-panel state for a class (KAY-165). Never throws. */
+export function readStoredPanels(
+  windowClass: WindowClass,
+  storage: Storage | null = defaultStorage(),
+): PanelPrefs {
+  try {
+    return decodePanels(storage?.getItem(panelsStorageKey(windowClass)));
+  } catch {
+    return decodePanels(null);
   }
-  return stored ?? supporting.defaultOpen
 }
 
-export function shellRegions(windowClass: WindowClass, route: Route, authed: boolean): Regions {
+/** Remember them. A failure is swallowed: the choice still applies this session. */
+export function writeStoredPanels(
+  windowClass: WindowClass,
+  prefs: PanelPrefs,
+  storage: Storage | null = defaultStorage(),
+): void {
+  try {
+    storage?.setItem(panelsStorageKey(windowClass), encodePanels(prefs));
+  } catch {
+    // Not remembered.
+  }
+}
+
+/**
+ * Whether the list's width can be changed or the list collapsed: it sits beside the note at medium
+ * and expanded. On compact it is a full screen of its own.
+ */
+export function panelsResizable(windowClass: WindowClass): boolean {
+  return windowClass !== "compact";
+}
+
+/** Whether the pane has a width of its own to change: only where it sits beside the note. */
+export function supportingResizable(supporting: Supporting): boolean {
+  return supporting.kind === "pane" && supporting.placement === "beside";
+}
+
+/** Open or closed on arrival: the remembered answer for a pane, otherwise the default. */
+export function resolvePaneOpen(
+  supporting: Supporting,
+  stored: boolean | null,
+): boolean {
+  if (supporting.kind !== "pane") {
+    return false;
+  }
+  return stored ?? supporting.defaultOpen;
+}
+
+export function shellRegions(
+  windowClass: WindowClass,
+  route: Route,
+  authed: boolean,
+): Regions {
   if (!authed) {
     // `tokens`/`device` are reachable with no credential and render in `main` alone (KAN-1739).
-    return { nav: false, list: false, main: true, supporting: NO_SUPPORT }
+    return { nav: false, list: false, main: true, supporting: NO_SUPPORT };
   }
-  const compact = windowClass === 'compact'
-  const listRoute = route.name !== 'tokens' && route.name !== 'device'
-  const list = listRoute && (!compact || route.name === 'home')
-  const main = !(compact && route.name === 'home')
-  return { nav: true, list, main, supporting: supportingSurface(windowClass, route, authed) }
+  const compact = windowClass === "compact";
+  const listRoute = route.name !== "tokens" && route.name !== "device";
+  const list = listRoute && (!compact || route.name === "home");
+  const main = !(compact && route.name === "home");
+  return {
+    nav: true,
+    list,
+    main,
+    supporting: supportingSurface(windowClass, route, authed),
+  };
 }
 
 export interface NavDestination {
-  label: string
-  href: string
-  icon: 'notes' | 'graph' | 'settings'
-  isActive: (route: Route) => boolean
+  label: string;
+  href: string;
+  icon: "notes" | "graph" | "settings";
+  isActive: (route: Route) => boolean;
 }
 
 /** The three primary destinations. Tokens and the pandan link live under Settings. */
 export const NAV_DESTINATIONS: readonly NavDestination[] = [
   {
-    label: 'Notes',
-    href: '/',
-    icon: 'notes',
-    isActive: (r) => r.name === 'home' || r.name === 'note',
+    label: "Notes",
+    href: "/",
+    icon: "notes",
+    isActive: (r) => r.name === "home" || r.name === "note",
   },
-  { label: 'Graph', href: '/graph', icon: 'graph', isActive: (r) => r.name === 'graph' },
   {
-    label: 'Settings',
-    href: '/settings',
-    icon: 'settings',
-    isActive: (r) => r.name === 'settings' || r.name === 'tokens' || r.name === 'pandan',
+    label: "Graph",
+    href: "/graph",
+    icon: "graph",
+    isActive: (r) => r.name === "graph",
   },
-]
+  {
+    label: "Settings",
+    href: "/settings",
+    icon: "settings",
+    isActive: (r) =>
+      r.name === "settings" || r.name === "tokens" || r.name === "pandan",
+  },
+];
 
 export function navActive(destination: NavDestination, route: Route): boolean {
-  return destination.isActive(route)
+  return destination.isActive(route);
 }
