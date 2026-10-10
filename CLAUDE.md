@@ -82,6 +82,11 @@ unit-tested without a browser, decide everything; components only consume them.
   toggle, which is gone. Split exists only at `expanded` and is *hidden*, never disabled, below 840;
   expanded opens in Edit, narrower opens a saved note in Read and a just-created one in Edit. The mode
   changes the layout around `EditorPane`, never its mount.
+- **`lib/panels.ts`** owns the side-panel widths (KAY-165): list 200-460 (default 272), pane 240-480
+  (300), clamped to what the window leaves the note, remembered per class through `lib/shell.ts`. They
+  reach CSS as `--left-col`/`--right-col` on `.shell`; a drag sets the property and commits once on
+  release (`Resizer.svelte`). Resizing and the list collapse (top-bar button, Ctrl/Cmd+B) exist at
+  medium and expanded only, and the pane has a handle only where it sits *beside* the note.
 - **Colour, type, shape and state layers are Material 3 tokens in `frontend/src/tokens.css`** (seed `#0d9488`, light and
   dark by `prefers-color-scheme`; the generation command is in its header). Components use role names
   (`--primary`, `--surface-container-low`, `--shape-full`); `tests/tokens-shape.test.ts` fails on a raw colour
