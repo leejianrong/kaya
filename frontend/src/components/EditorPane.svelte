@@ -538,6 +538,35 @@ import type { EditorCommands } from '../lib/toolbar'
   })
 
   /**
+   * KAY-168: the sidebar can rename or move the open note (row menu, drag, folder rename) and hands
+   * the new title/path/stamp down as a changed `note` prop with the **same ref and body**. Adopt them
+   * into the fields, but never over text being typed (draft differs from baseline), and take the new
+   * `updated_at` as the guard basis so the next Save is not refused against the tree's own write.
+   * Reads only the three fields; the rest is untracked, so this never reruns on keystrokes.
+   */
+  $effect(() => {
+    const title = note?.title
+    const path = note?.path
+    const stamp = note?.updated_at
+    untrack(() => {
+      if (note === null || mountedRef !== note.ref || title === undefined || path === undefined) {
+        return
+      }
+      if (title !== titleBaseline && titleDraft === titleBaseline) {
+        titleBaseline = title
+        titleDraft = title
+      }
+      if (path !== pathBaseline && pathDraft === pathBaseline) {
+        pathBaseline = path
+        pathDraft = path
+      }
+      if (stamp !== undefined && stamp !== basedOn) {
+        basedOn = stamp
+      }
+    })
+  })
+
+  /**
    * KAN-969's second navigation surface: a tab close or a reload, which `lib/router.ts`'s guard
    * cannot see at all — `beforeunload` fires once the browser has already decided to leave, on a
    * page the SPA's own router never gets a say over. So this has to be asked directly, from the one

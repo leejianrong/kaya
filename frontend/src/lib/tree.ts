@@ -23,6 +23,7 @@
  * nothing about structure.
  */
 
+import { folderOf, slugify } from './newNote'
 import type { Note } from './types'
 
 /** A path segment that some note lives under. Synthesised, never stored. */
@@ -89,9 +90,25 @@ export interface NoteTree {
  * onto the plain form; a path that is *entirely* separators or blanks therefore has no segments left
  * and is `unpathed`, which is the same place `''` goes and the same thing it means.
  */
-export function buildTree(notes: Note[]): NoteTree {
+export function buildTree(notes: Note[], placeholders: readonly string[] = []): NoteTree {
   const root: Builder = { folders: new Map(), leaves: [] }
   const unpathed: Note[] = []
+
+  // KAY-168: client-only empty folders (ADR 0008 amendment). They add folder nodes and never notes,
+  // so `countNotes` is unaffected; a folder that real notes already create is simply the same node.
+  for (const placeholder of placeholders) {
+    let level = root
+    let prefix = ''
+    for (const segment of pathSegments(placeholder)) {
+      prefix = prefix === '' ? segment : `${prefix}/${segment}`
+      let next = level.folders.get(segment)
+      if (next === undefined) {
+        next = { folders: new Map(), leaves: [], key: prefix }
+        level.folders.set(segment, next)
+      }
+      level = next
+    }
+  }
 
   for (const note of notes) {
     const segments = note.path.split('/').filter((segment) => segment.trim() !== '')
@@ -155,4 +172,128 @@ function finish(level: Builder): TreeNode[] {
   )
 
   return [...folders, ...leaves]
+}
+
+/** Segments of a path with blanks and doubled separators dropped, as `buildTree` reads one. */
+export function pathSegments(path: string): string[] {
+  return path.split('/').filter((segment) => segment.trim() !== '')
+}
+
+/** A note's filename: its path's last segment, or a slug of its title plus `.md` when it has none. */
+export function fileNameOf(note: Note): string {
+  const segments = pathSegments(note.path)
+  return segments.length > 0 ? segments[segments.length - 1] : `${slugify(note.title)}.md`
+}
+
+/** The path a note gets when moved into `folder` (`''` is the top level): same filename, new folder. */
+export function movePath(note: Note, folder: string): string {
+  const dir = pathSegments(folder).join('/')
+  return dir === '' ? fileNameOf(note) : `${dir}/${fileNameOf(note)}`
+}
+
+/**
+ * Every folder a note could be moved into: each folder some note lives under (and every ancestor of
+ * one), plus the client-only placeholders and their ancestors. Sorted, never containing `''`.
+ */
+export function folderTargets(notes: readonly Note[], placeholders: readonly string[] = []): string[] {
+  const found = new Set<string>()
+  const add = (folder: string): void => {
+    let prefix = ''
+    for (const segment of pathSegments(folder)) {
+      prefix = prefix === '' ? segment : `${prefix}/${segment}`
+      found.add(prefix)
+    }
+  }
+  for (const note of notes) {
+    add(folderOf(note.path))
+  }
+  for (const placeholder of placeholders) {
+    add(placeholder)
+  }
+  return [...found].sort((left, right) => left.localeCompare(right))
+}
+
+export const FOLDER_NAME_MAX = 64
+
+export type FolderNameCheck = { ok: true; name: string } | { ok: false; error: string }
+
+/**
+ * A folder name for one level: trimmed, non-blank, no `/`, not `.` or `..`, at most
+ * {@link FOLDER_NAME_MAX} characters, and not already a sibling (compared case-insensitively, so two
+ * folders cannot differ only by case in a sidebar where that reads as a duplicate).
+ * `siblings` are the other folder names at that level; pass none of the one being renamed.
+ */
+export function validateFolderName(raw: string, siblings: readonly string[]): FolderNameCheck {
+  const name = raw.trim()
+  if (name === '') {
+    return { ok: false, error: 'A folder needs a name.' }
+  }
+  if (name.includes('/')) {
+    return { ok: false, error: 'A folder name cannot contain "/".' }
+  }
+  if (name === '.' || name === '..') {
+    return { ok: false, error: `"${name}" is not a valid folder name.` }
+  }
+  if (name.length > FOLDER_NAME_MAX) {
+    return { ok: false, error: `A folder name is at most ${FOLDER_NAME_MAX} characters.` }
+  }
+  if (siblings.some((sibling) => sibling.trim().toLowerCase() === name.toLowerCase())) {
+    return { ok: false, error: `A folder called "${name}" already exists here.` }
+  }
+  return { ok: true, name }
+}
+
+/** The parent of a folder key (`a/b` -> `a`, `a` -> `''`). */
+export function parentOf(key: string): string {
+  return pathSegments(key).slice(0, -1).join('/')
+}
+
+/** The key of a folder called `name` inside `parent`. */
+export function childKey(parent: string, name: string): string {
+  const dir = pathSegments(parent).join('/')
+  return dir === '' ? name : `${dir}/${name}`
+}
+
+/**
+ * The names of the folders directly inside `parent` (`''` for the top level), in `tree`.
+ * What {@link validateFolderName} wants as `siblings`.
+ */
+export function folderNamesIn(tree: NoteTree, parent: string): string[] {
+  let level: TreeNode[] = tree.roots
+  for (const segment of pathSegments(parent)) {
+    const next = level.find((node) => node.kind === 'folder' && node.name === segment)
+    if (next === undefined || next.kind !== 'folder') {
+      return []
+    }
+    level = next.children
+  }
+  return level.flatMap((node) => (node.kind === 'folder' ? [node.name] : []))
+}
+
+/**
+ * `path` with the leading whole segments `from` replaced by `to`, or `null` when `path` is not under
+ * `from` (a path exactly equal to `from` is a leaf named like the folder and is not moved). The
+ * client-side mirror of the backend's `app/folders.py:rewrite`, used to carry the collapse set and
+ * placeholders across a rename. For a *folder key* pass `strict = false` so the key itself matches.
+ */
+export function renameFolderPrefix(
+  path: string,
+  from: string,
+  to: string,
+  strict = true,
+): string | null {
+  const have = pathSegments(path)
+  const prefix = pathSegments(from)
+  const under = strict ? have.length > prefix.length : have.length >= prefix.length
+  if (!under || !prefix.every((segment, index) => have[index] === segment)) {
+    return null
+  }
+  return [...pathSegments(to), ...have.slice(prefix.length)].join('/')
+}
+
+/** What a tree action (move, rename) reports back: a line to announce, and whether it worked. */
+export interface Outcome {
+  ok: boolean
+  /** `''` means "say nothing" (a `401`, which `App` already handled by signing out). */
+  message: string
 }

@@ -14,6 +14,8 @@
   import rightPanelOpen from '@material-symbols/svg-400/outlined/right_panel_open.svg?raw'
   import rightPanelClose from '@material-symbols/svg-400/outlined/right_panel_close.svg?raw'
 
+  import moreVert from '@material-symbols/svg-400/outlined/more_vert.svg?raw'
+  import createNewFolder from '@material-symbols/svg-400/outlined/create_new_folder.svg?raw'
   import leftPanelOpen from '@material-symbols/svg-400/outlined/left_panel_open.svg?raw'
   import leftPanelClose from '@material-symbols/svg-400/outlined/left_panel_close.svg?raw'
 
@@ -26,6 +28,8 @@
     | 'left-open'
     | 'left-close'
     | 'add'
+    | 'more'
+    | 'new-folder'
 
   /** The one `d` attribute of a Material Symbols file. A path is data here, never markup. */
   function pathOf(svg: string): string {
@@ -41,6 +45,8 @@
     'left-open': pathOf(leftPanelOpen),
     'left-close': pathOf(leftPanelClose),
     add: pathOf(add),
+    more: pathOf(moreVert),
+    'new-folder': pathOf(createNewFolder),
   }
 </script>
 
