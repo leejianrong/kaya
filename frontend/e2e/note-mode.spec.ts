@@ -15,11 +15,11 @@ test('desktop: Edit by default, Read alone, Split at 55/45, and the choice survi
   const title = prefixedTitle('modes')
   const note = await apiCreateNote(request, {
     title,
-    body: `# Heading of ${title}\n\nA paragraph of prose.\n`,
+    body: `# Heading of ${title}\n\n${'A paragraph of prose that keeps going. '.repeat(60)}\n`,
     path: 'modes/check.md',
   })
   try {
-    // Wide enough that the pane is wider than the 72ch cap, so the cap is what is measured.
+    // Wide enough that the Read measure (75ch) is much narrower than the pane.
     await page.setViewportSize({ width: 1700, height: 900 })
     await page.goto(`/notes/${note.ref}`)
     await expect(page.getByTestId('title-input')).toHaveValue(title)
@@ -31,23 +31,34 @@ test('desktop: Edit by default, Read alone, Split at 55/45, and the choice survi
     await expect(page.getByTestId('toggle-preview')).toHaveCount(0)
     await expect(editor).toBeVisible()
     await expect(preview).toHaveCount(0)
-    // The editor's measure is capped (~72ch) and centred, not stretched across the pane.
+    // KAN-1997: Edit fills the pane; there is no measure cap on the editor.
     const main = (await page.locator('main').boundingBox())!
     const pane = (await page.locator('section.pane[aria-label="Editor"]').boundingBox())!
-    expect(pane.width).toBeLessThan(main.width)
-    expect(Math.abs(pane.x - main.x - (main.x + main.width - pane.x - pane.width))).toBeLessThan(2)
-    expect(pane.width).toBeGreaterThan(400)
+    expect(pane.width).toBeGreaterThan(main.width - 80)
 
-    // Read: the rendered note alone, a ~65ch column, the editor hidden (and out of the a11y tree).
+    // Read: the rendered note alone, a full-width pane with a ~75ch text measure, the editor hidden (and out of the a11y tree).
     await page.getByTestId('mode-read').click()
     await expect(page.getByTestId('mode-read')).toHaveAttribute('aria-pressed', 'true')
     await expect(preview).toBeVisible()
     await expect(preview.locator('h1')).toHaveText(`Heading of ${title}`)
     await expect(editor).toBeHidden()
     await expect(page.getByTestId('delete-button')).toHaveCount(0)
+    // The pane is full width, but running text keeps its ~75ch measure.
     const read = (await page.locator('.preview').boundingBox())!
-    expect(read.width).toBeLessThanOrEqual(700) // ~65ch of text plus the pane's gutters
-    expect(read.width).toBeLessThan(main.width)
+    expect(read.width).toBeGreaterThan(main.width - 80)
+    const prose = (await preview.locator('p').first().boundingBox())!
+    expect(prose.width).toBeLessThanOrEqual(900)
+    expect(prose.width).toBeLessThan(main.width * 0.7)
+
+    // "Full-width reading" (Settings, per browser) removes the cap.
+    await page.evaluate(() => localStorage.setItem('kaya.reading.fullWidth', '1'))
+    await page.reload()
+    await expect(page.getByTestId('preview')).toBeVisible()
+    const wide = (await preview.locator('p').first().boundingBox())!
+    expect(wide.width).toBeGreaterThan(main.width - 120)
+    await page.evaluate(() => localStorage.removeItem('kaya.reading.fullWidth'))
+    await page.reload()
+    await expect(page.getByTestId('preview')).toBeVisible()
 
     // Split: both, the editor ~55% and the preview ~45% of the pair.
     await page.getByTestId('mode-split').click()

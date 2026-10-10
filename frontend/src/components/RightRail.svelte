@@ -28,8 +28,11 @@
     note,
     onexpired,
     onrestored,
+    oncount = () => {},
     id = 'supporting-pane',
   }: {
+    /** KAN-1995: the backlinks answer's size, passed to the top bar's badge. */
+    oncount?: (count: number) => void
     /** Prefix for the tab and panel ids, and the element id the toggle's `aria-controls` names. */
     id?: string
     note: Note | null
@@ -96,7 +99,7 @@
   </div>
   <div class="pane" role="tabpanel" id="{id}-panel" aria-labelledby="{id}-tab-{tab}">
     {#if tab === 'backlinks'}
-      <BacklinksPanel {note} {onexpired} />
+      <BacklinksPanel {note} {onexpired} {oncount} />
     {:else}
       <HistoryPanel {note} {onexpired} {onrestored} />
     {/if}
