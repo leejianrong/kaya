@@ -31,16 +31,18 @@ test('mint one token per preset and see each as a chip, at every width and schem
   const labels = await page.locator('#token-scope option').allTextContents()
   expect(labels.map((label) => label.trim())).toEqual(PRESETS.map((preset) => preset.label))
 
-  for (const preset of PRESETS) {
+  // The app may have minted its own automatic token for this session, so match ours by name.
+  const mine = page.locator('[data-testid="token-list"] li', { hasText: 'preset ' })
+
+  for (const [made, preset] of PRESETS.entries()) {
     await page.locator('#token-name').fill(`preset ${preset.scope} long name for wrapping`)
     await page.locator('#token-scope').selectOption(preset.scope)
     await expect(page.getByTestId('preset-help')).not.toHaveText('')
     await page.getByRole('button', { name: 'Create token' }).click()
-    await expect(page.getByTestId('created-secret')).toBeVisible()
+    // `created-secret` stays up from the previous token, so wait on the list growing instead.
+    await expect(mine).toHaveCount(made + 1)
   }
 
-  // The app may have minted its own automatic token for this session, so match ours by name.
-  const mine = page.locator('[data-testid="token-list"] li', { hasText: 'preset ' })
   await expect(mine).toHaveCount(3)
   for (const [index, preset] of PRESETS.entries()) {
     await expect(mine.nth(index).getByTestId('preset-chip')).toHaveText(preset.label)
