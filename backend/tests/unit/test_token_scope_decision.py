@@ -99,6 +99,16 @@ def test_the_justification_list_has_no_stale_entries() -> None:
     assert stale == [], f"remove these from NOT_REACHABLE_BY_A_BEARER: {stale}"
 
 
+def test_every_token_scope_has_a_decision_in_get_principal() -> None:
+    """KAY-141: the preset set is closed and enforced in `get_principal` alone. A new entry in
+    `TOKEN_SCOPES` means a new branch there; this fails until the two are reconciled."""
+    from app.identity.pat import TOKEN_SCOPES
+    from app.identity.pat_schemas import TokenScope
+
+    assert TOKEN_SCOPES == ("read", "write", "write-no-delete")
+    assert {scope.value for scope in TokenScope} == set(TOKEN_SCOPES)
+
+
 def test_a_principal_with_no_scope_given_is_a_full_access_one() -> None:
     """A cookie session, and every fixture that builds a `Principal` by hand, is not narrowed."""
     import uuid

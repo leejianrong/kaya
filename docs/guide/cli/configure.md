@@ -39,8 +39,9 @@ kaya auth login
 `auth login` is an RFC 8628 device flow against kaya's own authorization server. It prints a link
 and a short code, opens your browser, and polls until you approve. The `kaya_pat_…` token it
 receives goes straight into the config file and is never printed. `--scope read` requests the
-`read` scope (the default is `write`). A `read` token cannot change anything, and a write
-attempt exits with code 4. Run it against the deployment you set with
+`read` preset and `--scope write-no-delete` the no-delete preset (the default is `write`). A `read`
+token cannot change anything and a `write-no-delete` token cannot delete; either refusal is a `403`
+and exits with code 4. Run it against the deployment you set with
 `--api-url`, since the token is only good there.
 
 `kaya auth check` reports whether a token is configured and whether it comes from the environment

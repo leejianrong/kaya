@@ -111,6 +111,16 @@ def test_an_unknown_device_code_is_the_same_expired_token_as_a_real_one_would_be
     assert response.json() == {"error": "expired_token"}
 
 
+def test_a_device_flow_can_request_the_no_delete_preset(client: Any) -> None:
+    code = start_login(client, scope="write-no-delete")
+    user_code = code["user_code"]
+
+    assert client.get(f"/auth/device/{user_code}").json()["requested_scope"] == "write-no-delete"
+    assert client.post(f"/auth/device/{user_code}/approve").status_code == 200
+
+    assert poll(client, code["device_code"]).json()["scope"] == "write-no-delete"
+
+
 def test_the_full_approve_and_poll_round_trip_mints_a_working_pat(client: Any) -> None:
     code = start_login(client, scope="read")
     user_code = code["user_code"]

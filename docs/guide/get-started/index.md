@@ -104,8 +104,9 @@ kaya auth login
 It prints a link and a short code, tries to open your browser, and waits. Approve the request on
 the page that opens (you sign in with GitHub there if you are not already). The CLI then writes
 the `kaya_pat_…` token it was given straight into the config file. The token is never printed,
-so there is nothing to copy. `--scope read` requests the `read` scope instead of the default `write`. A `read` token can read
-notes but every write is refused with a `403`.
+so there is nothing to copy. `--scope read` requests the `read` preset instead of the default `write`. A `read` token can read
+notes but every write is refused with a `403`. `--scope write-no-delete` gives a token that can
+read, create and edit but never delete.
 
 !!! tip "Prefer to mint a token by hand?"
 

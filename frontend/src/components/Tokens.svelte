@@ -32,6 +32,7 @@
     type TokenSummary,
   } from '../lib/identity'
   import { setToken } from '../lib/auth'
+  import { presetFor, TOKEN_PRESETS } from '../lib/tokenPresets'
   import { navigate } from '../lib/router'
 
   const {
@@ -202,12 +203,16 @@
     <form onsubmit={submitCreate} data-testid="create-form">
       <label for="token-name">Name</label>
       <input id="token-name" bind:value={name} placeholder="e.g. laptop" />
-      <label for="token-scope">Scope</label>
-      <select id="token-scope" bind:value={scope}>
-        <option value="write">write</option>
-        <option value="read">read</option>
+      <label for="token-scope">Access</label>
+      <select id="token-scope" bind:value={scope} aria-describedby="token-scope-help">
+        {#each TOKEN_PRESETS as preset (preset.scope)}
+          <option value={preset.scope}>{preset.label}</option>
+        {/each}
       </select>
       <button type="submit" disabled={busy}>Create token</button>
+      <p class="help" id="token-scope-help" data-testid="preset-help">
+        {presetFor(scope).description}
+      </p>
     </form>
 
     {#if tokens.length === 0}
@@ -218,7 +223,9 @@
           <li>
             <code>{token.token_prefix}…</code>
             <span class="name">{token.name}</span>
-            <span class="scope">{token.scope}</span>
+            <span class="chip" data-testid="preset-chip" title={presetFor(token.scope).description}>
+              {presetFor(token.scope).label}
+            </span>
             <button type="button" onclick={() => revoke(token.id)} disabled={busy}>Revoke</button>
           </li>
         {/each}
@@ -315,8 +322,9 @@
 
   .list li {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.6rem;
+    gap: 0.4rem 0.6rem;
     padding: 0.5rem 0;
     border-bottom: 1px solid var(--outline-variant);
   }
@@ -327,9 +335,23 @@
 
   .name {
     flex: 1;
+    min-width: 6rem;
+    overflow-wrap: anywhere;
   }
 
-  .scope {
+  .chip {
+    padding: 0.1rem 0.6rem;
+    border-radius: var(--shape-sm);
+    background: var(--secondary-container);
+    color: var(--on-secondary-container);
+    font-size: var(--type-label-medium-size);
+    font-weight: var(--type-label-medium-weight);
+    white-space: nowrap;
+  }
+
+  .help {
+    flex-basis: 100%;
+    margin: 0;
     color: var(--on-surface-variant);
     font-size: var(--type-body-medium-size);
   }

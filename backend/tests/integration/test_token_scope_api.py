@@ -373,3 +373,94 @@ def test_over_mcp_a_write_token_can_write(client: Any, live_server: str) -> None
     created = _call_tool(http, headers, "create_note", {"title": "from a write token"})
 
     assert not created.get("isError"), created
+
+
+# --- the `write-no-delete` preset (KAY-141) -----------------------------------------------------
+#
+# A write token minus every DELETE. Enforced in the same `get_principal` as `read`, so the table
+# above is reused: every non-DELETE row must pass scope, every DELETE row must be a structured 403
+# naming the preset. A restore of an old version is a PATCH of `body` (ADR 0008), so it is a write
+# and stays allowed.
+
+NOT_DELETE_ROUTES = [case for case in MUTATING_BEARER_ROUTES if case[0] != "DELETE"]
+DELETE_ROUTES = [case for case in MUTATING_BEARER_ROUTES if case[0] == "DELETE"]
+
+
+@pytest.mark.parametrize("case", DELETE_ROUTES, ids=route_id)
+def test_a_no_delete_token_gets_a_structured_403_on_every_delete(
+    client: Any, case: tuple[str, str, dict[str, Any]]
+) -> None:
+    method, path, kwargs = case
+    write_token = mint("write")
+    no_delete = mint("write-no-delete")
+    ref = seed_note(client, write_token)
+    before = note_count()
+
+    response = client.request(method, path.format(ref=ref), headers=bearer(no_delete), **kwargs)
+
+    assert response.status_code == 403, response.text
+    error = response.json()["error"]
+    assert error["code"] == "insufficient_scope"
+    assert "write-no-delete" in error["message"]
+    assert note_count() == before
+    assert client.get(f"{NOTES}/{ref}", headers=bearer(no_delete)).status_code == 200
+
+
+@pytest.mark.parametrize("case", NOT_DELETE_ROUTES, ids=route_id)
+def test_a_no_delete_token_is_not_stopped_on_any_other_method(
+    client: Any, case: tuple[str, str, dict[str, Any]]
+) -> None:
+    method, path, kwargs = case
+    ref = seed_note(client, mint("write"))
+
+    response = client.request(
+        method, path.format(ref=ref), headers=bearer(mint("write-no-delete")), **kwargs
+    )
+
+    body = response.json() if response.content else {}
+    assert body.get("error", {}).get("code") != "insufficient_scope", response.text
+
+
+def test_a_no_delete_token_reads_creates_edits_moves_and_restores(client: Any) -> None:
+    write_token = mint("write")
+    headers = bearer(mint("write-no-delete"))
+    ref = seed_note(client, write_token)
+
+    assert client.get(f"{NOTES}/{ref}", headers=headers).status_code == 200
+    created = client.post(NOTES, json={"title": "made", "body": "v1"}, headers=headers)
+    assert created.status_code == 201, created.text
+    made = created.json()["ref"]
+    assert client.patch(f"{NOTES}/{made}", json={"body": "v2"}, headers=headers).status_code == 200
+    moved = client.post(f"{NOTES}/move-folder", json={"from": "a", "to": "b"}, headers=headers)
+    assert moved.status_code != 403, moved.text
+    # Restoring an old version is a body PATCH, a write and not a delete.
+    restored = client.patch(f"{NOTES}/{made}", json={"body": "v1"}, headers=headers)
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["body"] == "v1"
+
+
+def test_a_write_token_can_still_delete(client: Any) -> None:
+    token = mint("write")
+    ref = seed_note(client, token)
+
+    assert client.delete(f"{NOTES}/{ref}", headers=bearer(token)).status_code == 204
+
+
+def test_a_read_token_delete_message_names_read_not_the_preset(client: Any) -> None:
+    ref = seed_note(client, mint("write"))
+
+    response = client.delete(f"{NOTES}/{ref}", headers=bearer(mint("read")))
+
+    assert response.status_code == 403
+    assert "read scope" in response.json()["error"]["message"]
+
+
+def test_over_mcp_a_no_delete_token_still_writes(client: Any, live_server: str) -> None:
+    """The hosted tools expose no delete verb today (`MCP ⊆ CLI`; the write tools are create and
+    edit), so the preset's observable effect there is that writes keep working; a future delete
+    tool inherits the REST 403 above."""
+    http, headers = _mcp_session(live_server, mint("write-no-delete"))
+
+    created = _call_tool(http, headers, "create_note", {"title": "from a no-delete token"})
+
+    assert not created.get("isError"), created

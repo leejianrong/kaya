@@ -175,6 +175,15 @@ def test_login_requests_the_scope_flag_was_given(monkeypatch, capsys) -> None:
     assert seen[0][1] == "read"
 
 
+def test_login_can_request_the_no_delete_preset(monkeypatch, capsys) -> None:
+    seen = patch_request_device_code(monkeypatch)
+    poll_sequence(monkeypatch, minted(scope="write-no-delete"))
+
+    main(["auth", "login", "--scope", "write-no-delete"])
+
+    assert seen[0][1] == "write-no-delete"
+
+
 def test_login_defaults_to_write_scope(monkeypatch, capsys) -> None:
     seen = patch_request_device_code(monkeypatch)
     poll_sequence(monkeypatch, minted())

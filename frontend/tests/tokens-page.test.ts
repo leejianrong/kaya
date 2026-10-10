@@ -220,6 +220,59 @@ describe('signed in', () => {
     expect(globalThis.location.pathname).toBe('/')
   })
 
+  it('offers the three presets in plain words and sends the chosen scope', async () => {
+    render()
+    await until(() => host.querySelector('[data-testid="create-form"]') !== null, 'the create form')
+
+    const select = host.querySelector<HTMLSelectElement>('#token-scope')!
+    expect([...select.options].map((option) => option.textContent?.trim())).toEqual([
+      'Full access',
+      'No delete',
+      'Read only',
+    ])
+    expect(host.querySelector('[data-testid="preset-help"]')?.textContent).toContain('delete')
+
+    select.value = 'write-no-delete'
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    const nameInput = host.querySelector<HTMLInputElement>('#token-name')!
+    nameInput.value = 'careful'
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+    host
+      .querySelector<HTMLFormElement>('[data-testid="create-form"]')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await until(
+      () => host.querySelector('[data-testid="preset-chip"]') !== null,
+      'the preset chip',
+    )
+
+    const post = calls.find((call) => call.init?.method === 'POST')!
+    expect(JSON.parse(post.init?.body as string).scope).toBe('write-no-delete')
+    expect(host.querySelector('[data-testid="preset-chip"]')?.textContent?.trim()).toBe('No delete')
+  })
+
+  it('shows each existing token its preset as a chip', async () => {
+    const base = {
+      token_prefix: 'kaya_pat_zz99',
+      created_at: '2026-09-25T00:00:00Z',
+      last_used_at: null,
+      expires_at: null,
+    }
+    tokens = [
+      { id: 1, name: 'a', scope: 'write', ...base },
+      { id: 2, name: 'b', scope: 'read', ...base },
+    ]
+
+    render()
+    await until(() => host.querySelectorAll('[data-testid="preset-chip"]').length === 2, 'chips')
+
+    expect(
+      [...host.querySelectorAll('[data-testid="preset-chip"]')].map((chip) =>
+        chip.textContent?.trim(),
+      ),
+    ).toEqual(['Full access', 'Read only'])
+  })
+
   it('revoking a token removes it from the list', async () => {
     tokens = [
       {
