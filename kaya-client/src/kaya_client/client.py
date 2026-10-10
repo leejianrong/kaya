@@ -49,6 +49,7 @@ import httpx
 
 from kaya_client.errors import ApiError, TransportError, UsageError
 from kaya_client.frontmatter import PATH_KEY, REF_KEY, TITLE_KEY, compose_document, parse_document
+from kaya_client.history import number_versions, unified_diff
 from kaya_client.payloads import Payload
 
 # --------------------------------------------------------------------------- the deadline
@@ -225,6 +226,18 @@ narrow because a note carries its whole ``body`` and showing it in a table would
 link record has five short fields and no prose at all, so a narrower row would hide the two things
 a reader opened `kaya links` to see (did it resolve, and to what). ``--fields`` still narrows it,
 uniformly, for every format."""
+
+VERSIONS_SEGMENT = "/versions"
+VERSION_NOUN = "version"
+VERSION_ENVELOPE = "versions"
+VERSION_COLUMNS = ("version", "created_at", "actor")
+"""KAY-138: `note history`'s default row. ``body`` is a prose field and stays out of the row, like a
+note list's, so a long history stays one line per version; ``--fields version,body`` asks for it."""
+VERSION_PROSE_FIELDS = frozenset({"body"})
+DIFF_NOUN = "diff"
+DIFF_ENVELOPE = "diffs"
+DIFF_COLUMNS = ("ref", "from", "to", "added", "removed", "diff")
+DIFF_PROSE_FIELDS = frozenset({"diff"})
 
 TITLE_FIELD = "title"
 BODY_FIELD = "body"
@@ -632,6 +645,65 @@ class KayaClient:
             columns=NOTE_LIST_COLUMNS,
             prose_fields=NOTE_PROSE_FIELDS,
         )
+
+    def history(self, ref: str) -> Payload:
+        """``GET /api/v1/notes/{ref}/versions`` — every version of a note's body, newest first.
+
+        Each record carries an oldest-first ordinal ``version``, who made it (``actor``, one line:
+        the account and, when a token did it, the token's name and its non-secret prefix, or
+        "before tracking" for a version cut before actors were recorded) and the ``body``.
+        """
+        records = self._versions(ref)
+        return Payload.collection(
+            noun=VERSION_NOUN,
+            envelope_key=VERSION_ENVELOPE,
+            records=number_versions(records),
+            columns=VERSION_COLUMNS,
+            prose_fields=VERSION_PROSE_FIELDS,
+        )
+
+    def diff_versions(
+        self, ref: str, from_version: int | None = None, to_version: int | None = None
+    ) -> Payload:
+        """A unified diff between two versions of a note, by ordinal (see ``history.py``).
+
+        Default: the previous version against the latest. Only ``from_version`` given: that one
+        against the latest. Computed here from the two bodies the versions list already carries, so
+        there is no endpoint behind it and nothing is written.
+        """
+        numbered = number_versions(self._versions(ref))
+        latest = numbered[0]["version"] if numbered else 0
+        to_n = latest if to_version is None else to_version
+        from_n = to_n - 1 if from_version is None else from_version
+        by_number = {record["version"]: record for record in numbered}
+        for label, number in (("from", from_n), ("to", to_n)):
+            if number not in by_number:
+                raise UsageError(
+                    f"{ref} has no version {number} (it has {latest}); run `kaya note history`",
+                    arg=label,
+                )
+        old, new = by_number[from_n], by_number[to_n]
+        text, added, removed = unified_diff(
+            old["body"], new["body"], old_label=f"{ref} v{from_n}", new_label=f"{ref} v{to_n}"
+        )
+        return Payload.entity(
+            noun=DIFF_NOUN,
+            envelope_key=DIFF_ENVELOPE,
+            record={
+                "ref": ref,
+                "from": from_n,
+                "to": to_n,
+                "added": added,
+                "removed": removed,
+                "diff": text,
+            },
+            columns=DIFF_COLUMNS,
+            prose_fields=DIFF_PROSE_FIELDS,
+        )
+
+    def _versions(self, ref: str) -> list[Any]:
+        body = self._request("GET", f"{self._note_path(ref)}{VERSIONS_SEGMENT}")
+        return list(body.get(VERSION_ENVELOPE, []))
 
     # --------------------------------------------------------- export / import (R12)
 

@@ -16,7 +16,7 @@
  * drift into one sentence unnoticed.
  */
 
-import type { NoteVersion } from './types'
+import type { NoteVersion, VersionActor } from './types'
 
 /**
  * What the tab is showing, as one value. Five states, matching `BacklinksPanel`'s `PanelState` verb
@@ -82,4 +82,47 @@ export function needsFetch(requestedFor: string | null, incomingRef: string | nu
  */
 export function isSelected(selected: number | null, version: NoteVersion): boolean {
   return selected === version.id
+}
+
+/**
+ * How a version's author reads in the list (KAY-138): `who` and `how` as two short strings, so the
+ * component can put them on two lines at 390px and one at desktop. A version cut before actors were
+ * recorded has `actor: null`; it says so ("before tracking") rather than guessing.
+ *
+ * Only what Settings already shows of a token (name and the non-secret display prefix) ever
+ * reaches here, so nothing in this function can leak a credential.
+ */
+export function actorLabel(actor: VersionActor | null | undefined): { who: string; how: string | null } {
+  if (!actor) {
+    return { who: 'before tracking', how: null }
+  }
+  const who = actor.is_you ? 'You' : (actor.email ?? 'Unknown account')
+  if (actor.token) {
+    const name = actor.token.name ?? 'token'
+    const prefix = actor.token.prefix ? ` (${actor.token.prefix}…)` : ''
+    const kind = actor.token.kind ? ` · ${actor.token.kind}` : ''
+    return { who, how: `Token ${name}${prefix}${kind}` }
+  }
+  return { who, how: actor.channel === 'session' ? 'web' : null }
+}
+
+/** A version's oldest-first ordinal (`v1` is the first body), given the newest-first list the API
+ *  returns — the same numbering `kaya note history` prints, so a person can move between the two. */
+export function versionNumber(versions: NoteVersion[], index: number): number {
+  return versions.length - index
+}
+
+/**
+ * The index to compare a selected version against by default: the one just before it in time (the
+ * next row down, since the list is newest first), or `null` for the first version, which has
+ * nothing before it and diffs against an empty body instead.
+ */
+export function previousIndex(versions: NoteVersion[], index: number): number | null {
+  return index + 1 < versions.length ? index + 1 : null
+}
+
+/** {@link actorLabel} as one line: `You · web`, `a@x.io · Token ci-bot (kaya_pat_ab12…)`. */
+export function actorLine(actor: VersionActor | null | undefined): string {
+  const { who, how } = actorLabel(actor)
+  return how === null ? who : `${who} · ${how}`
 }

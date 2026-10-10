@@ -363,6 +363,33 @@ def _add_note_verbs(note_commands, flags: argparse.ArgumentParser) -> None:
         ),
     )
 
+    history = note_commands.add_parser(
+        verbs.HISTORY,
+        parents=[flags],
+        help="list a note's versions, newest first, with who made each",
+        description=(
+            "Every saved version of a note's body. `version` is an oldest-first ordinal (1 is the "
+            "first body); `actor` says which account and, when a token wrote it, the token's name "
+            "and non-secret prefix, or `before tracking` for versions cut before actors were "
+            "recorded (KAY-138). `--fields version,body` shows the bodies."
+        ),
+    )
+    history.add_argument("ref", help=REF_HELP)
+
+    diff = note_commands.add_parser(
+        verbs.DIFF,
+        parents=[flags],
+        help="a unified diff between two versions (default: previous vs latest)",
+        description=(
+            "Diff two versions of a note by the ordinals `note history` prints. With no versions "
+            "named, the previous one against the latest; with only FROM, that one against the "
+            "latest. Read-only; computed from the two bodies, no endpoint behind it."
+        ),
+    )
+    diff.add_argument("ref", help=REF_HELP)
+    diff.add_argument("from_version", nargs="?", type=int, default=None, metavar="FROM")
+    diff.add_argument("to_version", nargs="?", type=int, default=None, metavar="TO")
+
     delete = note_commands.add_parser(
         verbs.DELETE,
         parents=[flags],

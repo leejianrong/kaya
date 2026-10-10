@@ -34,10 +34,12 @@ the exception ``links.py`` is.
 Deliberately absent: paging of any shape.
 """
 
+import uuid
 from http import HTTPStatus
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.concurrency import enforce_precondition
@@ -67,6 +69,7 @@ from app.auth import (
 )
 from app.db import get_session
 from app.folders import FolderMoveError, plan_move, rewrite
+from app.identity.models import KayaAccount
 from app.integrations.dependencies import PandanBearer
 from app.markdown_format import format_markdown
 from app.models import Note
@@ -144,7 +147,7 @@ def create_note(
     session.flush()
     reconcile_note_links(session, note)
     resolve_pending_note_links(session, note)
-    cut_version(session, note)
+    cut_version(session, note, principal)
     session.commit()
     session.refresh(note)
 
@@ -222,7 +225,9 @@ def get_note(note: NoteFromRef) -> NoteRead:
     "/notes/{ref}/versions",
     summary="Every version of a note's body, newest first",
 )
-def list_note_versions(note: NoteFromRef, session: DbSession) -> NoteVersionList:
+def list_note_versions(
+    note: NoteFromRef, session: DbSession, principal: CurrentPrincipal
+) -> NoteVersionList:
     """R13/KAN-1064: every snapshot ``cut_version`` has ever cut for this note.
 
     A four-line route over ``app/note_versions.py``'s ``note_versions``, the same shape every other
@@ -239,10 +244,17 @@ def list_note_versions(note: NoteFromRef, session: DbSession) -> NoteVersionList
     ``create_note`` cuts a version too, so "no history yet" is not a state this note can be in once
     it exists.
     """
-    statement = note_versions(note.id)
-    return NoteVersionList(
-        versions=[NoteVersionRead.of(version) for version in session.scalars(statement)]
-    )
+    versions = list(session.scalars(note_versions(note.id)))
+    # One lookup for every distinct actor's email, so the SPA can say "You" or name a teammate.
+    # `kaya_account` is read by primary key only; a deleted account's actor_user_id is NULL already.
+    actor_ids = {v.actor_user_id for v in versions if v.actor_user_id is not None}
+    emails: dict[uuid.UUID, str] = {}
+    if actor_ids:
+        rows = session.execute(
+            select(KayaAccount.id, KayaAccount.email).where(KayaAccount.id.in_(actor_ids))
+        )
+        emails = {row.id: row.email for row in rows}
+    return NoteVersionList(versions=[NoteVersionRead.of(v, emails, principal.id) for v in versions])
 
 
 @router.post("/notes/move-folder", summary="Move or rename a folder")
@@ -282,7 +294,11 @@ def move_folder(
 
 @router.patch("/notes/{ref}", summary="Edit a note, or move it")
 def update_note(
-    note: NoteFromRef, payload: NoteUpdate, session: DbSession, response: Response
+    note: NoteFromRef,
+    payload: NoteUpdate,
+    session: DbSession,
+    response: Response,
+    principal: CurrentPrincipal,
 ) -> NoteRead:
     """Change ``title``, ``body`` and/or ``path``. Omitted fields are left alone.
 
@@ -346,7 +362,7 @@ def update_note(
     if changes:
         if "body" in changes:
             reconcile_note_links(session, note)
-            cut_version(session, note)
+            cut_version(session, note, principal)
         if "title" in changes:
             resolve_pending_note_links(session, note)
         session.commit()

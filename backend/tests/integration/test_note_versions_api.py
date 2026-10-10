@@ -212,7 +212,7 @@ def test_the_list_is_newest_first_with_full_bodies_and_no_second_round_trip_need
     assert [v["body"] for v in versions] == ["v3", "v2", "v1"]
     # Every row is a complete record — this card's preview design call (`NoteVersionRead`'s
     # docstring): a preview is a client-side selection over rows already in hand.
-    assert all(set(v) == {"id", "body", "created_at"} for v in versions)
+    assert all(set(v) == {"id", "body", "created_at", "actor"} for v in versions)
 
 
 def test_a_note_with_only_its_own_creation_still_lists_one_version(client: Any) -> None:

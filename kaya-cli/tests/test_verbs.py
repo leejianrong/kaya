@@ -274,6 +274,8 @@ def test_the_published_verb_set_is_pinned() -> None:
         ("note", "edit"),
         ("note", "move"),
         ("note", "format"),
+        ("note", "history"),
+        ("note", "diff"),
         ("note", "delete"),
         ("note", "export"),
         ("note", "import"),

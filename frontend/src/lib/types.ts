@@ -141,6 +141,19 @@ export interface NoteVersion {
   id: number
   body: string
   created_at: string
+  /** Who cut this version (KAY-138). `null` for one cut before actors were recorded; absent only
+   *  from fixtures that predate the field. */
+  actor?: VersionActor | null
+}
+
+/** `backend/app/api/schemas.py`'s `VersionActor`. `token` is `null` for a cookie session. */
+export interface VersionActor {
+  user_id: string | null
+  email: string | null
+  channel: 'session' | 'token' | null
+  token: { id: number; prefix: string | null; name: string | null; kind: string | null } | null
+  /** The caller is the account that made the save. */
+  is_you: boolean
 }
 
 /** `GET /notes/{ref}/versions`'s envelope — named, like `NoteList`/`LinkList`, for the same
