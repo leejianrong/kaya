@@ -16,10 +16,13 @@ test('creating, editing and reloading a note persists the edit', async ({ authed
   const body = `Persisted body ${Date.now()}.`
 
   await page.getByTestId('new-note-button').click()
-  await page.getByTestId('create-title-input').fill(title)
-  await page.getByTestId('create-confirm').click()
-
+  // KAY-166: the note exists as `Untitled` with its title selected; typing names it, Enter goes on
+  // to the body.
+  await expect(page.getByTestId('title-input')).toBeFocused()
+  await page.keyboard.type(title)
+  await page.keyboard.press('Enter')
   await expect(page.getByTestId('title-input')).toHaveValue(title)
+  await expect(page.locator('.editor-host .cm-content')).toBeFocused()
 
   const editor = page.locator('.editor-host .cm-content')
   await editor.click()

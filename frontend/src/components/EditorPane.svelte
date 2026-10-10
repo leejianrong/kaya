@@ -31,6 +31,8 @@ import type { EditorCommands } from '../lib/toolbar'
     onupdated,
     oncommands,
     onfocuschange,
+    focusTitle = false,
+    ontitlefocused,
     mode = 'edit',
   }: {
     note: Note | null
@@ -112,7 +114,27 @@ import type { EditorCommands } from '../lib/toolbar'
     oncommands?: (commands: EditorCommands | null) => void
     /** KAN-1826: the editor gained or lost focus; same untracked-callback rule as `oncommands`. */
     onfocuschange?: (focused: boolean) => void
+    /**
+     * KAY-166: take focus in the title field and select its text (a note just made through New note,
+     * so typing names it). Edit and Split only: Read hides nothing of the title but is not a place
+     * you type. Once taken, `ontitlefocused` fires so the owner stops asking; the mount effect is
+     * not involved (this is its own effect and reads no editor state).
+     */
+    focusTitle?: boolean
+    ontitlefocused?: () => void
   } = $props()
+
+  let titleEl: HTMLInputElement | undefined = $state()
+
+  $effect(() => {
+    if (focusTitle && titleEl !== undefined && note !== null && mode !== 'read' && titleDraft === note.title) {
+      // `titleDraft` is filled by the mount effect after the note arrives; selecting before then
+      // would select an empty field and leave the caret after the text it later receives.
+      titleEl.focus()
+      titleEl.select()
+      untrack(() => ontitlefocused)?.()
+    }
+  })
 
   function publishCommands(commands: EditorCommands | null): void {
     untrack(() => oncommands)?.(commands)
@@ -883,7 +905,10 @@ import type { EditorCommands } from '../lib/toolbar'
   function titleKeydown(event: KeyboardEvent): void {
     if (event.key === 'Enter') {
       event.preventDefault()
+      // Blur commits the title (`saveTitle`); then the caret moves into the body (KAY-166), so a
+      // new note is `type the name, Enter, type the text`.
       ;(event.target as HTMLInputElement).blur()
+      view?.focus()
     }
   }
 
@@ -928,6 +953,7 @@ import type { EditorCommands } from '../lib/toolbar'
       <input
         type="text"
         class="title-input"
+        bind:this={titleEl}
         bind:value={titleDraft}
         onblur={() => void saveTitle()}
         onkeydown={titleKeydown}

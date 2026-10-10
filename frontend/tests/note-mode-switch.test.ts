@@ -290,10 +290,6 @@ describe('compact', () => {
     })
 
     click('new-note-button')
-    const input = q('create-title-input') as HTMLInputElement
-    input.value = 'A fresh note'
-    input.dispatchEvent(new Event('input'))
-    q('create-form')!.dispatchEvent(new Event('submit', { cancelable: true }))
     flushSync()
     await vi.waitFor(() => {
       flushSync()

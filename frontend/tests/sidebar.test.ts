@@ -227,107 +227,65 @@ describe('the folder tree', () => {
   })
 })
 
-describe('"+ New note" (KAN-1040)', () => {
-  function renderWithCreate(oncreate: (title: string) => void) {
+describe('"New note" (KAY-166)', () => {
+  function renderWithCreate(oncreate: () => void, onfolder: (key: string) => void = () => {}) {
     mounted.push(
       mount(Sidebar, {
         target: host,
-        props: { notes: NOTES, route: { name: 'home' }, loading: false, oncreate },
+        props: { notes: NOTES, route: { name: 'home' }, loading: false, oncreate, onfolder },
       }),
     )
     flushSync()
     return host
   }
 
-  function button(testid: string): HTMLButtonElement {
-    return host.querySelector<HTMLButtonElement>(`[data-testid="${testid}"]`)!
+  function button(): HTMLButtonElement {
+    return host.querySelector<HTMLButtonElement>('[data-testid="new-note-button"]')!
   }
 
-  function titleInput(): HTMLInputElement {
-    return host.querySelector<HTMLInputElement>('[data-testid="create-title-input"]')!
-  }
-
-  it('shows the button and no prompt to start with', () => {
+  it('is a labelled button with a plus icon, and there is no inline prompt', () => {
     renderWithCreate(vi.fn())
 
-    expect(button('new-note-button')).not.toBeNull()
+    expect(button().textContent?.trim()).toBe('New note')
+    expect(button().querySelector('svg[aria-hidden="true"]')).not.toBeNull()
     expect(host.querySelector('[data-testid="create-form"]')).toBeNull()
   })
 
-  it('opens an inline title prompt in place of the button on click', () => {
-    renderWithCreate(vi.fn())
-
-    button('new-note-button').click()
-    flushSync()
-
-    expect(host.querySelector('[data-testid="create-form"]')).not.toBeNull()
-    expect(host.querySelector('[data-testid="new-note-button"]')).toBeNull()
-  })
-
-  it('fires oncreate with the trimmed title on submit, and closes the prompt', () => {
+  it('fires oncreate immediately on click, with nothing to type first', () => {
     const oncreate = vi.fn()
     renderWithCreate(oncreate)
 
-    button('new-note-button').click()
-    flushSync()
-    titleInput().value = '  A fresh note  '
-    titleInput().dispatchEvent(new Event('input'))
-    host.querySelector('form[data-testid="create-form"]')!.dispatchEvent(
-      new Event('submit', { cancelable: true }),
-    )
+    button().click()
     flushSync()
 
     expect(oncreate).toHaveBeenCalledTimes(1)
-    expect(oncreate).toHaveBeenCalledWith('A fresh note')
-    expect(host.querySelector('[data-testid="create-form"]')).toBeNull()
-    expect(host.querySelector('[data-testid="new-note-button"]')).not.toBeNull()
+    expect(host.querySelector('input[aria-label="New note title"]')).toBeNull()
   })
 
-  it('refuses a blank title — no call, prompt stays open', () => {
+  it('creates on N from a tree row, but never from a text field or with a modifier', () => {
     const oncreate = vi.fn()
     renderWithCreate(oncreate)
+    const press = (el: Element, init: KeyboardEventInit = {}) =>
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true, cancelable: true, ...init }))
 
-    button('new-note-button').click()
-    flushSync()
-    titleInput().value = '   '
-    titleInput().dispatchEvent(new Event('input'))
-    host.querySelector('form[data-testid="create-form"]')!.dispatchEvent(
-      new Event('submit', { cancelable: true }),
-    )
-    flushSync()
+    press(host.querySelector('a.row')!)
+    expect(oncreate).toHaveBeenCalledTimes(1)
 
-    expect(oncreate).not.toHaveBeenCalled()
-    expect(host.querySelector('[data-testid="create-form"]')).not.toBeNull()
+    press(host.querySelector('a.row')!, { ctrlKey: true })
+    press(host.querySelector('a.row')!, { metaKey: true })
+    press(host.querySelector('[data-testid="search-input"]')!)
+    expect(oncreate).toHaveBeenCalledTimes(1)
   })
 
-  it('Cancel closes the prompt without calling oncreate', () => {
-    const oncreate = vi.fn()
-    renderWithCreate(oncreate)
+  it('reports a clicked folder through onfolder', () => {
+    const onfolder = vi.fn()
+    renderWithCreate(vi.fn(), onfolder)
 
-    button('new-note-button').click()
-    flushSync()
-    titleInput().value = 'Discarded'
-    titleInput().dispatchEvent(new Event('input'))
-    button('create-cancel').click()
+    host.querySelector<HTMLButtonElement>('button.folder')!.click()
     flushSync()
 
-    expect(oncreate).not.toHaveBeenCalled()
-    expect(host.querySelector('[data-testid="create-form"]')).toBeNull()
-  })
-
-  it('starts a fresh prompt empty even after a previous title was typed', () => {
-    renderWithCreate(vi.fn())
-
-    button('new-note-button').click()
-    flushSync()
-    titleInput().value = 'Leftover'
-    titleInput().dispatchEvent(new Event('input'))
-    button('create-cancel').click()
-    flushSync()
-
-    button('new-note-button').click()
-    flushSync()
-    expect(titleInput().value).toBe('')
+    expect(onfolder).toHaveBeenCalledTimes(1)
+    expect(typeof onfolder.mock.calls[0][0]).toBe('string')
   })
 })
 
