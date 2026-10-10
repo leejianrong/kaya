@@ -29,7 +29,7 @@ for (const [label, width, height] of [
       const actors = pane.getByTestId('history-actor')
       await expect(actors).toHaveCount(3)
       await expect(actors.nth(0)).toHaveText('You · web')
-      await expect(actors.nth(1)).toHaveText(/^You · Token .+\(kaya_pat_\w+…\)$/)
+      await expect(actors.nth(1)).toHaveText(/^You · Token .+\(kaya_pat_[\w-]+…\)$/)
       await expect(actors.nth(2)).toHaveText(/^You · Token /)
 
       await pane.getByTestId('history-row').nth(1).click()
