@@ -13,7 +13,17 @@
   import rightPanelOpen from '@material-symbols/svg-400/outlined/right_panel_open.svg?raw'
   import rightPanelClose from '@material-symbols/svg-400/outlined/right_panel_close.svg?raw'
 
-  export type IconName = 'notes' | 'graph' | 'settings' | 'panel' | 'panel-open'
+  import leftPanelOpen from '@material-symbols/svg-400/outlined/left_panel_open.svg?raw'
+  import leftPanelClose from '@material-symbols/svg-400/outlined/left_panel_close.svg?raw'
+
+  export type IconName =
+    | 'notes'
+    | 'graph'
+    | 'settings'
+    | 'panel'
+    | 'panel-open'
+    | 'left-open'
+    | 'left-close'
 
   /** The one `d` attribute of a Material Symbols file. A path is data here, never markup. */
   function pathOf(svg: string): string {
@@ -26,6 +36,8 @@
     settings: pathOf(settings),
     panel: pathOf(rightPanelOpen),
     'panel-open': pathOf(rightPanelClose),
+    'left-open': pathOf(leftPanelOpen),
+    'left-close': pathOf(leftPanelClose),
   }
 </script>
 
