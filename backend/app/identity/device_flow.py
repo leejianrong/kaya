@@ -50,6 +50,7 @@ from datetime import datetime
 from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.identity.pat import TOKEN_SCOPES
 from app.models.base import Base
 
 DEVICE_CODE_TTL_SECONDS = 900
@@ -95,7 +96,7 @@ class DeviceAuthorization(Base):
 
     __table_args__ = (
         CheckConstraint(f"status IN {DEVICE_AUTHORIZATION_STATUSES!r}", name="status"),
-        CheckConstraint("requested_scope IN ('read', 'write')", name="requested_scope"),
+        CheckConstraint(f"requested_scope IN {TOKEN_SCOPES!r}", name="requested_scope"),
         CheckConstraint(
             "(device_code_hash IS NOT NULL AND user_code IS NOT NULL AND client_id IS NULL)"
             " OR (device_code_hash IS NULL AND user_code IS NULL"

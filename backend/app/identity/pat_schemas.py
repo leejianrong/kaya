@@ -21,12 +21,16 @@ is a `422` here, not a psycopg `DataError` two layers down."""
 class TokenScope(StrEnum):
     """A PAT's capability (ADR 0012, mirroring pandan ADR 0014's post-KAN-251 shape — kaya starts
     with the split already in place rather than growing into it). `read` = observer (GET only);
-    `write` = operator (the owning account's full access, and the default).
+    `write` = operator (the owning account's full access, and the default); `write-no-delete`
+    (KAY-141, pandan ADR 0027's preset name) = operator that can read, create and update but whose
+    every `DELETE` is refused.
 
-    Enforced in `app/auth/dependencies.py`'s `get_principal` (KAN-1887)."""
+    The wire value is the stable preset string. Enforced in `app/auth/dependencies.py`'s
+    `get_principal` (KAN-1887, KAY-141)."""
 
     read = "read"
     write = "write"
+    write_no_delete = "write-no-delete"
 
 
 class TokenCreate(BaseModel):
