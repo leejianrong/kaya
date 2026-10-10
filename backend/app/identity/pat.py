@@ -40,10 +40,11 @@ PREFIX_DISPLAY_LEN = len(TOKEN_PREFIX) + 4
 """How much of the raw token the UI list may show — enough to tell two tokens apart, never enough
 to be useful to an attacker who saw only the display value."""
 
-TOKEN_SCOPES = ("read", "write")
-"""`read` = observer (GET only); `write` = operator (the owning account's full access). Enforced in
+TOKEN_SCOPES = ("read", "write", "write-no-delete")
+"""`read` = observer (GET only); `write` = operator (the owning account's full access);
+`write-no-delete` = operator minus every `DELETE` (KAY-141). Enforced in
 `app/auth/dependencies.py`'s `get_principal` (KAN-1887): a `read` token gets `403
-insufficient_scope` on any unsafe method."""
+insufficient_scope` on any unsafe method, a `write-no-delete` one on `DELETE`."""
 
 
 class PersonalAccessToken(Base):
@@ -58,7 +59,7 @@ class PersonalAccessToken(Base):
         # is given here, so passing the fully-built name double-prefixes it
         # (`ck_personal_access_token_ck_personal_access_token_scope` — caught by re-diffing this
         # migration against the model before committing it).
-        CheckConstraint("scope IN ('read', 'write')", name="scope"),
+        CheckConstraint(f"scope IN {TOKEN_SCOPES!r}", name="scope"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)

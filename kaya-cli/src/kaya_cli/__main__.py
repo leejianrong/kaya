@@ -597,8 +597,9 @@ def _add_auth_verbs(auth_commands, flags: argparse.ArgumentParser) -> None:
     Tokens UI visit at all. **Not `auth status`**, despite ADR 0013's own wording — see
     `kaya_cli.verbs.CHECK`'s docstring for the word collision that forced the rename.
 
-    `login` is the one verb here with a flag of its own: `--scope`, the same `read`/`write` choice
-    `config set --token` has no opinion about but `POST /api/v1/tokens` already accepts (ADR 0012,
+    `login` is the one verb here with a flag of its own: `--scope`, the same
+    `read`/`write`/`write-no-delete` choice `config set --token` has no opinion about but
+    `POST /api/v1/tokens` already accepts (ADR 0012,
     KAN-1739) — mirrored here because a device-flow-minted token is still a token, and the consent
     screen shows exactly what was requested before a human approves it.
     """
@@ -614,9 +615,9 @@ def _add_auth_verbs(auth_commands, flags: argparse.ArgumentParser) -> None:
     )
     login.add_argument(
         "--scope",
-        choices=("read", "write"),
+        choices=("read", "write", "write-no-delete"),
         default="write",
-        help="the access level to request (default: write)",
+        help="access to request: write (default), write-no-delete (no deletes) or read",
     )
 
     auth_commands.add_parser(

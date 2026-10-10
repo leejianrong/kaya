@@ -1,7 +1,7 @@
 """note_version actor columns
 
-Revision ID: 0014
-Revises: 0013
+Revision ID: 0015
+Revises: 0014
 Create Date: 2026-10-10
 
 KAY-138 (ADR 0015 precondition 1). Six nullable columns on `note_version`: who made each save and
@@ -16,8 +16,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0014"
-down_revision: str | Sequence[str] | None = "0013"
+revision: str = "0015"
+down_revision: str | Sequence[str] | None = "0014"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

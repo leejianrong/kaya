@@ -77,16 +77,24 @@ that never became one of the six.
 kaya mints and checks its own credentials, and pandan is not involved
 ([ADR 0012](https://github.com/leejianrong/kaya/blob/main/docs/adr/0012-standalone-identity.md)).
 A person signs in to the web app with GitHub. An agent uses a `kaya_pat_…` personal access token,
-which is account-wide and has a `read` or `write` scope. A `read` token can read everything the
-account can, and any request that would change something is refused with a `403` and the code
-`insufficient_scope`, over the REST API and over the hosted MCP endpoint alike. There are three
-ways one gets minted:
+which is account-wide and carries one of three presets:
+
+| Preset (`scope`) | Label in the web app | What it can do |
+| --- | --- | --- |
+| `write` | Full access | Everything the account can. The default. |
+| `write-no-delete` | No delete | Read, create, edit and move notes, restore versions. Every `DELETE` is refused. |
+| `read` | Read only | Read and search. Every request that would change something is refused. |
+
+A refused request gets a `403` and the code `insufficient_scope`, with a message that names the
+preset, over the REST API and over the hosted MCP endpoint alike. Existing tokens keep the preset
+they already had. There are three ways one gets minted:
 
 - `kaya auth login` runs a device flow in your browser and stores the token for the CLI
   ([ADR 0013](https://github.com/leejianrong/kaya/blob/main/docs/adr/0013-device-flow-and-hosted-mcp.md)).
 - A hosted MCP client runs an OAuth authorization code flow with PKCE and keeps the token it is
   given ([ADR 0014](https://github.com/leejianrong/kaya/blob/main/docs/adr/0014-oauth-authorization-code-pkce-grant.md)).
-- You create one by hand under **Settings > Tokens** in the web app, which is also where you revoke
+- You create one by hand under **Settings > Tokens** in the web app, choosing a preset from the
+  Access selector. The list shows each token's preset as a chip, and it is also where you revoke
   any of them.
 
 Every one of these is an ordinary long-lived token. There is no refresh token and no expiry, so a

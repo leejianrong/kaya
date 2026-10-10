@@ -122,6 +122,20 @@ def test_a_read_scope_token_can_be_minted(client: Any) -> None:
     assert response.json()["scope"] == "read"
 
 
+def test_a_write_no_delete_preset_token_can_be_minted_and_listed(client: Any) -> None:
+    response = client.post(TOKENS, json={"name": "careful agent", "scope": "write-no-delete"})
+
+    assert response.status_code == 201
+    assert response.json()["scope"] == "write-no-delete"
+    assert client.get(TOKENS).json()[0]["scope"] == "write-no-delete"
+
+
+def test_an_unknown_preset_is_a_422(client: Any) -> None:
+    response = client.post(TOKENS, json={"name": "x", "scope": "write-no-move"})
+
+    assert response.status_code == 422
+
+
 def test_revoking_a_token_makes_it_disappear_from_the_list(client: Any) -> None:
     created = client.post(TOKENS, json={"name": "temp"}).json()
 

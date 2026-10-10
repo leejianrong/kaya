@@ -146,8 +146,10 @@ name = "kaya-notes"
 # frontend dev tree). No CLI behaviour changed; the tag is what deploys kaya-jian.
 # 0.25.0 — release cut for the deploy guards (KAN-1763: boot-time secret check, release-drift workflow)
 # and the dev dependency bumps. No CLI behaviour changed; the tag is what deploys kaya-jian.
-# 0.26.0 — KAY-138: `kaya note history` and `kaya note diff`. New verbs, so a minor bump.
-version = "0.26.0"
+# 0.26.0 — KAY-141 adds `write-no-delete` to `auth login --scope` (a value that used to be a usage
+# error); the server-side refusal it earns is an existing `403`, so exit `4` with nothing new.
+# 0.27.0 — KAY-138: `kaya note history` and `kaya note diff`. New verbs, so a minor bump.
+version = "0.27.0"
 description = "kaya — the notes CLI"
 readme = "README.md"
 license = "Apache-2.0"

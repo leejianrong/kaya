@@ -141,15 +141,25 @@ def get_principal(
             detail=error_body("invalid_token", "kaya did not accept this credential"),
             headers={"WWW-Authenticate": "Bearer"},
         )
+    # KAN-1887 / KAY-141: the one place a token's scope is enforced. Every route that resolves its
+    # caller here is covered, and `tests/unit/test_token_scope_decision.py` fails the build for a
+    # mutating route that does not. A `DELETE` is the one verb `write-no-delete` loses; the hosted
+    # `/mcp` tools call this REST API with the caller's bearer, so they inherit both refusals.
     if principal.scope == "read" and request.method not in SAFE_METHODS:
-        # KAN-1887: the one place a token's scope is enforced. Every route that resolves its caller
-        # here is covered, and `tests/unit/test_token_scope_decision.py` fails the build for a
-        # mutating route that does not.
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=error_body(
                 "insufficient_scope",
                 "this token has read scope and cannot change anything; use a write-scope token",
+            ),
+        )
+    if principal.scope == "write-no-delete" and request.method == "DELETE":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=error_body(
+                "insufficient_scope",
+                "this token has the write-no-delete preset and cannot delete anything; "
+                "use a write-scope token",
             ),
         )
     return principal
