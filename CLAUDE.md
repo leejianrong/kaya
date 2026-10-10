@@ -91,6 +91,12 @@ unit-tested without a browser, decide everything; components only consume them.
   dark by `prefers-color-scheme`; the generation command is in its header). Components use role names
   (`--primary`, `--surface-container-low`, `--shape-full`); `tests/tokens-shape.test.ts` fails on a raw colour
   outside that file and `tests/tokens-contrast.test.ts` holds WCAG contrast. Old names (`--accent`, `--muted`) are aliases.
+- **"New note" creates at once** (KAY-166; `lib/newNote.ts`, `App.svelte`'s `createAndOpen`): a note
+  titled `Untitled`/`Untitled 1`... in the current folder (the folder of the last note opened or folder
+  row clicked), opened in Edit with the title field focused and selected; Enter in the title moves the
+  caret into the body. There is no title prompt. Shortcut is `N` with the list focused (never inside a
+  field), not Ctrl/Cmd+N, which the browser owns. The unsaved-changes question is asked *before* the
+  create, and an active search is cleared.
 - Tokens, the pandan link and format-on-save live under **Settings** now (routes `/tokens`,
   `/pandan` unchanged); `tokens` and `device` render in `main` alone and are reachable with no
   credential.

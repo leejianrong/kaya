@@ -10,6 +10,7 @@
   import hub from '@material-symbols/svg-400/outlined/hub.svg?raw'
   import description from '@material-symbols/svg-400/outlined/description.svg?raw'
   import settings from '@material-symbols/svg-400/outlined/settings.svg?raw'
+  import add from '@material-symbols/svg-400/outlined/add.svg?raw'
   import rightPanelOpen from '@material-symbols/svg-400/outlined/right_panel_open.svg?raw'
   import rightPanelClose from '@material-symbols/svg-400/outlined/right_panel_close.svg?raw'
 
@@ -24,6 +25,7 @@
     | 'panel-open'
     | 'left-open'
     | 'left-close'
+    | 'add'
 
   /** The one `d` attribute of a Material Symbols file. A path is data here, never markup. */
   function pathOf(svg: string): string {
@@ -38,6 +40,7 @@
     'panel-open': pathOf(rightPanelClose),
     'left-open': pathOf(leftPanelOpen),
     'left-close': pathOf(leftPanelClose),
+    add: pathOf(add),
   }
 </script>
 
