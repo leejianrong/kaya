@@ -47,6 +47,7 @@ from app.identity import (
 # `app.identity`/`app.api` import above has already run.
 from app.identity.mcp_host import hosted_mcp_app, hosted_mcp_lifespan
 from app.observability import get_logger, install_observability
+from app.ratelimit import install_rate_limiting
 from app.spa import mount_spa
 
 
@@ -117,6 +118,10 @@ app = FastAPI(
 # it and a JSON `{"status":"ok"}` from `/health` does not, so the liveness probe pays no gzip
 # overhead for a saving that could never be positive on its own.
 app.add_middleware(GZipMiddleware)
+
+# KAY-169. Installed before `install_observability`, so the request log wraps it and a `429` still
+# gets its access line. A pass-through unless `KAYA_RATE_LIMIT_ENABLED`; see `app/ratelimit.py`.
+install_rate_limiting(app)
 
 # So that anything the rest of this module's import does — and everything uvicorn logs
 # while starting up — is already going to one stdout handler in one shape. It also puts the

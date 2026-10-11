@@ -38,6 +38,8 @@ primary_region = "iad"
   # default or a short KAYA_AUTH_SECRET. Every Settings field's disposition is in
   # backend/tests/unit/settings_dispositions.py.
   KAYA_COOKIE_SECURE = "true"
+  # KAY-169: turns on app/ratelimit.py (in-memory, so per machine). Tier limits stay at their defaults.
+  KAYA_RATE_LIMIT_ENABLED = "true"
 
 [http_service]
   internal_port = 8000

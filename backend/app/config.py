@@ -22,7 +22,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 DEFAULT_DATABASE_URL = "postgresql+psycopg://kaya:kaya@localhost:5432/kaya"
 
 
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -291,6 +290,25 @@ class Settings(BaseSettings):
     )
     """`1`/`true` marks the session cookie `Secure` (HTTPS-only). Off by default — dev and the test
     suite run over http — set it in prod."""
+
+    rate_limit_enabled: bool = Field(
+        default=False,
+        validation_alias="KAYA_RATE_LIMIT_ENABLED",
+    )
+    """Master switch for `app/ratelimit.py` (KAY-169). Off by default so dev and the test suite,
+    which fire many requests from one client, never trip it; production sets it in `fly.toml`."""
+
+    rate_limit_auth: str = Field(default="30/minute", validation_alias="KAYA_RATE_LIMIT_AUTH")
+    """Unauthenticated credential-minting entry points: sign-in callback, device flow, DCR and the
+    authorization endpoint. Any `limits` rate string; a malformed one falls back to this default."""
+
+    rate_limit_write: str = Field(default="300/minute", validation_alias="KAYA_RATE_LIMIT_WRITE")
+    """Every mutating `/api/v1` request."""
+
+    rate_limit_expensive: str = Field(
+        default="120/minute", validation_alias="KAYA_RATE_LIMIT_EXPENSIVE"
+    )
+    """The DB- or upstream-heavy reads: search, the graph, a note's outgoing links."""
 
     kaya_e2e_auth_bypass: bool = Field(
         default=False,
