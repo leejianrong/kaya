@@ -1,6 +1,8 @@
 # ADR 0011 — Team-scoped notes: a second, softer rung under `authorize_note`
 
-- **Status:** Accepted
+- **Status:** **Superseded by [ADR 0017](0017-workspaces-and-the-access-ladder.md)** (2026-10-11,
+  EPIC-326). Kaya owns workspaces itself; the pandan-sourced team lookup, its cache and `note.team_id`
+  are retired once KAY-174 lands. Kept below as the record of why teams were built this way.
 - **Date:** 2026-09-03
 - **Deciders:** Jian (forks F1–F3, kaya-teams-decision artifact)
 - **Context source:** `KAN-1048` (kaya-side spike, done 2026-09-01), pandan
