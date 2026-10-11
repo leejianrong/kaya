@@ -11,9 +11,9 @@ remote-MCP mode) completes. This module holds the pure, DB-free primitives;
 human, so there's no length/typo tradeoff — a browser redirect carries it in a query parameter, not
 a person's eyes. Store only the hash (`app.identity.pat.hash_token`).
 
-**No refresh token here — see ADR 0014's own "deliberate simplification" section.** A token minted
-by this grant is an ordinary, long-lived `kaya_pat_…`, identical to what device flow already mints;
-there is nothing to rotate.
+**A token this grant mints is short-lived and paired with a rotating refresh token** (ADR 0016,
+which reversed ADR 0014's original "no refresh-token rotation"; see
+`app/identity/refresh_token.py`).
 """
 
 import base64

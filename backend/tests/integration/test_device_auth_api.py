@@ -243,3 +243,213 @@ def test_the_default_scope_is_write(client: Any) -> None:
     code = start_login(client)
 
     assert client.get(f"/auth/device/{code['user_code']}").json()["requested_scope"] == "write"
+
+
+# ----------------------------------------------------------------- refresh tokens (ADR 0016)
+
+CLIENT_ID = "kaya-cli"
+
+
+def login(client: Any, scope: str = "write") -> dict[str, Any]:
+    """A full device-flow login → the poll's success body."""
+    code = start_login(client, scope=scope)
+    assert client.post(f"/auth/device/{code['user_code']}/approve").status_code == 200
+    minted = poll(client, code["device_code"])
+    assert minted.status_code == 200, minted.text
+    return minted.json()
+
+
+def refresh(client: Any, refresh_token: str, client_id: str = CLIENT_ID, **extra: Any) -> Any:
+    return client.post(
+        DEVICE_TOKEN,
+        json={
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": client_id,
+            **extra,
+        },
+    )
+
+
+def bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _expire_access_token(token_id: int) -> None:
+    from sqlalchemy import text
+
+    from app.db import get_sessionmaker
+
+    with get_sessionmaker()() as session:
+        session.execute(
+            text(
+                "UPDATE personal_access_token SET expires_at = now() - interval '1 minute' "
+                "WHERE id = :id"
+            ),
+            {"id": token_id},
+        )
+        session.commit()
+
+
+def test_a_device_login_is_short_lived_and_carries_a_refresh_token(client: Any) -> None:
+    body = login(client)
+
+    assert body["refresh_token"].startswith("kaya_rt_")
+    assert body["expires_in"] == 3600
+    listed = client.get("/api/v1/tokens").json()
+    assert listed[0]["expires_at"] is not None
+
+
+def test_a_refresh_rotates_and_the_new_access_token_works(client: Any) -> None:
+    first = login(client)
+
+    rotated = refresh(client, first["refresh_token"])
+
+    assert rotated.status_code == 200, rotated.text
+    body = rotated.json()
+    assert body["access_token"].startswith("kaya_pat_")
+    assert body["token_type"] == "Bearer"
+    assert body["refresh_token"] != first["refresh_token"]
+    assert body["scope"] == "write"
+    assert client.get("/api/v1/notes", headers=bearer(body["access_token"])).status_code == 200
+
+
+def test_a_refresh_token_is_single_use(client: Any) -> None:
+    first = login(client)
+    assert refresh(client, first["refresh_token"]).status_code == 200
+
+    again = refresh(client, first["refresh_token"])
+
+    assert again.status_code == 400
+    assert again.json() == {"error": "invalid_grant"}
+
+
+def test_the_new_refresh_token_keeps_working_down_the_chain(client: Any) -> None:
+    token = login(client)["refresh_token"]
+    for _ in range(3):
+        rotated = refresh(client, token)
+        assert rotated.status_code == 200, rotated.text
+        token = rotated.json()["refresh_token"]
+
+
+def test_a_refresh_cannot_widen_the_scope(client: Any) -> None:
+    first = login(client, scope="read")
+
+    body = refresh(client, first["refresh_token"], scope="write").json()
+
+    assert body["scope"] == "read"
+    created = client.post(
+        "/api/v1/notes", json={"title": "x"}, headers=bearer(body["access_token"])
+    )
+    assert created.status_code == 403
+    assert created.json()["error"]["code"] == "insufficient_scope"
+
+
+def test_a_refresh_token_only_works_for_the_client_it_was_issued_to(client: Any) -> None:
+    first = login(client)
+
+    wrong = refresh(client, first["refresh_token"], client_id="some-other-app")
+
+    assert wrong.json() == {"error": "invalid_grant"}
+    unharmed = refresh(client, first["refresh_token"])
+    assert unharmed.status_code == 200, "a wrong client must not burn the token"
+
+
+def test_an_unknown_refresh_token_is_invalid_grant(client: Any) -> None:
+    response = refresh(client, "kaya_rt_never_issued")
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "invalid_grant"}
+
+
+def test_a_refresh_without_its_fields_is_invalid_request(client: Any) -> None:
+    response = client.post(DEVICE_TOKEN, json={"grant_type": "refresh_token"})
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "invalid_request"}
+
+
+def test_an_expired_refresh_token_is_invalid_grant(client: Any) -> None:
+    from sqlalchemy import text
+
+    from app.db import get_sessionmaker
+
+    first = login(client)
+    with get_sessionmaker()() as session:
+        session.execute(text("UPDATE oauth_refresh_token SET expires_at = now() - interval '1 s'"))
+        session.commit()
+
+    assert refresh(client, first["refresh_token"]).json() == {"error": "invalid_grant"}
+
+
+def test_an_expired_access_token_is_a_401_and_the_refresh_brings_a_good_one(client: Any) -> None:
+    first = login(client)
+    _expire_access_token(first["id"])
+    assert client.get("/api/v1/notes", headers=bearer(first["token"])).status_code == 401
+
+    renewed = refresh(client, first["refresh_token"]).json()
+
+    assert client.get("/api/v1/notes", headers=bearer(renewed["access_token"])).status_code == 200
+
+
+def test_the_expired_access_token_it_replaces_is_deleted_not_left_to_pile_up(client: Any) -> None:
+    first = login(client)
+    _expire_access_token(first["id"])
+
+    refresh(client, first["refresh_token"])
+
+    ids = [row["id"] for row in client.get("/api/v1/tokens").json()]
+    assert first["id"] not in ids
+    assert len(ids) == 1
+
+
+def test_an_access_token_that_has_not_expired_is_left_alone(client: Any) -> None:
+    first = login(client)
+
+    refresh(client, first["refresh_token"])
+
+    assert len(client.get("/api/v1/tokens").json()) == 2
+    assert client.get("/api/v1/notes", headers=bearer(first["token"])).status_code == 200
+
+
+def test_revoking_the_access_token_kills_its_refresh_token(client: Any) -> None:
+    first = login(client)
+    assert client.delete(f"/api/v1/tokens/{first['id']}").status_code == 204
+
+    assert refresh(client, first["refresh_token"]).json() == {"error": "invalid_grant"}
+
+
+def test_a_form_encoded_refresh_works_for_a_real_oauth_client(client: Any) -> None:
+    first = login(client)
+
+    response = client.post(
+        DEVICE_TOKEN,
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": first["refresh_token"],
+            "client_id": CLIENT_ID,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["refresh_token"].startswith("kaya_rt_")
+
+
+def test_the_refresh_token_is_hashed_at_rest(client: Any) -> None:
+    from sqlalchemy import text
+
+    from app.db import get_sessionmaker
+
+    first = login(client)
+
+    with get_sessionmaker()() as session:
+        stored = session.execute(text("SELECT token_hash FROM oauth_refresh_token")).scalars().all()
+
+    assert stored and first["refresh_token"] not in stored
+    assert all(len(value) == 64 for value in stored)
+
+
+def test_the_server_metadata_advertises_the_refresh_grant(client: Any) -> None:
+    metadata = client.get("/.well-known/oauth-authorization-server").json()
+
+    assert "refresh_token" in metadata["grant_types_supported"]

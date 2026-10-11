@@ -32,11 +32,12 @@ description = "kayatoast suite personal access token (pandan / kanban / kaya)"
 # The {20,} tail is what separates a real token from prose. CLAUDE.md and the ADRs discuss
 # these prefixes by name constantly; a rule that fired on the bare prefix would fail on the
 # documentation that explains it, and a gate that is wrong about its own repo gets removed.
-regex = '''\b(pandan_pat_|kanban_pat_|kaya_pat_)[A-Za-z0-9_-]{20,}'''
+regex = '''\b(pandan_pat_|kanban_pat_|kaya_pat_|kaya_rt_)[A-Za-z0-9_-]{20,}'''
 keywords = [
   "pandan_pat_",
   "kanban_pat_",
   "kaya_pat_",
+  "kaya_rt_",
 ]
 
 [[rules.allowlists]]
@@ -45,7 +46,7 @@ regexTarget = "match"
 regexes = [
   # `pandan_pat_xxxxx…` / `pandan_pat_REPLACE_ME` and friends: a shape written down to
   # explain the shape. A real token is not 20 identical characters.
-  '''(?i)(pandan|kanban|kaya)_pat_((x|\.){20,}|<[^>]+>|(REPLACE|EXAMPLE|YOUR|FAKE|DUMMY|REDACTED)[A-Za-z0-9_-]*)''',
+  '''(?i)(pandan|kanban|kaya)_(pat|rt)_((x|\.){20,}|<[^>]+>|(REPLACE|EXAMPLE|YOUR|FAKE|DUMMY|REDACTED)[A-Za-z0-9_-]*)''',
 ]
 
 # --- global allowlist -------------------------------------------------------------------

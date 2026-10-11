@@ -30,7 +30,7 @@ which `get_principal` would also accept.
 """
 
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
@@ -65,7 +65,14 @@ from app.identity.models import KayaAccount
 from app.identity.oauth_authorize import canonical_mcp_resource, verify_pkce
 from app.identity.oauth_client import resolve_client
 from app.identity.pat import PersonalAccessToken, generate_token, hash_token
-from app.identity.pat_schemas import TokenCreated
+from app.identity.pat_schemas import DeviceTokenCreated
+from app.identity.refresh_token import (
+    ACCESS_TOKEN_TTL_SECONDS,
+    DEVICE_FLOW_CLIENT_ID,
+    REFRESH_TOKEN_TTL_SECONDS,
+    OAuthRefreshToken,
+    generate_refresh_token,
+)
 
 router = APIRouter(prefix="/auth/device", tags=["identity"])
 
@@ -144,16 +151,50 @@ async def _parse_token_request_body(request: Request) -> dict:
     return body if isinstance(body, dict) else {}
 
 
+def _mint_access_token(
+    db: Session, *, user_id: Any, name: str, scope: str, client_id: str
+) -> tuple[str, PersonalAccessToken, str]:
+    """A short-lived access token and its paired refresh token (ADR 0016, KAY-171) → `(raw access
+    token, its row, raw refresh token)`. Shared by all three grants so they cannot drift apart.
+
+    Flushes, never commits: the caller stamps the row it is redeeming (`redeemed_at`/`consumed_at`)
+    and commits once, so a redeemed code can never exist without the token it paid for, nor the
+    reverse. The access token is an ordinary `personal_access_token`, so `get_principal` needed no
+    change; only `expires_at` makes it short-lived."""
+    secret = get_settings().kaya_auth_secret
+    now = datetime.now(UTC)
+    raw, prefix, token_hash = generate_token(secret)
+    pat = PersonalAccessToken(
+        user_id=user_id,
+        name=name,
+        token_hash=token_hash,
+        token_prefix=prefix,
+        scope=scope,
+        expires_at=now + timedelta(seconds=ACCESS_TOKEN_TTL_SECONDS),
+    )
+    db.add(pat)
+    db.flush()  # assigns pat.id, which the refresh row's foreign key needs
+
+    refresh_raw, refresh_hash = generate_refresh_token(secret)
+    db.add(
+        OAuthRefreshToken(
+            token_hash=refresh_hash,
+            personal_access_token_id=pat.id,
+            client_id=client_id,
+            expires_at=now + timedelta(seconds=REFRESH_TOKEN_TTL_SECONDS),
+        )
+    )
+    return raw, pat, refresh_raw
+
+
 def _exchange_authorization_code(body: dict, request: Request, db: Session) -> JSONResponse | dict:
     """`grant_type=authorization_code` (ADR 0014, KAN-1744) — redeem the code
     `POST /auth/authorize/approve` minted. Response shape is RFC 6749 §5.1 verbatim
     (`access_token`/`token_type`/...), unlike the device-code branch's CLI-specific shape below —
     this branch's caller is a real third-party OAuth client, not kaya's own CLI.
 
-    **No `expires_in`/`refresh_token` in the response** — ADR 0014's deliberate simplification: the
-    minted token is an ordinary, long-lived `kaya_pat_…`, not a short-lived credential needing
-    rotation. Both fields are OPTIONAL in RFC 6749 §5.1; their absence is a spec-legal way to say
-    "this token does not expire."
+    **The token is short-lived and comes with a refresh token** (ADR 0016, which reversed ADR 0014's
+    original "no refresh-token rotation"): one hour, then `_exchange_refresh_token`.
     """
     secret = get_settings().kaya_auth_secret
     code = body.get("code")
@@ -186,21 +227,81 @@ def _exchange_authorization_code(body: dict, request: Request, db: Session) -> J
     if resolved is not None:
         client_name = resolved.client_name
 
-    raw, prefix, token_hash = generate_token(secret)
-    pat = PersonalAccessToken(
+    raw, pat, refresh_raw = _mint_access_token(
+        db,
         user_id=row.user_id,
         name=f"{client_name or 'OAuth client'} (authorization code)",
-        token_hash=token_hash,
-        token_prefix=prefix,
         scope=row.requested_scope,
+        client_id=client_id,
     )
-    db.add(pat)
-    db.flush()
     row.pat_id = pat.id
     row.redeemed_at = datetime.now(UTC)
     db.commit()
 
-    return {"access_token": raw, "token_type": "Bearer", "scope": pat.scope}
+    return {
+        "access_token": raw,
+        "token_type": "Bearer",
+        "expires_in": ACCESS_TOKEN_TTL_SECONDS,
+        "refresh_token": refresh_raw,
+        "scope": pat.scope,
+    }
+
+
+def _exchange_refresh_token(body: dict, db: Session) -> JSONResponse | dict:
+    """`grant_type=refresh_token` (ADR 0016, KAY-171): rotate. Consumes the presented refresh token,
+    mints a fresh access token and a fresh refresh token carrying over the old one's scope, and
+    answers in RFC 6749 §5.1's flat shape (the same one `authorization_code` uses).
+
+    Every "not a live, redeemable row" case collapses to `invalid_grant`, uniformly, so this is not
+    an oracle for which tokens ever existed. A consumed token is `invalid_grant` too, which is the
+    single-use property; reuse does not revoke the rest of the family (ADR 0016 defers that).
+
+    The superseded access token is deleted **when it has already expired**, which is the normal case
+    (a client refreshes because it got a `401`). Left in place, an hourly refresh would add 24 dead
+    rows a day to the Tokens page. An access token that has *not* yet expired is left to expire on
+    its own, so a request still in flight on it is not cut off. Deleting the access token cascades
+    to the consumed refresh row, after which that token is `invalid_grant` for want of a row, the
+    same answer as before."""
+    secret = get_settings().kaya_auth_secret
+    refresh_token = body.get("refresh_token")
+    client_id = body.get("client_id")
+    if not refresh_token or not client_id:
+        return _oauth_error("invalid_request")
+
+    row = db.scalars(
+        select(OAuthRefreshToken).where(
+            OAuthRefreshToken.token_hash == hash_token(refresh_token, secret)
+        )
+    ).first()
+    now = datetime.now(UTC)
+    if row is None or row.expires_at <= now or row.consumed_at is not None:
+        return _oauth_error("invalid_grant")
+    if row.client_id != client_id:
+        return _oauth_error("invalid_grant")
+
+    old_pat = db.get(PersonalAccessToken, row.personal_access_token_id)
+    if old_pat is None:
+        return _oauth_error("invalid_grant")
+
+    raw, pat, refresh_raw = _mint_access_token(
+        db,
+        user_id=old_pat.user_id,
+        name=old_pat.name,
+        scope=old_pat.scope,
+        client_id=client_id,
+    )
+    row.consumed_at = now
+    if old_pat.expires_at is not None and old_pat.expires_at <= now:
+        db.delete(old_pat)
+    db.commit()
+
+    return {
+        "access_token": raw,
+        "token_type": "Bearer",
+        "expires_in": ACCESS_TOKEN_TTL_SECONDS,
+        "refresh_token": refresh_raw,
+        "scope": pat.scope,
+    }
 
 
 @router.post("/token")
@@ -213,6 +314,8 @@ async def poll_device_token(request: Request, db: DbSession):
     grant_type = body.get("grant_type") or DEVICE_CODE_GRANT
     if grant_type == "authorization_code":
         return _exchange_authorization_code(body, request, db)
+    if grant_type == "refresh_token":
+        return _exchange_refresh_token(body, db)
     if grant_type != DEVICE_CODE_GRANT:
         return _oauth_error("unsupported_grant_type")
 
@@ -244,23 +347,20 @@ async def poll_device_token(request: Request, db: DbSession):
 
     # status == "approved": mint the PAT now, on this first successful poll — see
     # `DeviceAuthorization`'s own docstring for why minting happens here and not at approval.
-    raw, prefix, token_hash = generate_token(secret)
-    pat = PersonalAccessToken(
+    raw, pat, refresh_raw = _mint_access_token(
+        db,
         user_id=row.user_id,
         name="Device flow login",
-        token_hash=token_hash,
-        token_prefix=prefix,
         scope=row.requested_scope,
+        client_id=DEVICE_FLOW_CLIENT_ID,
     )
-    db.add(pat)
-    db.flush()  # assign pat.id before it's referenced below
     row.pat_id = pat.id
     row.redeemed_at = datetime.now(UTC)
     db.commit()
     db.refresh(pat)
     poll_throttle.forget(row.device_code_hash)
 
-    return TokenCreated(
+    return DeviceTokenCreated(
         id=pat.id,
         name=pat.name,
         token_prefix=pat.token_prefix,
@@ -269,6 +369,8 @@ async def poll_device_token(request: Request, db: DbSession):
         last_used_at=pat.last_used_at,
         expires_at=pat.expires_at,
         token=raw,
+        refresh_token=refresh_raw,
+        expires_in=ACCESS_TOKEN_TTL_SECONDS,
     )
 
 

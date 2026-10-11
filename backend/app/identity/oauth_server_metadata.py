@@ -33,6 +33,7 @@ def authorization_server_metadata(request: Request) -> dict[str, object]:
         "response_types_supported": ["code"],
         "grant_types_supported": [
             "authorization_code",
+            "refresh_token",
             "urn:ietf:params:oauth:grant-type:device_code",
         ],
         "code_challenge_methods_supported": ["S256"],

@@ -172,6 +172,20 @@ def test_an_unhandled_exception_carrying_the_bearer_is_scrubbed(
     assert errors[0]["request_id"], "an error with no request id cannot be correlated"
 
 
+def test_a_bare_refresh_token_is_scrubbed_whole() -> None:
+    """ADR 0016: `kaya_rt_` has a prefix so this rule can see it. Pandan's refresh token is a bare
+    string and could not be recognised in a log line at all, which is why kaya's has a shape."""
+    from app.observability.redaction import scrub_text
+
+    tail = "FAKE0000aaaaBBBBccccDDDDeeeeFFFFgggg111"
+
+    cleaned = scrub_text(f"refresh rejected kaya_rt_{tail} for user")
+
+    assert tail not in cleaned
+    assert "kaya_rt_" not in cleaned
+    assert cleaned.endswith("for user")
+
+
 def test_a_bare_token_with_no_header_and_no_scheme_around_it_is_scrubbed_whole(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -470,6 +484,7 @@ def test_the_fast_path_cannot_skip_anything_the_patterns_match() -> None:
         TOKEN,
         TOKEN.replace("pandan_pat_", "kanban_pat_"),
         TOKEN.replace("pandan_pat_", "kaya_pat_"),
+        TOKEN.replace("pandan_pat_", "kaya_rt_"),
         "GET /api/v1/notes 200",
         "note NOTE-12 updated",
         "",

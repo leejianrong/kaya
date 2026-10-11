@@ -45,8 +45,8 @@ Module layout, one-way dependency (``models`` ← ``db`` ← ``manager`` ← `ba
   grant a hosted MCP client completes, RFC 7591/CIMD client registration, RFC 9728/8414 discovery,
   and the hosted Streamable HTTP transport itself. Extends ``device_flow.py``'s
   ``device_authorization`` table (one row shape, two grants) rather than a parallel one; mints a
-  PAT through ``pat.py`` exactly like device flow does, with no refresh token (ADR 0014's
-  deliberate simplification).
+  short-lived PAT through ``pat.py`` exactly like device flow does, each with a rotating refresh
+  token from ``refresh_token.py`` (ADR 0016, which reversed ADR 0014's "no refresh token").
 
 **What KAN-1738/1739 do not yet do.** No note/team/attachment route depends on the identity this
 package resolves, and no route accepts a ``kaya_pat_…`` bearer for anything — ``authorize_note``

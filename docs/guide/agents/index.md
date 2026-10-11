@@ -89,17 +89,22 @@ A refused request gets a `403` and the code `insufficient_scope`, with a message
 preset, over the REST API and over the hosted MCP endpoint alike. Existing tokens keep the preset
 they already had. There are three ways one gets minted:
 
-- `kaya auth login` runs a device flow in your browser and stores the token for the CLI
-  ([ADR 0013](https://github.com/leejianrong/kaya/blob/main/docs/adr/0013-device-flow-and-hosted-mcp.md)).
-- A hosted MCP client runs an OAuth authorization code flow with PKCE and keeps the token it is
+- `kaya auth login` runs a device flow in your browser and stores the token for the CLI, which
+  renews it by itself ([ADR 0013](https://github.com/leejianrong/kaya/blob/main/docs/adr/0013-device-flow-and-hosted-mcp.md)).
+- A hosted MCP client runs an OAuth authorization code flow with PKCE and renews the token it is
   given ([ADR 0014](https://github.com/leejianrong/kaya/blob/main/docs/adr/0014-oauth-authorization-code-pkce-grant.md)).
 - You create one by hand under **Settings > Tokens** in the web app, choosing a preset from the
   Access selector. The list shows each token's preset as a chip, and it is also where you revoke
   any of them.
 
-Every one of these is an ordinary long-lived token. There is no refresh token and no expiry, so a
-token you no longer trust has to be revoked under Settings > Tokens. Mint or connect one token per
-agent if you want to revoke them independently. See [get started](../get-started/index.md#sign-in)
+A token from `kaya auth login` or from a hosted MCP client lasts one hour and comes with a refresh
+token that is good for 30 days and works once: each refresh returns a new pair
+([ADR 0016](https://github.com/leejianrong/kaya/blob/main/docs/adr/0016-short-lived-tokens-and-refresh-rotation.md)).
+The CLI and MCP clients do this on their own, so a stolen token stops working within the hour. A
+client that sits idle for 30 days has to sign in again. A token you create by hand under
+**Settings > Tokens** does not expire unless you set an expiry, which makes it the one to use for CI
+and scripts; revoke it there when you no longer trust it. Revoking any token, a client's included,
+also ends its refresh token. Connect one client per agent if you want to revoke them independently. See [get started](../get-started/index.md#sign-in)
 for the sign-in steps.
 
 pandan is optional. If you link a pandan account under Settings > Pandan connection, board embeds
