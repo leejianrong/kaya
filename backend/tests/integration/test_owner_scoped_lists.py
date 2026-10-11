@@ -297,3 +297,31 @@ def test_authorize_note_follows_the_role_over_a_real_row(
     )
     session.commit()
     assert authorize_note(bob, shared, Access.WRITE, role_of(bob)) is shared
+
+
+def test_the_folder_move_query_returns_nothing_a_viewer_or_stranger_could_write(
+    alice_and_bob_with_a_workspace_note: Any,
+) -> None:
+    """`notes_with_paths` repeats the route's role check in SQL, so a route that forgot it still
+    moves nothing. The route's own refusal is tested over HTTP; this is the backstop under it."""
+    from app.auth.authorization import notes_with_paths
+
+    session = alice_and_bob_with_a_workspace_note
+    alice = _principal(ALICE_ID, "alice@example.com")
+    bob = _principal(BOB_ID, "bob@example.com")
+
+    def titles(who: Any, workspace_id: int | None) -> list[str]:
+        return sorted(n.title for n in session.scalars(notes_with_paths(who, workspace_id)))
+
+    assert titles(alice, PLATFORM_ID) == ["alice's workspace note"]
+    assert titles(alice, None) == ["alice's personal note"], "None is the personal space only"
+    assert titles(bob, PLATFORM_ID) == [], "a stranger moves nothing"
+
+    _add_member(session, BOB_ID, "viewer")
+    assert titles(bob, PLATFORM_ID) == [], "a viewer moves nothing"
+
+    session.execute(
+        text("UPDATE workspace_member SET role = 'editor' WHERE user_id = :u"), {"u": BOB_ID}
+    )
+    session.commit()
+    assert titles(bob, PLATFORM_ID) == ["alice's workspace note"], "an editor may"
