@@ -55,12 +55,11 @@ dict — the most recently created note with a shared title is the one a new lin
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from uuid import UUID
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.auth.authorization import note_ids_owned_by, notes_titled
+from app.auth.authorization import note_ids_in_container, notes_titled
 from app.models import Note
 from app.models.note_link import NoteLink
 from app.wikilinks import NoteTitleLink, WikilinkRef, find_note_title_links, find_wikilinks
@@ -134,13 +133,14 @@ def plan_note_link_changes(existing: Sequence[NoteLink], refs: Iterable[Ref]) ->
     return NoteLinkPlan(to_delete=to_delete, to_add=to_add)
 
 
-def _notes_by_title(session: Session, owner_id: UUID, titles: set[str]) -> dict[str, int]:
-    """One ``title -> id`` per requested title, among `owner_id`'s own notes — the one DB-touching
+def _notes_by_title(session: Session, source: Note, titles: set[str]) -> dict[str, int]:
+    """One ``title -> id`` per requested title, among the notes in `source`'s container (its
+    workspace, or its owner's personal space; ADR 0017) — the one DB-touching
     step `resolved_ids_for_additions` needs and does not do itself, so that function can stay pure.
 
     A single batched ``SELECT ... WHERE title IN (...)`` rather than one query per title: a save
     rarely adds more than a handful of NOTE-kind links, but there is no reason to pay for a
-    round trip per one when they all scope to the same owner. Title is not unique
+    round trip per one when they all scope to the same container. Title is not unique
     (`app/models/note.py`), so ordering by `Note.id` ascending and letting the dict comprehension's
     last-write-wins semantics do the work is the tie-break argued in the module docstring: the
     newest note sharing a title is the one a new link resolves to.
@@ -150,12 +150,13 @@ def _notes_by_title(session: Session, owner_id: UUID, titles: set[str]) -> dict[
 
     ``Note`` is named through ``app.auth.authorization.notes_titled`` and never through a
     ``select(Note, ...)`` built here — ``tests/unit/test_no_unscoped_note_query.py`` requires every
-    note query to be built in that one module, `notes_owned_by`'s guard extended to this card's own
+    note query to be built in that one module, `notes_visible_to`'s guard extended to this card's
+    own
     reads rather than carved around.
     """
     if not titles:
         return {}
-    rows = session.execute(notes_titled(owner_id, titles).order_by(Note.id.asc())).all()
+    rows = session.execute(notes_titled(source, titles).order_by(Note.id.asc())).all()
     return {title: note_id for title, note_id in rows}
 
 
@@ -211,7 +212,7 @@ def reconcile_note_links(session: Session, note: Note) -> None:
         session.delete(row)
 
     note_titles = {ref for kind, ref in plan.to_add if kind == "NOTE"}
-    title_to_id = _notes_by_title(session, note.owner_id, note_titles)
+    title_to_id = _notes_by_title(session, note, note_titles)
     resolved = resolved_ids_for_additions(plan.to_add, title_to_id)
 
     for target_kind, target_ref in plan.to_add:
@@ -226,8 +227,8 @@ def reconcile_note_links(session: Session, note: Note) -> None:
 
 
 def resolve_pending_note_links(session: Session, note: Note) -> None:
-    """Point every still-unresolved NOTE-kind edge naming `note.title`, among `note.owner_id`'s own
-    notes, at `note.id`.
+    """Point every still-unresolved NOTE-kind edge naming `note.title`, among the notes in
+    `note`'s own container, at `note.id`.
 
     KAN-563's *backward* resolution pass: call this whenever a note's title lands — on create, and
     on any update whose payload includes `title` — so a link written before its target existed
@@ -244,10 +245,10 @@ def resolve_pending_note_links(session: Session, note: Note) -> None:
     match key, and it is compared exactly, case included — see the module docstring's
     `_notes_by_title` paragraph for the equivalent forward-direction lookup.
 
-    The owner-scoping subquery is `app.auth.authorization.note_ids_owned_by`, not a
+    The container-scoping subquery is `app.auth.authorization.note_ids_in_container`, not a
     `select(Note.id)` built here, for the same structural reason `_notes_by_title` reaches for
-    `notes_titled` instead of its own — see that function's docstring for the cross-owner leak this
-    guards against.
+    `notes_titled` instead of its own — see that function's docstring for the cross-container leak
+    this guards against.
     """
     session.execute(
         update(NoteLink)
@@ -255,7 +256,7 @@ def resolve_pending_note_links(session: Session, note: Note) -> None:
             NoteLink.target_kind == "NOTE",
             NoteLink.target_ref == note.title,
             NoteLink.resolved_id.is_(None),
-            NoteLink.source_note_id.in_(note_ids_owned_by(note.owner_id)),
+            NoteLink.source_note_id.in_(note_ids_in_container(note)),
         )
         .values(resolved_id=note.id)
     )

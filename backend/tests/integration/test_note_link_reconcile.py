@@ -397,7 +397,7 @@ def test_resolution_never_crosses_an_owner_boundary(
 ) -> None:
     """A title match is scoped to the *linking* note's own owner — Bob having a note titled
     "Shared Title" must never resolve (or, worse, silently name) Alice's link to that title, the
-    same "another user's note must never appear" property `notes_owned_by` enforces for a list."""
+    same "another user's note must never appear" property `notes_visible_to` enforces for a list."""
     from app.auth.principal import Principal
     from app.db import get_sessionmaker
 

@@ -10,7 +10,7 @@ for the only user on the developer's machine.
 
 **Rule 1 — where a note query may be written**, and it is unchanged since KAN-535. ``Note`` reaches
 a query builder in ``app/auth/authorization.py`` and nowhere else under ``app/``. Anything wanting a
-list of notes composes onto ``notes_owned_by``, which has ``WHERE owner_id = :caller`` already on
+list of notes composes onto ``notes_visible_to``, which has ``WHERE owner_id = :caller`` already on
 it,
 and a clause cannot be composed away.
 
@@ -21,8 +21,8 @@ required, not sloppy: the `403` for someone else's note is only possible if the 
 **Rule 2 — that every note query inside that one module is actually scoped, which rule 1 never
 said.** Rule 1's scope is "every module *except* ``app/auth/authorization.py``" — and that is
 precisely the module where every note query is *required* to be written, so "compose onto
-``notes_owned_by``" was enforced everywhere it was not needed and nowhere it was. Measured on
-KAN-566 and re-confirmed on KAN-965: replacing ``notes_owned_by(principal)`` with a bare
+``notes_visible_to``" was enforced everywhere it was not needed and nowhere it was. Measured on
+KAN-566 and re-confirmed on KAN-965: replacing ``notes_visible_to(principal)`` with a bare
 ``select(Note)`` inside ``notes_linking_to`` left this file **green**. Rule 1 is a guard against a
 query being written in the wrong *place*, not against a query being written without *scoping*, and
 the two had been read as the same thing — by this docstring included, which named "a second list
@@ -37,8 +37,8 @@ an equality between ``note.owner_id`` and a bound value. Three reasons that beat
 probe. The statement is the artefact that reaches Postgres, so a scoping that merely *looks* present
 — a clause built and never applied, a ``where()`` on an expression that is not the one returned —
 cannot pass it. It does not care how the clause got there, so ``notes_matching``'s composition onto
-``notes_owned_by`` and ``notes_titled``'s own ``Note.owner_id == owner_id`` are one assertion rather
-than two spellings that have to be kept in step. And discovery is by **signature**, so a factory
+``notes_visible_to`` and ``notes_titled``'s own container clause are one assertion rather than
+two spellings that have to be kept in step. And discovery is by **signature**, so a factory
 added later is covered the day it is written rather than the day somebody remembers this file: an
 annotation the sweep has no sample argument for is a failure naming the parameter, never a silent
 skip.
@@ -110,14 +110,14 @@ from sqlalchemy.sql.visitors import iterate
 
 from app.auth import authorization
 from app.auth.principal import Principal
-from app.models import Note
+from app.models import Note, WorkspaceMember
 
 APP_ROOT = Path(__file__).resolve().parents[2] / "app"
 SCOPING_MODULE = APP_ROOT / "auth" / "authorization.py"
 
 # `select` and `select_from` cover Core and 2.0-style ORM queries; `query` covers the legacy
 # `Session.query` a code model still offers. A count phrased as
-# `select(func.count()).select_from(notes_owned_by(principal).subquery())` names no `Note` and is
+# `select(func.count()).select_from(notes_visible_to(principal).subquery())` names no `Note` and is
 # fine — the scoping is inside the subquery.
 QUERY_BUILDERS = frozenset({"select", "select_from", "query"})
 
@@ -223,23 +223,26 @@ def test_no_module_outside_the_scoping_helper_queries_notes() -> None:
 
     assert offenders == [], (
         "SLICES §V1: a note list is scoped with `WHERE owner_id = :caller`, not filtered after the "
-        "rows arrive. Compose onto `app.auth.authorization.notes_owned_by` instead. Found: "
+        "rows arrive. Compose onto `app.auth.authorization.notes_visible_to` instead. Found: "
         + ", ".join(offenders)
     )
 
 
-def test_the_sanctioned_query_exists_and_is_scoped_on_the_owner() -> None:
-    """The other half. Without this, deleting ``notes_owned_by`` makes the guard above pass.
+def test_the_sanctioned_query_exists_and_is_scoped_on_the_caller() -> None:
+    """The other half. Without this, deleting ``notes_visible_to`` makes the guard above pass.
 
-    The literal is brittle on purpose: this is the one line in the package whose exact shape is the
-    contract, and an edit to it should stop and be argued for rather than land quietly. It changed
-    once, deliberately, for ADR 0011/R16.3: the caller's own team ids join the clause as an ``OR``,
-    never a replacement — the owner equality this literal pins is still there, unconditionally.
+    The literals are brittle on purpose: this is the one statement in the package whose exact shape
+    is the contract, and an edit to it should stop and be argued for rather than land quietly. It
+    changed once, deliberately, for ADR 0017: the caller's workspace memberships join the clause as
+    an ``OR`` beside the personal-note equality, which is still there, unconditionally, and still
+    requires ``workspace_id IS NULL`` so a note that was moved into a workspace stops being
+    "personal" to its creator.
     """
     source = SCOPING_MODULE.read_text(encoding="utf-8")
 
     assert note_queries(source) != [], "the sanctioned query moved; this guard now proves nothing"
-    assert "or_(Note.owner_id == principal.id, Note.team_id.in_(team_ids))" in source
+    assert "and_(Note.workspace_id.is_(None), Note.owner_id == principal.id)" in source
+    assert "Note.workspace_id.in_(visible_workspace_ids(principal))" in source
 
 
 def test_the_guard_catches_every_shape_of_the_bug() -> None:
@@ -251,7 +254,7 @@ def test_the_guard_catches_every_shape_of_the_bug() -> None:
 
     # And stays quiet on the reads that are correct by design.
     assert note_queries("found = session.get(Note, note_id)\n") == []
-    assert note_queries("page = notes_owned_by(principal).limit(50)\n") == []
+    assert note_queries("page = notes_visible_to(principal).limit(50)\n") == []
     assert note_queries("statement = select(User).where(User.id == principal.id)\n") == []
 
 
@@ -267,6 +270,8 @@ SAMPLE_ARGUMENTS: dict[object, object] = {
     Iterable[str]: ("a value nothing here asserts against",),
     Iterable[int]: (7,),
     frozenset[int]: frozenset({1, 2}),
+    Note: Note(owner_id=ALICE.id, workspace_id=None),
+    int | None: 7,
 }
 """One sample value per parameter annotation the scoping module's factories use.
 
@@ -369,6 +374,75 @@ def owner_predicates(statement: Select) -> list[str]:
     return found
 
 
+def _note_column(element: object, name: str) -> bool:
+    return (
+        isinstance(element, ColumnClause)
+        and element.name == name
+        and element.table is not None
+        and getattr(element.table, "name", None) == Note.__tablename__
+    )
+
+
+def container_predicates(statement: Select) -> list[str]:
+    """Every ``note.workspace_id == <bound value>`` in the ``WHERE``: the same-container scope that
+    wikilink resolution uses (ADR 0017). A tautology on the column does not count, for the reason
+    ``owner_predicates`` gives."""
+    where = statement.whereclause
+    if where is None:
+        return []
+    found: list[str] = []
+    for element in iterate(where):
+        if not (isinstance(element, BinaryExpression) and element.operator is operators.eq):
+            continue
+        for column, other in ((element.left, element.right), (element.right, element.left)):
+            if _note_column(column, "workspace_id") and isinstance(other, BindParameter):
+                found.append(str(element))
+    return found
+
+
+def membership_predicates(statement: Select) -> list[str]:
+    """Every ``note.workspace_id IN (SELECT ... FROM workspace_member WHERE user_id = <bound>)``.
+
+    ADR 0017's widening, and the one ``IN`` form this guard accepts. The subquery has to constrain
+    ``workspace_member.user_id`` to a bound value, so ``workspace_id IN (every membership of
+    anybody)`` reads as unscoped: that statement is present, renders, and shows a caller every
+    workspace note there is.
+    """
+    where = statement.whereclause
+    if where is None:
+        return []
+    found: list[str] = []
+    for element in iterate(where):
+        if not (isinstance(element, BinaryExpression) and element.operator is operators.in_op):
+            continue
+        if not _note_column(element.left, "workspace_id"):
+            continue
+        constrained = any(
+            isinstance(inner, BinaryExpression)
+            and inner.operator is operators.eq
+            and any(
+                isinstance(column, ColumnClause)
+                and column.name == "user_id"
+                and getattr(column.table, "name", None) == WorkspaceMember.__tablename__
+                and isinstance(other, BindParameter)
+                for column, other in ((inner.left, inner.right), (inner.right, inner.left))
+            )
+            for inner in iterate(element.right)
+        )
+        if constrained:
+            found.append(str(element))
+    return found
+
+
+def scope_predicates(statement: Select) -> list[str]:
+    """Any clause that scopes ``statement`` to a caller or a container, in an accepted shape."""
+    return (
+        owner_predicates(statement)
+        + container_predicates(statement)
+        + membership_predicates(statement)
+    )
+
+
 def unscoped_note_selectors(module: types.ModuleType = authorization) -> list[str]:
     """The names of ``module``'s ``Select`` factories whose statements touch ``note`` unscoped.
 
@@ -381,7 +455,7 @@ def unscoped_note_selectors(module: types.ModuleType = authorization) -> list[st
         statement = statement_from(name, function)
         if Note.__tablename__ not in tables_touched(statement):
             continue
-        if owner_predicates(statement):
+        if scope_predicates(statement):
             continue
         offenders.append(name)
     return offenders
@@ -390,7 +464,7 @@ def unscoped_note_selectors(module: types.ModuleType = authorization) -> list[st
 def test_every_note_selector_in_the_scoping_module_is_owner_scoped_or_argued_for() -> None:
     """The blind spot KAN-965 exists for: rule 1 exempts this module, so nothing checked it.
 
-    Drop ``notes_owned_by``'s composition — or its ``where`` — from any factory in
+    Drop ``notes_visible_to``'s composition — or its ``where`` — from any factory in
     ``app/auth/authorization.py`` and this fails naming that factory.
     """
     factories = note_selector_factories()
@@ -405,7 +479,7 @@ def test_every_note_selector_in_the_scoping_module_is_owner_scoped_or_argued_for
         "SLICES §V1: every note query is scoped with `WHERE owner_id = :caller`. These factories "
         "in app/auth/authorization.py build a statement over `note` with no such clause: "
         + ", ".join(offenders)
-        + ". Compose onto `notes_owned_by` (or `note_ids_owned_by`), or — if the read is genuinely "
+        + ". Compose onto `notes_visible_to` (or `in_container`), or — if the read is genuinely "
         "meant to be unscoped, the way ADR 0008's two single-row fetches are — add it to "
         "UNSCOPED_BY_DESIGN with the reason written out."
     )
@@ -436,75 +510,64 @@ def test_the_allow_list_is_consulted_rather_than_decorative() -> None:
         )
 
 
-def team_id_in_predicate(statement: Select) -> bool:
-    """Whether ``statement``'s ``WHERE`` contains ``note.team_id IN (<bound values>)``.
-
-    ADR 0011/R16.3's own widening, checked directly rather than left to pass by accident because
-    the pre-existing owner equality is still present alongside it. This is the "edit with an
-    argument in it" ``owner_predicates``'s docstring named in advance for the day an ``IN`` form was
-    needed — a sibling check rather than a change to ``owner_predicates`` itself, because the two
-    ask different questions: one proves the owner clause survived, this one proves the team clause
-    is real and not decoration.
-    """
-    where = statement.whereclause
-    if where is None:
-        return False
-    for element in iterate(where):
-        if not isinstance(element, BinaryExpression) or element.operator is not operators.in_op:
-            continue
-        left = element.left
-        if (
-            isinstance(left, ColumnClause)
-            and left.name == "team_id"
-            and left.table is not None
-            and getattr(left.table, "name", None) == Note.__tablename__
-        ):
-            return True
-    return False
-
-
-def test_notes_owned_by_widens_to_team_default_without_losing_owner_scoping() -> None:
-    """ADR 0011/R16.3: the statement `GET /api/v1/notes` composes onto gains an `OR` branch, and
-    the pre-existing owner clause is still there, unconditionally — not replaced, not narrowed."""
+def test_notes_visible_to_has_both_halves_and_each_is_real() -> None:
+    """ADR 0017: the statement `GET /api/v1/notes` composes onto is personal-notes-I-own OR
+    notes-in-my-workspaces, and neither half may be dropped or decorative."""
     factories = note_selector_factories()
-    statement = statement_from("notes_owned_by", factories["notes_owned_by"])
+    statement = statement_from("notes_visible_to", factories["notes_visible_to"])
 
     assert owner_predicates(statement) != [], (
-        "the team-default widening must never remove the owner equality — that would turn "
-        "`notes_owned_by` into a query no caller's own notes are guaranteed to appear in"
+        "the personal half is missing: no caller's own notes are guaranteed to appear"
     )
-    assert team_id_in_predicate(statement), (
-        "notes_owned_by's SAMPLE_ARGUMENTS team_ids did not produce a `note.team_id IN (...)` "
-        "clause — the widening this file's docstring anticipated is missing or was written "
-        "differently than ADR 0011/R16.3 describes"
+    assert membership_predicates(statement) != [], (
+        "the workspace half is missing, or is not constrained to the caller's own memberships"
     )
 
 
-def test_an_empty_team_ids_set_is_the_pre_r16_statement_in_every_case_that_matters() -> None:
-    """The default (`team_ids=frozenset()`) must reproduce every existing caller's behaviour.
-
-    Not a claim about SQL text — `.in_(())` and a plain owner equality are not the same string —
-    but about what the statement can ever match: an empty `IN` matches nothing, ever, so the `OR`
-    branch is dead weight rather than a behaviour change for the overwhelming majority of callers
-    who belong to no team.
-    """
-    from app.auth.authorization import notes_owned_by
-
-    statement = notes_owned_by(ALICE)
-
-    assert owner_predicates(statement) != [], "the owner clause must be present with no team_ids"
-    assert team_id_in_predicate(statement), (
-        "the OR's second branch should still be `team_id IN (...)`, just with an empty operand — "
-        "its presence is what proves this is the same code path as a caller who does belong to a "
-        "team, not a special-cased one"
+def test_the_membership_probe_catches_an_unconstrained_in_clause() -> None:
+    """The positive control for ``membership_predicates``, built locally for the reason the owner
+    probe's control gives."""
+    everyone = select(Note).where(Note.workspace_id.in_(select(WorkspaceMember.workspace_id)))
+    assert membership_predicates(everyone) == [], (
+        "an IN over every membership of every account scopes nothing"
     )
+
+    mine = select(Note).where(
+        Note.workspace_id.in_(
+            select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == ALICE.id)
+        )
+    )
+    assert membership_predicates(mine) != []
+    assert membership_predicates(mine.where(Note.path == "proj").limit(5)) != []
+
+
+def test_a_container_scope_is_accepted_only_against_a_bound_value() -> None:
+    assert container_predicates(select(Note).where(Note.workspace_id == 7)) != []
+    assert container_predicates(select(Note).where(Note.workspace_id == Note.workspace_id)) == []
+    assert scope_predicates(select(Note).where(Note.workspace_id.is_(None))) == [], (
+        "`workspace_id IS NULL` alone is every personal note of every owner"
+    )
+
+
+def test_in_container_scopes_both_kinds_of_note() -> None:
+    """``in_container`` is not a ``Select`` factory, so the sweep cannot reach it: pin both of its
+    branches here. A personal note's container is its owner's personal space; a workspace note's is
+    that workspace."""
+    from app.auth.authorization import in_container
+
+    personal = Note(owner_id=ALICE.id, workspace_id=None)
+    in_workspace = Note(owner_id=ALICE.id, workspace_id=7)
+
+    assert owner_predicates(select(Note).where(in_container(personal))) != []
+    assert container_predicates(select(Note).where(in_container(in_workspace))) != []
+    assert "workspace_id IS NULL" in str(select(Note).where(in_container(personal)))
 
 
 def test_the_owner_scoping_probe_catches_every_shape_of_the_bug() -> None:
     """The positive control. An emptiness assertion proves nothing until the probe is shown firing.
 
     Each of these is a real statement, so what runs is the same code path the sweep runs — and each
-    is built **locally**. A control that called ``authorization.notes_owned_by`` would go red for
+    is built **locally**. A control that called ``authorization.notes_visible_to`` would go red for
     the production code being mutated, which is the one thing a control must not do: it is how "the
     probe works" and "the code is correct" become one failure that proves neither. Reading the real
     statements is rule 2's job, above.
@@ -540,8 +603,8 @@ def test_the_factory_sweep_reports_an_unscoped_factory_it_has_never_seen() -> No
         return select(Note).where(Note.path == "proj").order_by(Note.updated_at.desc())
 
     def notes_in_folder_scoped(principal: Principal) -> Select[tuple[Note]]:
-        # Its own scoped base rather than `authorization.notes_owned_by`, for the reason the probe's
-        # control gives: a control that moves when production moves is not one.
+        # Its own scoped base rather than `authorization.notes_visible_to`, for the reason the
+        # probe's control gives: a control that moves when production moves is not one.
         return select(Note).where(Note.owner_id == principal.id).where(Note.path == "proj")
 
     def users_seen(principal: Principal) -> Select[tuple[uuid.UUID]]:
@@ -727,7 +790,7 @@ def test_the_link_query_scan_and_its_probe_are_not_vacuous() -> None:
         "constructing a row is not building a query, and the reconciler does it on every save"
     )
 
-    joined = "statement = notes_owned_by(p).join(NoteLink, NoteLink.source_note_id == Note.id)\n"
+    joined = "statement = notes_visible_to(p).join(NoteLink, NoteLink.source_note_id == Note.id)\n"
     [site] = query_sites(joined, model="NoteLink", builders=LINK_QUERY_BUILDERS)
     assert site.builder == "join"
     assert mentions_column(site.statement, "NoteLink", SOURCE_NOTE_COLUMN)

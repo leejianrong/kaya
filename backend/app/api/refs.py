@@ -32,17 +32,16 @@ from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.auth import (
+    Access,
     Principal,
-    TeamAccessResolver,
     authorize_note,
     error_body,
     get_principal,
-    get_team_access_resolver,
     note_addressed_as_id,
     note_addressed_as_ref,
+    workspace_role_of,
 )
 from app.db import get_session
-from app.integrations.dependencies import PandanBearer, PandanBearerLookup
 from app.models import NOTE_REF_PREFIX, Note
 
 # The whole accepted grammar: an optional case-insensitive `NOTE-`, then digits, then nothing.
@@ -131,10 +130,10 @@ def resolve_note(
     session: Session,
     principal: Principal,
     raw: str,
-    bearer: PandanBearerLookup | None = None,
-    team_resolver: TeamAccessResolver | None = None,
+    require: Access = Access.READ,
 ) -> Note:
-    """A caller's string → the note it may see, or the same refusal for either spelling.
+    """A caller's string → the note it may use at level ``require``, or the same refusal for either
+    spelling.
 
     Read the branch below carefully, because its narrowness is the point. It chooses a statement and
     stops. There is one ``scalars`` call, one ``authorize_note`` call and one ``return``, so a `404`
@@ -142,71 +141,50 @@ def resolve_note(
     ADR 0008's "identical results including identical error codes", rather than two paths that a
     test has to keep in agreement.
 
-    ``bearer`` (a lookup for the caller's linked pandan PAT, called only on that same lazy path, so
-    the owner path pays no extra query) and ``team_resolver`` (ADR 0011, R16.3) default to ``None``
-    rather than being required,
-    so every existing caller — every unit test in this repository included — keeps working
-    unchanged. Team-default access is checked **lazily**, and only when it could possibly matter:
-    the owner check runs first (inside ``authorize_note``, over a plain equality this function
-    never re-implements), so a personal note or a note the caller already owns costs nothing extra
-    and never touches pandan. Only a note that (a) exists, (b) belongs to someone else, and (c) has
-    a ``team_id`` set is worth a `GET /api/v1/workspaces` call for.
-
-    **The connection is released before that call**, the same discipline `app/api/links.py`'s
-    `_release_the_connection` documents in full: a sync route holds its session's connection for
-    the whole request, and forty concurrent requests hitting this branch against a slow pandan
-    would exhaust the pool exactly the way an unguarded `/links` would (ADR 0003). ``commit()``
-    rather than ``close()``/``rollback()`` for the identical reason that module gives — `note`'s
-    already-loaded attributes stay readable afterward because `app/db.py`'s sessionmaker sets
-    ``expire_on_commit=False``.
+    A note in a workspace costs one more indexed query, for the caller's role there (ADR 0017); a
+    personal note costs none. Both are local reads: kaya no longer calls pandan to decide anything
+    here, so there is no connection to release and no soft failure to design (ADR 0003 amended).
     """
     ref = parse_note_ref(raw)
 
     if ref.prefixed:
         statement = note_addressed_as_ref(ref.canonical)
     elif ref.number > POSTGRES_INTEGER_MAX:
-        # Not an error and not a special case of one: a number the id column cannot hold names no
-        # row, exactly like `NOTE-99999999999` names no row. Answered without a query so the two
-        # spellings agree, instead of one of them reaching psycopg and becoming a `500`.
         return authorize_note(principal, None)
     else:
         statement = note_addressed_as_id(ref.number)
 
     found = session.scalars(statement).one_or_none()
 
-    team_ids: frozenset[int] = frozenset()
-    if (
-        found is not None
-        and found.owner_id != principal.id
-        and found.team_id is not None
-        and team_resolver is not None
-    ):
-        session.commit()  # release the connection before calling pandan — see this function's own
-        # docstring, and app/api/links.py's `_release_the_connection`.
-        pandan_pat = bearer() if bearer is not None else None
-        if pandan_pat is not None:
-            team_ids = team_resolver.member_of(pandan_pat)
+    role: str | None = None
+    if found is not None and found.workspace_id is not None:
+        role = session.scalars(workspace_role_of(principal, found.workspace_id)).one_or_none()
 
-    return authorize_note(principal, found, team_ids)
+    return authorize_note(principal, found, require, role)
 
 
-def note_from_ref(
-    ref: str,
-    session: Annotated[Session, Depends(get_session)],
-    principal: Annotated[Principal, Depends(get_principal)],
-    bearer: PandanBearer,
-    team_resolver: Annotated[TeamAccessResolver, Depends(get_team_access_resolver)],
-) -> Note:
-    """The dependency every ref-taking route uses, and the reason none of them parse anything.
+def note_from_ref_requiring(require: Access):
+    """A dependency that resolves ``{ref}`` and demands ``require`` on it. One per access level, so
+    a route states what it needs in its signature and cannot forget to check."""
 
-    V5's `/links` and `/backlinks` (KAN-566) get ADR 0008's guarantee by depending on this, without
-    a line of ref handling of their own — they landed, and they did. That is what "resolve
-    centrally" buys, and it is why this takes a bare ``ref: str`` path parameter rather than
-    anything route-specific. Both inherited the `400` for ``#NOTE-12``, the byte-identical `404` for
-    either spelling and the `403`/`404` split, and ``app/api/links.py`` mentions none of them —
-    and, since ADR 0011/R16.3, the team-default rung too, for the identical reason.
-    """
-    return resolve_note(session, principal, ref, bearer, team_resolver)
+    def note_from_ref(
+        ref: str,
+        session: Annotated[Session, Depends(get_session)],
+        principal: Annotated[Principal, Depends(get_principal)],
+    ) -> Note:
+        """The dependency every ref-taking route uses, and the reason none of them parse anything.
+
+        V5's `/links` and `/backlinks` (KAN-566) get ADR 0008's guarantee by depending on this,
+        without a line of ref handling of their own. That is what "resolve centrally" buys, and it
+        is why this takes a bare ``ref: str`` path parameter rather than anything route-specific.
+        """
+        return resolve_note(session, principal, ref, require)
+
+    return note_from_ref
 
 
-NoteFromRef = Annotated[Note, Depends(note_from_ref)]
+NoteFromRef = Annotated[Note, Depends(note_from_ref_requiring(Access.READ))]
+"""A note the caller may **read**. The default, and every read route's."""
+
+WritableNoteFromRef = Annotated[Note, Depends(note_from_ref_requiring(Access.WRITE))]
+"""A note the caller may **change**: edit, move, format-write, delete, attach to."""

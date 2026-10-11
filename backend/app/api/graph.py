@@ -20,7 +20,7 @@ degrade and no need for that module's ``_release_the_connection`` pattern, which
 to avoid holding a connection across a *slow upstream* call this route never makes.
 
 **No route builds a note or note_link query.** Both queries this route needs are composed, not
-written: ``notes_owned_by`` (already the sanctioned factory every list route uses) and
+written: ``notes_visible_to`` (already the sanctioned factory every list route uses) and
 ``notes_graph_edges`` (KAN-1050's own factory, in ``app/auth/authorization.py`` beside its sibling
 ``notes_linking_to`` for the reason ``tests/unit/test_no_unscoped_note_query.py`` requires — every
 ``note``/``note_link`` query lives in that one module or nowhere).
@@ -33,7 +33,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.schemas import GraphEdge, GraphNode, GraphRead
-from app.auth import Principal, get_principal, notes_graph_edges, notes_owned_by
+from app.auth import Principal, get_principal, notes_graph_edges, notes_visible_to
 from app.db import get_session
 from app.models import Note
 
@@ -52,7 +52,7 @@ def graph_read(notes: Iterable[Note], edges: Iterable[tuple[int, int]]) -> Graph
     makes in ``app/api/links.py``.
 
     ``notes`` becomes ``nodes`` verbatim, in whatever order it arrived — the route supplies that
-    order (``notes_owned_by`` composed with an ``order_by``), this function does not choose one.
+    order (``notes_visible_to`` composed with an ``order_by``), this function does not choose one.
 
     ``edges`` is id pairs, translated through a lookup built from ``notes`` and nothing else. An id
     this function cannot find in that lookup is dropped rather than raised on — the two ways that
@@ -83,13 +83,13 @@ def read_graph(principal: CurrentPrincipal, session: DbSession) -> GraphRead:
     """Every note the caller owns, and every resolved note-to-note wikilink among them.
 
     Two queries, both owner-scoped, both composed rather than written here: the nodes are
-    ``notes_owned_by`` ordered the same way ``list_notes``'s unfiltered list already is — newest
+    ``notes_visible_to`` ordered the same way ``list_notes``'s unfiltered list already is — newest
     first, with the same ``id`` tie-break, so a re-fetch of an unchanged graph does not reorder its
     nodes for no reason — and the edges are ``notes_graph_edges``. ``graph_read`` does the rest.
 
     A caller with no notes gets ``{"nodes": [], "edges": []}`` — an empty graph is not an error.
     """
-    statement = notes_owned_by(principal).order_by(Note.updated_at.desc(), Note.id.desc())
+    statement = notes_visible_to(principal).order_by(Note.updated_at.desc(), Note.id.desc())
     notes = session.scalars(statement)
     edges = session.execute(notes_graph_edges(principal)).all()
     return graph_read(notes, edges)

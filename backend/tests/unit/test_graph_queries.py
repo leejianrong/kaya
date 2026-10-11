@@ -21,7 +21,7 @@ import pytest
 from sqlalchemy.dialects import postgresql
 
 from app.api.graph import graph_read
-from app.auth import notes_graph_edges, notes_owned_by
+from app.auth import notes_graph_edges, notes_visible_to
 from app.auth.principal import Principal
 from app.models import Note
 
@@ -50,10 +50,10 @@ def predicates(statement: object) -> str:
 
 
 def test_the_graph_edges_query_is_owner_scoped_in_sql() -> None:
-    """Inherited from ``notes_owned_by``, not written again — the same clause appears in both, so
+    """Inherited from ``notes_visible_to``, not written again — the same clause appears in both, so
     the two cannot disagree (``test_link_queries.py``'s identical argument for
     ``notes_linking_to``)."""
-    scoped = predicates(notes_owned_by(ALICE))
+    scoped = predicates(notes_visible_to(ALICE))
     graph = predicates(notes_graph_edges(ALICE))
 
     assert f"note.owner_id = '{ALICE.id}'" in scoped
@@ -103,10 +103,10 @@ def test_the_graph_edges_query_selects_only_the_two_ids() -> None:
 )
 def test_the_clause_probes_are_not_vacuous(clause: str) -> None:
     """Every assertion above is a substring probe, and a substring probe proves nothing until shown
-    failing against something it must not match — ``notes_owned_by`` is the positive control, the
+    failing against something it must not match — ``notes_visible_to`` is the positive control, the
     same table and compiler with none of this card's added clauses."""
     assert clause in predicates(notes_graph_edges(ALICE))
-    assert clause not in predicates(notes_owned_by(ALICE))
+    assert clause not in predicates(notes_visible_to(ALICE))
 
 
 # --- graph_read: the pure translation --------------------------------------------------------
@@ -161,7 +161,7 @@ def test_an_edge_naming_an_id_outside_the_node_set_is_dropped_not_raised() -> No
 
 
 def test_nodes_preserve_the_order_they_were_given() -> None:
-    """``graph_read`` does not sort — the route supplies the order (``notes_owned_by`` composed
+    """``graph_read`` does not sort — the route supplies the order (``notes_visible_to`` composed
     with an ``order_by``), this function only translates."""
     notes = [a_note(id=2, ref="NOTE-2"), a_note(id=1, ref="NOTE-1")]
 

@@ -90,8 +90,8 @@ def test_the_model_declares_the_column_as_a_stored_generated_column() -> None:
 def test_the_column_is_deferred_so_a_list_read_does_not_carry_it() -> None:
     """Not correctness, but a decision with a reason, so it is pinned where the reason is.
 
-    Every list read in the product is ``notes_owned_by(principal)``, i.e. ``select(Note)``. Without
-    ``deferred`` that ships a body-sized tsvector per row to no reader at all.
+    Every list read in the product is ``notes_visible_to(principal)``, i.e. ``select(Note)``.
+    Without ``deferred`` that ships a body-sized tsvector per row to no reader at all.
     """
     assert Note.__mapper__.get_property("search_vector").deferred is True
 

@@ -311,7 +311,7 @@ def test_a_cross_owner_resolved_id_is_still_not_a_backlink(client: Any) -> None:
     The test above it is honest but vacuous for this mutation, and finding that out was worth more
     than the test was. `app/note_links.py` scopes *both* of its resolution passes — `notes_titled`
     forward, `note_ids_owned_by` backward — so a `resolved_id` written by that module never crosses
-    an owner boundary in the first place. Which means dropping `notes_owned_by` from
+    an owner boundary in the first place. Which means dropping `notes_visible_to` from
     `notes_linking_to` entirely leaves every assertion up there green: the ids were already
     partitioned by owner, so an unscoped query returns exactly the same rows. Watched failing to
     confirm it (see the PR body).

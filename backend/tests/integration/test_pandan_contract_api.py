@@ -1,15 +1,13 @@
 """What kaya actually sends pandan, against a fake pandan that serves only pandan's *current* paths
 (KAN-1804).
 
-Two suspected breakages from the repo audit, reproduced over real HTTP shapes (`httpx.MockTransport`
+A suspected breakage from the repo audit, reproduced over real HTTP shapes (`httpx.MockTransport`
 under the real upstream classes, real Postgres, real `kaya_pat_` tokens through the real
-`get_principal`):
+`get_principal`): `[[KAN-n]]` resolution must send the caller's **linked** pandan PAT, never the
+kaya bearer, and must send nothing at all for a caller who never linked an account.
 
-1. `[[KAN-n]]` resolution must send the caller's **linked** pandan PAT, never the kaya bearer, and
-   must send nothing at all for a caller who never linked an account.
-2. Team-default access (ADR 0011) must ask `GET /api/v1/workspaces` (pandan ADR 0023 renamed
-   `/teams`; the fake answers 404 to the old path) with the caller's linked pandan PAT, and a
-   non-member, an unlinked caller, or an erroring pandan all land on the same refusal, never a 500.
+(A second half used to cover team-default access, which asked pandan for the caller's workspaces.
+ADR 0017 moved access to kaya's own tables, so kaya no longer asks pandan anything about access.)
 
 The fake records every request's path and `Authorization` header. A `kaya_pat_` string appearing in
 that record is the failure this file exists to catch.
@@ -31,8 +29,6 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 NOTES = "/api/v1/notes"
 ALICE_ID = uuid.UUID("44444444-4444-4444-8444-444444444444")
 BOB_ID = uuid.UUID("55555555-5555-4555-8555-555555555555")
-BOB_PANDAN_PAT = "bobs-linked-pandan-pat"
-WORKSPACE_ID = 501
 
 
 def _alembic_config() -> Any:
@@ -44,14 +40,13 @@ def _alembic_config() -> Any:
 
 
 class FakePandan:
-    """Pandan as it is today: `/api/v1/cards`, `/api/v1/epics`, `/api/v1/workspaces`, and nothing
-    else (anything else, `/api/v1/teams` included, is the 404 the real service gives). Answers only
-    for `pandan_pat`s it was told about; any other bearer is a 401."""
+    """Pandan as it is today: `/api/v1/cards`, `/api/v1/epics`, and nothing else (anything else is
+    the 404 the real service gives). Answers only for `pandan_pat`s it was told about; any other
+    bearer is a 401."""
 
     def __init__(self) -> None:
         self.requests: list[tuple[str, str]] = []
         self.cards: dict[str, str] = {}
-        self.workspaces: dict[str, list[int]] = {}
         self.down = False
         self.error_status: int | None = None
 
@@ -64,7 +59,7 @@ class FakePandan:
             return httpx.Response(self.error_status, json={"detail": "boom"})
         pat = authorization.removeprefix("Bearer ")
         if request.url.path == "/api/v1/cards":
-            if pat not in self.workspaces and pat not in {"alice-linked"}:
+            if pat not in {"alice-linked"}:
                 return httpx.Response(401, json={"detail": "no"})
             wanted = request.url.params.get("refs", "").split(",")
             found = [
@@ -76,14 +71,6 @@ class FakePandan:
             return httpx.Response(200, json=found, headers={"X-Unresolved-Selectors": missing})
         if request.url.path == "/api/v1/epics":
             return httpx.Response(200, json=[])
-        if request.url.path == "/api/v1/workspaces":
-            if pat not in self.workspaces:
-                return httpx.Response(401, json={"detail": "no"})
-            rows = [
-                {"id": wid, "name": "w", "role": "viewer", "created_at": "x", "updated_at": "x"}
-                for wid in self.workspaces[pat]
-            ]
-            return httpx.Response(200, json=rows)
         return httpx.Response(404, json={"detail": "Not Found"})
 
     def paths(self) -> list[str]:
@@ -103,11 +90,6 @@ def client(database_url: str, pandan: FakePandan) -> Iterator[Any]:
     from alembic import command
     from fastapi.testclient import TestClient
 
-    from app.auth.dependencies import get_team_access_resolver
-    from app.auth.single_flight import SingleFlight
-    from app.auth.team_cache import TeamMembershipCache
-    from app.auth.team_resolver import TeamAccessResolver
-    from app.auth.team_upstream import PandanTeamUpstream
     from app.db import get_sessionmaker
     from app.integrations.card_resolution import (
         CardEpicCache,
@@ -124,7 +106,7 @@ def client(database_url: str, pandan: FakePandan) -> Iterator[Any]:
         with get_sessionmaker()() as session:
             session.execute(
                 text(
-                    "TRUNCATE TABLE note_link, note, team, personal_access_token, "
+                    "TRUNCATE TABLE note_link, note, workspace, personal_access_token, "
                     "kaya_account CASCADE"
                 )
             )
@@ -141,10 +123,7 @@ def client(database_url: str, pandan: FakePandan) -> Iterator[Any]:
 
     base = "http://pandan.invalid"
     card_upstream = PandanCardEpicUpstream(base, timeout=2.0, client=pandan_client())
-    team_upstream = PandanTeamUpstream(base, timeout=2.0, client=pandan_client())
     card_cache = CardEpicCache(ttl=300.0)
-    team_cache = TeamMembershipCache(positive_ttl=60.0, negative_ttl=10.0)
-    team_single_flight = SingleFlight()
 
     app.dependency_overrides[get_card_epic_resolver] = lambda: CardEpicResolver(
         card_upstream,
@@ -152,9 +131,6 @@ def client(database_url: str, pandan: FakePandan) -> Iterator[Any]:
         max_selectors_per_request=50,
         max_upstream_requests=4,
         total_deadline_seconds=5.0,
-    )
-    app.dependency_overrides[get_team_access_resolver] = lambda: TeamAccessResolver(
-        upstream=team_upstream, cache=team_cache, single_flight=team_single_flight
     )
     try:
         with TestClient(app) as test_client:
@@ -256,102 +232,3 @@ def test_card_resolution_with_pandan_down_is_a_200_with_the_link_unresolved(
     assert response.status_code == 200, response.text
     assert response.json()["links"][0]["title"] is None
     assert client.get(f"{NOTES}/{ref}", headers=bearer(kaya_token)).status_code == 200
-
-
-# --- 2. team-default access --------------------------------------------------------------------
-
-
-@pytest.fixture
-def alices_team_note(client: Any) -> str:
-    from app.db import get_sessionmaker
-
-    with get_sessionmaker()() as session:
-        session.execute(text("INSERT INTO team (id) VALUES (:id)"), {"id": WORKSPACE_ID})
-        ref = session.execute(
-            text(
-                "INSERT INTO note (owner_id, title, team_id) "
-                "VALUES (:owner, 'alice team note', :team) RETURNING ref"
-            ),
-            {"owner": ALICE_ID, "team": WORKSPACE_ID},
-        ).scalar_one()
-        session.commit()
-    return ref
-
-
-def test_a_workspace_member_reads_a_team_shared_note_via_the_workspaces_path(
-    client: Any, pandan: FakePandan, alices_team_note: str
-) -> None:
-    bob = mint(BOB_ID)
-    link_pandan(BOB_ID, BOB_PANDAN_PAT)
-    pandan.workspaces[BOB_PANDAN_PAT] = [WORKSPACE_ID]
-
-    response = client.get(f"{NOTES}/{alices_team_note}", headers=bearer(bob))
-
-    assert response.status_code == 200, response.text
-    assert pandan.paths() == ["/api/v1/workspaces"]
-    assert pandan.authorizations() == {f"Bearer {BOB_PANDAN_PAT}"}
-
-
-def test_a_workspace_member_sees_the_team_note_in_their_list(
-    client: Any, pandan: FakePandan, alices_team_note: str
-) -> None:
-    bob = mint(BOB_ID)
-    link_pandan(BOB_ID, BOB_PANDAN_PAT)
-    pandan.workspaces[BOB_PANDAN_PAT] = [WORKSPACE_ID]
-
-    response = client.get(NOTES, headers=bearer(bob))
-
-    assert [n["ref"] for n in response.json()["notes"]] == [alices_team_note]
-    assert pandan.authorizations() == {f"Bearer {BOB_PANDAN_PAT}"}
-
-
-def test_a_non_member_is_403_and_the_kaya_bearer_never_reaches_pandan(
-    client: Any, pandan: FakePandan, alices_team_note: str
-) -> None:
-    bob = mint(BOB_ID)
-    link_pandan(BOB_ID, BOB_PANDAN_PAT)
-    pandan.workspaces[BOB_PANDAN_PAT] = [999]
-
-    response = client.get(f"{NOTES}/{alices_team_note}", headers=bearer(bob))
-
-    assert response.status_code == 403
-    assert not any("kaya_pat_" in a for a in pandan.authorizations())
-
-
-def test_a_caller_with_no_linked_account_is_403_without_calling_pandan(
-    client: Any, pandan: FakePandan, alices_team_note: str
-) -> None:
-    response = client.get(f"{NOTES}/{alices_team_note}", headers=bearer(mint(BOB_ID)))
-
-    assert response.status_code == 403
-    assert pandan.requests == []
-
-
-@pytest.mark.parametrize("failure", ["down", 500, 404, 401])
-def test_pandan_failing_to_answer_is_a_403_never_a_500(
-    client: Any, pandan: FakePandan, alices_team_note: str, failure: Any
-) -> None:
-    bob = mint(BOB_ID)
-    link_pandan(BOB_ID, BOB_PANDAN_PAT)
-    pandan.workspaces[BOB_PANDAN_PAT] = [WORKSPACE_ID]
-    if failure == "down":
-        pandan.down = True
-    else:
-        pandan.error_status = failure
-
-    response = client.get(f"{NOTES}/{alices_team_note}", headers=bearer(bob))
-
-    assert response.status_code == 403, response.text
-    assert response.json()["error"]["code"] == "note_forbidden"
-
-
-def test_the_owner_never_triggers_a_team_check(
-    client: Any, pandan: FakePandan, alices_team_note: str
-) -> None:
-    alice = mint(ALICE_ID)
-    link_pandan(ALICE_ID, "alice-linked")
-
-    response = client.get(f"{NOTES}/{alices_team_note}", headers=bearer(alice))
-
-    assert response.status_code == 200
-    assert pandan.requests == []

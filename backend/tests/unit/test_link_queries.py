@@ -27,7 +27,7 @@ import pytest
 from sqlalchemy.dialects import postgresql
 
 from app.api.links import Edge, NoteTarget, link_records, ticket_refs
-from app.auth import notes_linking_to, notes_owned_by
+from app.auth import notes_linking_to, notes_visible_to
 from app.auth.principal import Principal
 from app.integrations.card_resolution import ResolvedTicket
 
@@ -227,14 +227,14 @@ def test_an_unknown_target_kind_is_classified_by_the_ref_not_by_not_being_note()
 
 def test_the_backlinks_query_is_owner_scoped_in_sql() -> None:
     """The clause that makes "another user's note never appears in my backlinks" a property of the
-    SQL. It is inherited from ``notes_owned_by`` rather than written again, so the two cannot
+    SQL. It is inherited from ``notes_visible_to`` rather than written again, so the two cannot
     disagree — asserted by finding the same rendered clause in both statements."""
-    scoped = predicates(notes_owned_by(ALICE))
+    scoped = predicates(notes_visible_to(ALICE))
     backlinks = predicates(notes_linking_to(ALICE, 7))
 
     assert f"note.owner_id = '{ALICE.id}'" in scoped
     assert f"note.owner_id = '{ALICE.id}'" in backlinks, (
-        "the clause is inherited from `notes_owned_by`, not written again, so the two cannot "
+        "the clause is inherited from `notes_visible_to`, not written again, so the two cannot "
         "disagree — this asserts the *same rendered clause* appears in both"
     )
 
@@ -275,13 +275,13 @@ def test_the_clause_probes_are_not_vacuous(clause: str) -> None:
     """Every assertion above is a substring probe, and a substring probe proves nothing until it is
     shown *failing* against something it must not match.
 
-    ``notes_owned_by`` is the positive control: the same table, the same compiler, none of the three
-    clauses this card added. Each probe that must be present in ``notes_linking_to`` is checked to
-    be **absent** here, so a typo that made a probe unmatchable — a stray space, the wrong
-    quoting — is caught rather than silently passing everywhere.
+    ``notes_visible_to`` is the positive control: the same table, the same compiler, none of the
+    three clauses this card added. Each probe that must be present in ``notes_linking_to`` is
+    checked to be **absent** here, so a typo that made a probe unmatchable (a stray space, the
+    wrong quoting) is caught rather than silently passing everywhere.
     """
     assert clause in predicates(notes_linking_to(ALICE, 7))
-    assert clause not in predicates(notes_owned_by(ALICE))
+    assert clause not in predicates(notes_visible_to(ALICE))
 
 
 def test_the_where_clause_probe_refuses_a_statement_it_cannot_read() -> None:

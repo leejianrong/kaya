@@ -20,30 +20,34 @@ nothing else of the framework — no ``Depends``, no request, no session type be
 SQLAlchemy one — so the whole of resolution and authorization is exercisable by the
 no-infrastructure test layer.
 
-**Team-default access (ADR 0011, R16) is a parallel, narrower stack, entirely unaffected by this
-card**: ``team_cache``/``team_upstream`` ← ``team_resolver`` ← ``dependencies``. It still calls
-pandan for every request (``GET /api/v1/teams``) and still needs the cache/upstream/single-flight
-shape identity's own stack used to — that need was never about identity, it was about this
-particular call being slow and worth shielding a stampede from, and pandan's `/api/v1/teams`
-endpoint is unchanged by anything in this card.
+**Workspace access (ADR 0017) is decided here too, from kaya's own tables**: ``authorization.py``'s
+``Access`` ladder and ``notes_visible_to`` read ``workspace_member`` directly. Nothing in this
+package calls pandan any more, so the cache, upstream and single-flight shape that ADR 0011's team
+lookup needed are gone with it.
 """
 
 from app.auth.authorization import (
+    ROLE_ACCESS,
+    Access,
     authorize_note,
+    in_container,
+    note_access,
     note_addressed_as_id,
     note_addressed_as_ref,
-    note_ids_owned_by,
+    note_ids_in_container,
     notes_graph_edges,
     notes_linking_to,
     notes_matching,
     notes_named_by_id,
-    notes_owned_by,
     notes_titled,
+    notes_visible_to,
     notes_with_paths,
+    visible_workspace_ids,
+    workspace_role_of,
+    writable_workspace_ids,
 )
 from app.auth.dependencies import (
     get_principal,
-    get_team_access_resolver,
     reset_auth,
 )
 from app.auth.digest import digest
@@ -53,35 +57,32 @@ from app.auth.kaya_principal import (
     principal_from_pat,
     resolve_principal,
 )
-from app.auth.mirror import ensure_team_mirrored
 from app.auth.principal import Principal, UpstreamUnavailable
 from app.auth.single_flight import SingleFlight
-from app.auth.team_cache import TeamMembershipCache
-from app.auth.team_resolver import TeamAccessResolver
-from app.auth.team_upstream import PandanTeamUpstream, TeamMembershipUpstream
 
 __all__ = [
-    "PandanTeamUpstream",
+    "ROLE_ACCESS",
+    "Access",
     "Principal",
     "SingleFlight",
-    "TeamAccessResolver",
-    "TeamMembershipCache",
-    "TeamMembershipUpstream",
     "UpstreamUnavailable",
     "authorize_note",
     "digest",
-    "ensure_team_mirrored",
     "error_body",
     "get_principal",
-    "get_team_access_resolver",
     "note_addressed_as_id",
     "note_addressed_as_ref",
-    "note_ids_owned_by",
+    "note_ids_in_container",
+    "note_access",
+    "in_container",
+    "visible_workspace_ids",
+    "workspace_role_of",
+    "writable_workspace_ids",
     "notes_graph_edges",
     "notes_linking_to",
     "notes_matching",
     "notes_named_by_id",
-    "notes_owned_by",
+    "notes_visible_to",
     "notes_with_paths",
     "notes_titled",
     "principal_from_cookie",
