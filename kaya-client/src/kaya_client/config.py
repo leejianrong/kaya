@@ -103,6 +103,13 @@ TOKEN_ENV = "KAYA_TOKEN"
 """The caller's `kaya_pat_…` bearer (ADR 0012, KAN-1740), forwarded byte-for-byte and never
 parsed — kaya has no token format any adapter needs to understand, only to hold."""
 
+TOKEN_KEY = "token"
+REFRESH_TOKEN_KEY = "refresh_token"
+"""The config file's spelling of the two credentials a login stores. ``refresh_token`` is **file
+only** (ADR 0016, KAY-172): it has no environment variable and is not in ``SETTINGS``, so
+``config show``/``config set`` never display or accept it. It exists to let `refresh.py` renew the
+file's own access token and for nothing else."""
+
 MAX_TEXT_CHARS_ENV = "KAYA_MAX_TEXT_CHARS"
 """How much prose a read returns before the truncation hint (KAN-547). PLAN §Config."""
 
@@ -308,12 +315,44 @@ def unset_token(env: Mapping[str, str] | None = None) -> Payload:
     a shell's own variable, so it does not claim to.
     """
     current = read_settings_file(env)
-    key = file_key(TOKEN_ENV)
-    if key in current:
-        remaining = {k: v for k, v in current.items() if k != key}
+    gone = {file_key(TOKEN_ENV), REFRESH_TOKEN_KEY}
+    if gone & current.keys():
+        remaining = {k: v for k, v in current.items() if k not in gone}
         _atomic_write(config_path(env), remaining)
 
     return settings_payload(env)
+
+
+def save_login(
+    access_token: str,
+    refresh_token: str | None,
+    env: Mapping[str, str] | None = None,
+) -> Payload:
+    """Store what a login or a refresh produced: the access token and, when the server issued one,
+    its refresh token (ADR 0016).
+
+    One read-modify-write for both, so the file is never observed holding a new access token beside
+    the previous login's refresh token. ``refresh_token=None`` **removes** a stored one rather than
+    leaving it: a refresh token belongs to the access token it was issued with, and keeping the
+    old one beside a new, unrelated token would let a later refresh swap in the wrong identity.
+    Unknown keys survive, as in `write_settings`. Returns the effective settings, like it.
+    """
+    merged = {**read_settings_file(env), TOKEN_KEY: access_token}
+    if refresh_token:
+        merged[REFRESH_TOKEN_KEY] = refresh_token
+    else:
+        merged.pop(REFRESH_TOKEN_KEY, None)
+    _atomic_write(config_path(env), merged)
+    return settings_payload(env)
+
+
+def remove_refresh_token(env: Mapping[str, str] | None = None) -> None:
+    """Drop a refresh token the server refused, leaving everything else in the file alone."""
+    current = read_settings_file(env)
+    if REFRESH_TOKEN_KEY in current:
+        _atomic_write(
+            config_path(env), {k: v for k, v in current.items() if k != REFRESH_TOKEN_KEY}
+        )
 
 
 # ------------------------------------------------------------------------- resolution
@@ -589,4 +628,19 @@ def open_client(
     client = None
     if transport is not None:
         client = httpx.Client(transport=transport, timeout=DEFAULT_TIMEOUT)
-    return KayaClient(api_url(env), bearer, client=client)
+
+    refresher = None
+    _, source = _resolved(TOKEN_ENV, env)
+    if source == FILE_SOURCE and read_settings_file(env).get(REFRESH_TOKEN_KEY):
+        # Imported here: `refresh` needs this module's file helpers, so a module-level import would
+        # be circular. Only a token from the file is ever renewed (see `refresh.py`).
+        from kaya_client.refresh import refresh_access_token
+
+        origin = api_url(env)
+
+        def refresher(stale: str) -> str | None:
+            # The injected client doubles as the refresh call's transport, so a test drives the
+            # whole renewal over one `MockTransport`. Real use builds its own.
+            return refresh_access_token(stale, api_url=origin, env=env, client=client)
+
+    return KayaClient(api_url(env), bearer, client=client, refresher=refresher)
