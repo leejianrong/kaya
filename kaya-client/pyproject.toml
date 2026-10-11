@@ -93,7 +93,11 @@ name = "kaya-client"
 # in-band `help` key on a structured note. Behavioural, so a minor bump.
 # 0.19.0 — KAY-138: `KayaClient.history` and `.diff_versions`, `history.py` (actor label, ordinals,
 # unified diff). Behavioural, so a minor bump.
-version = "0.19.0"
+# 0.20.0 — KAY-172 (ADR 0016): `KayaClient` renews a short-lived token on `401 invalid_token` and
+# replays the request once; `refresh.py` does the renewal under a cross-process file lock; `config`
+# gains `save_login` and a file-only `refresh_token`; `MintedToken.refresh_token`. A server that
+# still mints long-lived tokens is unaffected. Behavioural, so a minor bump.
+version = "0.20.0"
 description = "The shared core for kaya: the API client and the one payload-shaping seam"
 readme = "README.md"
 license = "Apache-2.0"

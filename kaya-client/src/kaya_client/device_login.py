@@ -60,6 +60,9 @@ class MintedToken:
     token: str
     token_prefix: str
     scope: str
+    refresh_token: str | None = None
+    """Present once the server issues short-lived tokens (ADR 0016); `None` from a server that still
+    mints a long-lived one, which this client keeps working with."""
 
 
 PollResult = MintedToken | Literal["pending", "slow_down"]
@@ -126,6 +129,7 @@ def poll_once(
             token=str(body["token"]),
             token_prefix=str(body["token_prefix"]),
             scope=str(body["scope"]),
+            refresh_token=str(body["refresh_token"]) if body.get("refresh_token") else None,
         )
     except KeyError as exc:
         raise KayaError(
