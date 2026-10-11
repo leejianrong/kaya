@@ -41,6 +41,7 @@ It is also the named place retry-with-backoff would land if KAN-666's measuremen
 a retry over a 21.8 s cold introspection makes an outage take a multiple of the timeout to report.
 """
 
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -302,9 +303,14 @@ class KayaClient:
         *,
         timeout: httpx.Timeout | float = DEFAULT_TIMEOUT,
         client: httpx.Client | None = None,
+        refresher: Callable[[str], str | None] | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._token = token
+        # ADR 0016 (KAY-172): given the access token that just earned a `401 invalid_token`, returns
+        # a replacement or `None`. Only `config.open_client` passes one, and only for a token read
+        # from the config file; the hosted MCP's per-request bearer and a `KAYA_TOKEN` never do.
+        self._refresher = refresher
         # `timeout` configures the client this builds; it does **not** apply to one passed in,
         # which arrives carrying its own. Only tests pass `client`, and they pass a MockTransport
         # that never blocks — but the asymmetry is easy to misread, so: if you inject a client,
@@ -989,18 +995,21 @@ class KayaClient:
         and never put in an exception message; the same rule as the bearer, for the weaker but real
         reason that a note body is the user's prose.
         """
-        try:
-            response = self._client.request(
-                method,
-                self._base_url + path,
-                headers={"Authorization": f"Bearer {self._token}"},
-                json=body,
-            )
-        except httpx.HTTPError as exc:
-            # `from exc` is safe: httpx puts the URL in its messages, never the headers. The same
-            # reasoning `app/auth/upstream.py` relies on, and the reason no bearer can reach a log
-            # line through this path.
-            raise TransportError(f"{self._base_url} is unreachable") from exc
+        response = self._send(method, path, body)
+
+        # ADR 0016: a short-lived token expired. Renew once and replay. Safe for a write, unlike a
+        # retry after a timeout: a `401` is refused before the route runs, so nothing was done the
+        # first time. `invalid_token` only: `authentication_required` means no credential was sent
+        # at all, and no refresh fixes that.
+        if (
+            response.status_code == 401
+            and self._refresher is not None
+            and _error_payload(response)["error"].get("code") == "invalid_token"
+        ):
+            renewed = self._refresher(self._token)
+            if renewed:
+                self._token = renewed
+                response = self._send(method, path, body)
 
         if response.status_code >= 400:
             raise ApiError(response.status_code, _error_payload(response))
@@ -1015,6 +1024,20 @@ class KayaClient:
             # interstitial, most often. Never the body in the message; it is unvetted and this
             # string is printed.
             raise TransportError(f"{self._base_url} returned a body kaya could not read") from exc
+
+    def _send(self, method: str, path: str, body: dict[str, Any] | None) -> httpx.Response:
+        try:
+            return self._client.request(
+                method,
+                self._base_url + path,
+                headers={"Authorization": f"Bearer {self._token}"},
+                json=body,
+            )
+        except httpx.HTTPError as exc:
+            # `from exc` is safe: httpx puts the URL in its messages, never the headers. The same
+            # reasoning `app/auth/upstream.py` relies on, and the reason no bearer can reach a log
+            # line through this path.
+            raise TransportError(f"{self._base_url} is unreachable") from exc
 
     # -------------------------------------------------------------- lifecycle
 

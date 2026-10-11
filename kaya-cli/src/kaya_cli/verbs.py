@@ -113,6 +113,7 @@ from kaya_client import (
     path_payload,
     poll_once,
     request_device_code,
+    save_login,
     settings_payload,
     token_status_payload,
     unset_token,
@@ -393,7 +394,7 @@ def _auth_login(args: Namespace) -> Payload:
             continue
         break
 
-    return write_settings({TOKEN_ENV: result.token})
+    return save_login(result.token, result.refresh_token)
 
 
 def _auth_logout(_args: Namespace) -> Payload:
