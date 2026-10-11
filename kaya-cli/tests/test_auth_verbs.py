@@ -103,6 +103,29 @@ def test_login_stores_the_minted_token_in_the_config_file(monkeypatch, capsys) -
     assert stored()["token"] == "kaya_pat_the_secret"
 
 
+def test_login_stores_the_refresh_token_and_never_prints_it(monkeypatch, capsys) -> None:
+    patch_request_device_code(monkeypatch)
+    result = MintedToken(
+        token="kaya_pat_a", token_prefix="kaya_pat_a", scope="write", refresh_token="kaya_rt_hidden"
+    )
+    poll_sequence(monkeypatch, result)
+
+    main(["auth", "login"])
+
+    assert stored()["refresh_token"] == "kaya_rt_hidden"
+    assert "kaya_rt_hidden" not in capsys.readouterr().out
+
+
+def test_a_login_without_a_refresh_token_clears_a_stale_one(monkeypatch, capsys) -> None:
+    config.save_login("kaya_pat_old", "kaya_rt_old", os.environ)
+    patch_request_device_code(monkeypatch)
+    poll_sequence(monkeypatch, minted(token="kaya_pat_new"))
+
+    main(["auth", "login"])
+
+    assert "refresh_token" not in stored()
+
+
 def test_login_never_prints_the_raw_minted_token(monkeypatch, capsys) -> None:
     patch_request_device_code(monkeypatch)
     poll_sequence(monkeypatch, minted(token="kaya_pat_super_secret_value"))
