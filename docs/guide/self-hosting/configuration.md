@@ -33,6 +33,22 @@ your shell. To sign in, or to exercise any other setting, run the backend direct
 (`cd backend && KAYA_… uv run uvicorn app.main:app --port 8000`) or set it in your own
 deployment's environment.
 
+## Rate limiting
+
+Off by default. When on, one middleware limits three tiers per client IP and principal, and answers
+`429` with a `Retry-After` header. The counters live in memory, so each running machine counts on its
+own and a restart resets them.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `KAYA_RATE_LIMIT_ENABLED` | off | `1` or `true` turns the limiter on. |
+| `KAYA_RATE_LIMIT_AUTH` | `30/minute` | Sign-in callback, device flow, client registration and the authorization endpoint. |
+| `KAYA_RATE_LIMIT_WRITE` | `300/minute` | Every request that changes something under `/api/v1`. |
+| `KAYA_RATE_LIMIT_EXPENSIVE` | `120/minute` | Search, the graph, and a note's outgoing links. |
+
+A value is any `N/second`, `N/minute`, `N/hour` or `N/day`. A malformed one falls back to the default.
+Behind a proxy other than Fly, the client IP is the socket peer, so every caller can share one bucket.
+
 ## pandan (optional)
 
 pandan is an optional integration. Setting `KAYA_PANDAN_URL` only tells kaya where to find a pandan
