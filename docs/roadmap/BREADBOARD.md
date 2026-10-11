@@ -412,3 +412,29 @@ spec-defined, not pandan-implementation-defined.
 **Cards:** `KAN-1743` (`kaya auth login/logout/status` — **shipped**), `KAN-1744` (hosted remote MCP
 endpoint — **shipped**), `KAN-1745` (docs: hosted MCP + CLI as top options, stdio as the fallback — **shipped** with `KAN-1825`).
 All under `EPIC-284`.
+
+## R21: Auth parity: rate limiting, refresh tokens, workspaces (ADR 0016, ADR 0017, EPIC-326)
+
+**Requirement.** Bring kaya's auth to the shape pandan has, and past it where the maintainer asked:
+abuse limits on the credential-minting doors, no long-lived credential from an interactive login, and
+shared notes owned by kaya rather than looked up from pandan.
+
+**Decision, in one line.** Mirror pandan's V27 limiter, ADR 0026 refresh rotation and ADR 0021/0013
+workspace and access ladder, independently implemented. Reasoning is in
+[ADR 0016](../adr/0016-short-lived-tokens-and-refresh-rotation.md) and
+[ADR 0017](../adr/0017-workspaces-and-the-access-ladder.md), not repeated here. ADR 0017 supersedes
+[ADR 0011](../adr/0011-team-scoped-notes.md) and amends ADRs 0003 and 0008; ADR 0016 amends ADR 0014.
+
+**Shape**
+
+| Part | Mechanism |
+|------|-----------|
+| Rate limiting | `app/ratelimit.py`, one middleware over slowapi's `limits` engine. Tiers `auth`, `write`, `expensive`, keyed on `Fly-Client-IP` plus a hashed credential hint. In-memory, so per machine. **`KAY-169`, PR #218.** |
+| Refresh tokens | `oauth_refresh_token`, 1 hour access and 30 day single-use refresh from both the device flow and `authorization_code`, a `kaya_rt_` prefix so the scrubber sees it, manual PATs unchanged. `KAY-171`. |
+| Client refresh | `kaya-client` refreshes once on `401` under a cross-process file lock; the SPA uses its cookie instead of minting a token. `KAY-172`, `KAY-173`. Shipped before the server flips. |
+| Workspaces | `workspace`, `workspace_member`, `note.workspace_id`; `Access` READ < WRITE < MANAGE; `team_id` and the pandan team lookup dropped. `KAY-174`. |
+| Workspace surface | REST, CLI, MCP and SPA. `KAY-175`. |
+| Token allow-list | A PAT limited to named workspaces; can only remove access. `KAY-176`. |
+
+**Cards:** `KAY-169` to `KAY-177`, all under `EPIC-326`. Ordering: 169, 170, then 172 before 171 ships
+to production, 173, then 174, 175, 176.
