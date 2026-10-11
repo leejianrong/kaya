@@ -94,3 +94,10 @@ sequences after ADR 0018, and it's the cheapest possible insurance.
   under `from` to `to`, in one transaction. It is the bulk form of `PATCH {"path": …}`: no link rewriting
   (identity is the `NOTE-n` ref), no version cut, `updated_at` restamped. A note whose path is exactly `from`
   is a leaf named like the folder and is not moved; moving a folder into itself or a descendant is a `422`.
+
+## Amendment (2026-10-11): a path is relative to a container
+
+With [ADR 0017](0017-workspaces-and-the-access-ladder.md), a note is either personal or in one
+workspace (`note.workspace_id`), and its `path` is meaningful only inside that container. Folders are
+still derived from `path`, with no folder table. A folder rename rewrites paths within one container, and
+moving a note to another container is a separate, permission-checked operation, never a `PATCH path`.

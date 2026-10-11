@@ -107,3 +107,10 @@ reverse) is untouched.
   already carries a distinguishing `name` (`"{client name} (authorization code)"`), which is enough
   for a human reading the Tokens UI to tell it apart and revoke it individually; a `client_id`-keyed
   bulk operation is additive whenever a real need for one shows up.
+
+## Amendment (2026-10-11): refresh-token rotation is now built
+
+[ADR 0016](0016-short-lived-tokens-and-refresh-rotation.md) reverses the "deliberate simplification"
+above. Tokens from this grant, and from the device flow, are short-lived and paired with a rotating
+single-use refresh token. A manually minted `kaya_pat_…` is still long-lived and is now the only kind
+that is. The Consequences paragraph's "no refresh-token rotation" is no longer true once KAY-171 ships.

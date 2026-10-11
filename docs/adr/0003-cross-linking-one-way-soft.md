@@ -136,3 +136,11 @@ clock alone, a cap-8 fan-out of twenty refs is 2.4s against a 4.9s sweep, and th
 forty-five refs on a 540-card board. The sweep still wins, because a per-ref design fills one cache
 entry per request while a sweep fills 200 — the amortisation is across the whole workspace, not one
 note — and because the wall-clock comparison silently omits the sweep the fan-out would itself need.
+
+## Amendment (2026-10-11): authorization no longer calls pandan
+
+[ADR 0017](0017-workspaces-and-the-access-ladder.md) moves team access to kaya's own workspace tables,
+so no permission decision in kaya touches pandan, not identity (ADR 0012) and not team access. What
+this ADR governs is unchanged and now the whole of the pandan relationship: wikilink resolution and the
+board embed read pandan with the caller's linked credential and degrade to "unresolved" when it is
+unreachable.
