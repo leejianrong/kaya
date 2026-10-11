@@ -40,15 +40,17 @@ help: kaya note edit <ref> --body-file <path>
 The ref, the numeric id and both timestamps are the database's — nothing you pass in influences
 any of them.
 
-### Sharing with a team
+### Creating in a workspace
 
 ```bash
-kaya note create "Sprint retro" --team 4
+kaya note create "Sprint retro" --workspace 4
 ```
 
-`--team` is a plain numeric id — a team has no ref of its own — and it exists only on `create`;
-there's no way to move a note into or out of a team afterwards. `pandan team list` is where you
-find the id. A team you don't belong to is a `403`.
+`--workspace` is a plain numeric id, since a workspace has no ref of its own, and it exists only on
+`create`. Without it the note is personal. You need the editor or owner role in that workspace, or
+the answer is a `403`. A note in a workspace is readable by every member, and a path is relative to
+its workspace, so `docs/plan.md` there is a different folder from `docs/plan.md` in your own notes
+([ADR 0017](https://github.com/leejianrong/kaya/blob/main/docs/adr/0017-workspaces-and-the-access-ladder.md)).
 
 ## Edit
 

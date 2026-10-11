@@ -249,7 +249,7 @@ def _note_create(client: KayaClient, args: Namespace) -> Payload:
         args.title,
         body=resolve_body(args),
         path=args.path,
-        team_id=args.team,
+        workspace_id=args.workspace,
         format_hint=True,
     )
 

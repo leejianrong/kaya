@@ -97,7 +97,10 @@ name = "kaya-client"
 # replays the request once; `refresh.py` does the renewal under a cross-process file lock; `config`
 # gains `save_login` and a file-only `refresh_token`; `MintedToken.refresh_token`. A server that
 # still mints long-lived tokens is unaffected. Behavioural, so a minor bump.
-version = "0.20.0"
+# 0.21.0 — KAY-174 (ADR 0017): `create_note(workspace_id=...)` replaces `team_id` (ADR 0011's teams are
+# superseded), and a note payload carries `workspace_id` where it carried `team_id`. Breaking for a
+# caller that passed `team_id`, so a minor bump while 0.x.
+version = "0.21.0"
 description = "The shared core for kaya: the API client and the one payload-shaping seam"
 readme = "README.md"
 license = "Apache-2.0"

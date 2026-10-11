@@ -66,6 +66,20 @@ cover it (KAN-1763), and this page is how to work with them.
 5. Update [`docs/guide/self-hosting/configuration.md`](../guide/self-hosting/configuration.md) so
    self-hosters see the new field.
 
+## Before the first deploy that includes workspaces (migration 0017)
+
+Migration 0017 drops `note.team_id` and the `team` table with no data carried over (ADR 0017). Count
+what would lose its team-wide visibility first. Run it against the production database, with the
+connection string from `fly secrets` rather than pasted into a command:
+
+```sql
+SELECT count(*) FROM note WHERE team_id IS NOT NULL;
+```
+
+Zero means nothing is lost. A non-zero count is a decision: those notes become personal notes of their
+creators, and every account that could read them as a team member loses access. Because every note's
+`owner_id` is already unreachable after the standalone-identity cutover (BREADBOARD R19), expect zero.
+
 ## Verifying after a deploy, without printing secrets
 
 Run these against `https://kaya-jian.fly.dev` (the app scales to zero, so the first request can
