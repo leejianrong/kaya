@@ -431,7 +431,7 @@ workspace and access ladder, independently implemented. Reasoning is in
 |------|-----------|
 | Rate limiting | `app/ratelimit.py`, one middleware over slowapi's `limits` engine. Tiers `auth`, `write`, `expensive`, keyed on `Fly-Client-IP` plus a hashed credential hint. In-memory, so per machine. **`KAY-169`, PR #218.** |
 | Refresh tokens | `oauth_refresh_token`, 1 hour access and 30 day single-use refresh from both the device flow and `authorization_code`, a `kaya_rt_` prefix so the scrubber sees it, manual PATs unchanged. `KAY-171`. |
-| Client refresh | `kaya-client` refreshes once on `401` under a cross-process file lock; the SPA uses its cookie instead of minting a token. `KAY-172`, `KAY-173`. Shipped before the server flips. |
+| Client refresh | `kaya-client` refreshes once on `401` under a cross-process file lock; the SPA already runs on its cookie and needs no change (`KAY-173`, closed). `KAY-172`, shipped before the server flips. |
 | Workspaces | `workspace`, `workspace_member`, `note.workspace_id`; `Access` READ < WRITE < MANAGE; `team_id` and the pandan team lookup dropped. `KAY-174`. |
 | Workspace surface | REST, CLI, MCP and SPA. `KAY-175`. |
 | Token allow-list | A PAT limited to named workspaces; can only remove access. `KAY-176`. |

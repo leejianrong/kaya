@@ -50,9 +50,11 @@ Manual PATs stay as they are.**
   gitleaks rules are extended in the same card as the table.
 - **Manual PATs are unchanged.** The Tokens UI still mints `kaya_pat_…` with an optional expiry, for
   scripts and CI. Existing long-lived tokens stay valid until revoked. Nothing is migrated or expired.
-- **The SPA stops minting a token.** `App.svelte` currently turns a cookie session into a `kaya_pat_…`
-  silently on load. With one-hour tokens that is the wrong shape, so the SPA authenticates with the
-  cookie it already has and `lib/auth.ts`'s bearer seam applies only to a pasted or CLI token.
+- **The SPA needs no change.** It authenticates every call with its `kayaauth` cookie and never mints a
+  token: `App.svelte` only reads `GET /users/me` on mount, and `lib/auth.ts`'s bearer seam holds only a
+  token a person pasted on the Tokens page, which is a manual PAT and unaffected. (This ADR first said
+  the SPA silently minted a `kaya_pat_…` on load. It stopped doing that before this ADR was written;
+  the claim came from a stale comment in `app/identity/backend.py`, corrected with this amendment.)
 - **Discovery.** The RFC 8414 metadata lists `refresh_token` in `grant_types_supported`, and the token
   response carries `expires_in` and `refresh_token`.
 
