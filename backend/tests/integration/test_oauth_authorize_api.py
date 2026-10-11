@@ -304,8 +304,8 @@ def test_approve_then_exchange_mints_a_working_token(client: Any) -> None:
     assert body["access_token"].startswith("kaya_pat_")
     assert body["token_type"] == "Bearer"
     assert body["scope"] == "read"
-    assert "expires_in" not in body, "ADR 0014's simplification: no refresh-token rotation"
-    assert "refresh_token" not in body
+    assert body["expires_in"] == 3600, "ADR 0016: short-lived"
+    assert body["refresh_token"].startswith("kaya_rt_")
 
     listed = client.get("/api/v1/tokens").json()
     assert len(listed) == 1

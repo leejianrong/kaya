@@ -70,3 +70,12 @@ class TokenCreated(TokenRead):
     retrieved again."""
 
     token: str
+
+
+class DeviceTokenCreated(TokenCreated):
+    """The device-flow poll's success body: `TokenCreated` plus the two fields ADR 0016 adds.
+    `refresh_token` is returned once and never retrievable. Both are optional on the wire so an
+    older client that ignores them still parses the response."""
+
+    refresh_token: str | None = None
+    expires_in: int | None = None

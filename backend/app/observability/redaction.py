@@ -79,7 +79,7 @@ _HEADER_ASSIGNMENT = re.compile(
 
 _BEARER_SCHEME = re.compile(r"(?i)\bbearer\s+[^\r\n\s,;}\)\]'\"]+")
 
-_SUITE_PAT = re.compile(r"\b(?:pandan_pat_|kanban_pat_|kaya_pat_)[A-Za-z0-9_-]+")
+_SUITE_PAT = re.compile(r"\b(?:pandan_pat_|kanban_pat_|kaya_pat_|kaya_rt_)[A-Za-z0-9_-]+")
 """This suite's PAT shapes, for a token logged bare with no header and no scheme around it.
 
 Unlike ``.gitleaks.toml``'s rule there is no ``{20,}`` tail requirement and no allowlist for
@@ -90,7 +90,7 @@ the gate fails on its own repository. A log line has no such duty: over-redactin
 """
 
 
-TRIGGERS = tuple(sorted(SENSITIVE_HEADERS)) + ("bearer", "_pat_")
+TRIGGERS = tuple(sorted(SENSITIVE_HEADERS)) + ("bearer", "_pat_", "_rt_")
 """Substrings without which none of the three patterns above can possibly match.
 
 A pre-filter, and it earns the extra concept because of where this runs. Every string in every log
@@ -104,8 +104,8 @@ every request measurably slower is observability somebody turns off.
 ``SENSITIVE_HEADERS`` is here by construction, so adding a header name later cannot leave the fast
 path silently skipping it — a hand-maintained list would fail by quietly ceasing to scrub, which is
 worse than no scrubber at all because it still looks present. The two hand-written entries cover
-the patterns that are not header names: ``bearer`` for the scheme, ``_pat_`` for the substring
-common to all three of this suite's prefixes.
+the patterns that are not header names: ``bearer`` for the scheme, ``_pat_`` and ``_rt_`` for the
+substrings common to this suite's access-token and refresh-token prefixes.
 ``test_the_fast_path_cannot_skip_anything_the_patterns_match`` runs both paths over a corpus and
 requires them to agree.
 """

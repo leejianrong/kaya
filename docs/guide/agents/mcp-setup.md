@@ -34,10 +34,11 @@ A client that supports remote MCP only needs the URL:
    `403`; with `write-no-delete` every write tool works and a delete is refused.
 4. The client exchanges the code for a token at the token endpoint and uses it as a bearer.
 
-The token you end up with is an ordinary `kaya_pat_…` token. It does not expire and there is no
-refresh token, so the client simply keeps it. It appears under **Settings > Tokens** named
-`<client name> (authorization code)`, and revoking it there disconnects that
-client.
+The token you get lasts one hour and comes with a refresh token, which the client uses to get the
+next one without asking you again. Each refresh token works once and is replaced by a new one, and
+a client idle for 30 days has to be approved again. The current token appears under
+**Settings > Tokens** named `<client name> (authorization code)`, and revoking it there
+disconnects that client.
 
 ### Claude Code
 
