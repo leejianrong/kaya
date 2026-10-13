@@ -48,7 +48,7 @@ from urllib.parse import quote, urlencode
 
 import httpx
 
-from kaya_client.errors import ApiError, TransportError, UsageError
+from kaya_client.errors import RETRY_AFTER_KEY, ApiError, TransportError, UsageError
 from kaya_client.frontmatter import PATH_KEY, REF_KEY, TITLE_KEY, compose_document, parse_document
 from kaya_client.history import number_versions, unified_diff
 from kaya_client.payloads import Payload
@@ -1011,7 +1011,9 @@ class KayaClient:
                 response = self._send(method, path, body)
 
         if response.status_code >= 400:
-            raise ApiError(response.status_code, _error_payload(response))
+            raise ApiError(
+                response.status_code, _with_retry_after(response, _error_payload(response))
+            )
 
         if response.status_code == 204 or not response.content:
             return {}
@@ -1113,6 +1115,19 @@ def _title_from_body(body: str) -> str | None:
             return heading or None
         return None
     return None
+
+
+def _with_retry_after(response: httpx.Response, payload: dict[str, Any]) -> dict[str, Any]:
+    """KAY-177: a `429`'s `Retry-After` header, as ``retry_after`` seconds on the error object.
+
+    The header is the only place the backend says how long to wait, and an adapter never sees
+    headers. Only the delta-seconds form is read: a malformed or HTTP-date value is left out rather
+    than guessed at, and so is a refusal that carries no header at all.
+    """
+    raw = response.headers.get("Retry-After", "").strip()
+    if response.status_code != 429 or not raw.isdigit():
+        return payload
+    return {"error": {**payload["error"], RETRY_AFTER_KEY: int(raw)}}
 
 
 def _error_payload(response: httpx.Response) -> dict[str, Any]:

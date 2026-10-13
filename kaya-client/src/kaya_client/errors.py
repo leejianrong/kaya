@@ -46,6 +46,7 @@ from typing import Any, ClassVar
 CODE_KEY = "code"
 MESSAGE_KEY = "message"
 ARG_KEY = "arg"
+RETRY_AFTER_KEY = "retry_after"
 
 CONTRACT_KEYS: tuple[str, ...] = (CODE_KEY, MESSAGE_KEY, ARG_KEY)
 """ADR 0005 §contract 3's "all keys always present", named once.
@@ -229,7 +230,9 @@ def _implied_arg(detail: dict[str, Any]) -> str:
     import the backend; it lives at the place the change would be made, in
     ``backend/tests/unit/test_error_extras_stay_addressable.py``.
     """
-    for value in detail.values():
+    for key, value in detail.items():
+        if key == RETRY_AFTER_KEY:
+            continue  # KAY-177: how long to wait is not what the refusal is *about*
         if isinstance(value, str | int | float) and not isinstance(value, bool):
             return str(value)
     return ""
