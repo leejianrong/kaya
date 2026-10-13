@@ -51,7 +51,7 @@ NOTE_PAYLOAD_KEYS = [
     "path",
     "created_at",
     "updated_at",
-    "team_id",
+    "workspace_id",
 ]
 """``tests/unit/test_note_payload_keys.py``'s pin, repeated here because a search is a *different
 code path returning the same schema* and the unit pin only ever sees ``NoteRead``. Duplicated rather
@@ -234,7 +234,7 @@ def test_another_users_prose_is_not_even_fetched(client: Any) -> None:
     """The distinction SLICES §V1 draws, at the level this layer can see it.
 
     A post-filter in Python would produce the same JSON, so what is asserted here is that the search
-    statement is the *scoped* one: ``notes_matching`` composed onto ``notes_owned_by``. Running it
+    statement is the *scoped* one: ``notes_matching`` composed onto ``notes_visible_to``. Running it
     for Alice and asking Postgres for the row count it returned is the closest a test gets to "Bob's
     body never crossed the wire" without reading the query log."""
     from app.auth.authorization import notes_matching

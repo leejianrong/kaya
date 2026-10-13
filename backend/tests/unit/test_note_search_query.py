@@ -30,7 +30,7 @@ from fastapi import HTTPException
 from sqlalchemy.dialects import postgresql
 
 from app.api.search import empty_search_query, search_term
-from app.auth.authorization import SEARCH_CONFIG, notes_matching, notes_owned_by
+from app.auth.authorization import SEARCH_CONFIG, notes_matching, notes_visible_to
 from app.auth.principal import Principal
 from app.models.note import SEARCH_VECTOR_EXPRESSION
 
@@ -127,7 +127,7 @@ def test_the_search_query_keeps_the_owner_scoping() -> None:
     assert "note.owner_id = " in statement_sql
     assert "WHERE" in statement_sql
     # And it is the *same* clause the unfiltered list uses, rather than a second spelling of it.
-    unfiltered = str(notes_owned_by(ALICE).compile(dialect=postgresql.dialect()))
+    unfiltered = str(notes_visible_to(ALICE).compile(dialect=postgresql.dialect()))
     owner_clause = unfiltered.split("WHERE")[1].strip()
     assert owner_clause in statement_sql
 
@@ -183,7 +183,7 @@ def test_the_unfiltered_list_does_not_load_it_either() -> None:
     """The control for the test above: if `select(Note)` loaded it anyway, that test proves nothing
     about the search path."""
     assert "search_vector" not in columns_clause(
-        str(notes_owned_by(ALICE).compile(dialect=postgresql.dialect()))
+        str(notes_visible_to(ALICE).compile(dialect=postgresql.dialect()))
     )
 
 

@@ -56,7 +56,7 @@ instance if a user chooses to use one.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `KAYA_PANDAN_URL` | `https://simple-kanban-jian.fly.dev` (the maintainer's own hosted pandan) | The pandan instance kaya calls for board embeds, `[[KAN-n]]` wikilink resolution and team-default access. Each degrades to "unresolved" or "not found" when pandan is missing or down, and a note always saves and renders. It is not a secret. |
+| `KAYA_PANDAN_URL` | `https://simple-kanban-jian.fly.dev` (the maintainer's own hosted pandan) | The pandan instance kaya calls for board embeds, and `[[KAN-n]]` wikilink resolution. Each degrades to "unresolved" or "not found" when pandan is missing or down, and a note always saves and renders. Who may read a note is never asked of pandan: workspaces are kaya's own. It is not a secret. |
 | `KAYA_PANDAN_LINK_CONNECT_TIMEOUT_SECONDS` | `3.0` | Connect budget for checking a pandan token a user pastes under Settings > Pandan connection. kaya verifies it against pandan before storing it. |
 | `KAYA_PANDAN_LINK_READ_TIMEOUT_SECONDS` | `3.0` | Read budget for the same check. |
 
@@ -65,15 +65,6 @@ A user opts in by pasting a pandan personal access token under **Settings > Pand
 the token back to pandan unchanged. That linked credential is separate from the user's kaya tokens
 and is the only one kaya ever sends to pandan. A user who never links an account sees card
 wikilinks as unresolved and a "connect your pandan account" prompt in place of a board embed.
-
-## Team access (R16, ADR 0011)
-
-| Variable | Default | What it does |
-| --- | --- | --- |
-| `KAYA_TEAM_ACCESS_CONNECT_TIMEOUT_SECONDS` | `3.0` | Connect budget for resolving a caller's team memberships against pandan's `GET /api/v1/workspaces`, using the caller's linked pandan token. Short, because team-default access is a softer dependency; a teammate's access degrading to "not found" during a slow pandan is accepted, not worth waiting out. |
-| `KAYA_TEAM_ACCESS_READ_TIMEOUT_SECONDS` | `3.0` | Read budget for the same call. |
-| `KAYA_TEAM_ACCESS_CACHE_TTL_SECONDS` | `60.0` | How long a resolved membership set is trusted. |
-| `KAYA_TEAM_ACCESS_NEGATIVE_CACHE_TTL_SECONDS` | `10.0` | How long "pandan couldn't be asked" is remembered before trying again — decays to "no memberships", not a rejection. |
 
 ## Wikilink card/epic resolution (R5, KAN-564)
 

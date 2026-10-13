@@ -187,7 +187,7 @@ later never changes the ref. Read it back with `note get`, in whichever format s
 
 ```console
 $ kaya note get NOTE-12 --format json
-{"ref":"NOTE-12","id":12,"title":"Groceries","body":"milk\neggs","path":"home/groceries.md","created_at":"2026-09-05T04:12:03+00:00","updated_at":"2026-09-05T04:12:03+00:00","team_id":null}
+{"ref":"NOTE-12","id":12,"title":"Groceries","body":"milk\neggs","path":"home/groceries.md","created_at":"2026-09-05T04:12:03+00:00","updated_at":"2026-09-05T04:12:03+00:00","workspace_id":null}
 ```
 
 The `help:` lines above are suggestions for what to run next — every result carries them under the

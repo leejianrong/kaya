@@ -992,16 +992,15 @@ import type { EditorCommands } from '../lib/toolbar'
       />
       <p class="meta">
         <code>{note.ref}</code>
-        {#if note.team_id !== null}
-          <!-- ADR 0011, R16.7: read-only. A plain id is all there is to show — kaya never mirrors
-               a team's name (app/models/team.py), and creating or moving a note into a team from
-               the SPA is this card's own stretch goal, not required. -->
+        {#if note.workspace_id != null}
+          <!-- ADR 0017: read-only. A plain id is all there is to show until the workspace switcher
+               (KAY-175) can say a workspace's name. -->
           <span
-            class="team-badge"
-            title="Shared by default with team {note.team_id}"
-            data-testid="team-badge"
+            class="workspace-badge"
+            title="In workspace {note.workspace_id}"
+            data-testid="workspace-badge"
           >
-            Team {note.team_id}
+            Workspace {note.workspace_id}
           </span>
         {/if}
         <!-- KAN-1043, BREADBOARD.md A3: an editable path field in place of the old static span.
@@ -1180,7 +1179,7 @@ import type { EditorCommands } from '../lib/toolbar'
     font-family: var(--mono);
   }
 
-  .team-badge {
+  .workspace-badge {
     padding: 0.05rem 0.45rem;
     border: 1px solid var(--outline-variant);
     border-radius: var(--shape-full);

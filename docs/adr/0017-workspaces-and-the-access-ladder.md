@@ -93,7 +93,7 @@ workspace by dragging it onto a folder name.
 
 ### Queries
 
-`notes_owned_by` becomes the one visibility query: personal notes the caller owns, **or** notes whose
+`notes_visible_to` becomes the one visibility query: personal notes the caller owns, **or** notes whose
 `workspace_id` is in the caller's memberships, as a SQL subquery on `workspace_member`. Kaya now has the
 membership table locally, so ADR 0011's "a plain set of integers, never a subquery" no longer applies and
 the call-site plumbing that carried `team_ids` goes away. `test_no_unscoped_note_query.py` widens to accept
@@ -105,7 +105,7 @@ A link is resolved within its source note's container: a workspace note resolves
 workspace's notes, a personal note among its owner's personal notes. A link across containers stays
 unresolved. Resolving across them would let a reader learn a title they cannot open. `note_link` keeps
 its rule that a backlink is found by `resolved_id`, and a read still filters targets and sources through
-`notes_owned_by`, so an edge to a note the caller cannot read is dropped from what they see. The graph is
+`notes_visible_to`, so an edge to a note the caller cannot read is dropped from what they see. The graph is
 the same query. Cross-container links are a known limitation, not a bug.
 
 ### Members

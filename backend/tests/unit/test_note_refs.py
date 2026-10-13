@@ -147,7 +147,7 @@ def test_each_spelling_matches_its_own_column() -> None:
 
 
 def test_a_single_note_fetch_is_deliberately_not_owner_scoped() -> None:
-    """The counterpart to ``notes_owned_by``, and the reason `403` is possible at all.
+    """The counterpart to ``notes_visible_to``, and the reason `403` is possible at all.
 
     A fetch filtered on the owner comes back empty for somebody else's note, and the caller is then
     told `404` — a different promise from the one PLAN §Authorization and SLICES §V1 make. This

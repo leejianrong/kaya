@@ -16,7 +16,7 @@ you can parse. Neither requires reading prose, and neither goes to stderr.
 | `1` | `EXIT_RUNTIME` | Generic failure | Unreachable API, no token configured, anything unmapped |
 | `2` | `EXIT_USAGE` | Usage error | Unknown flag, bad `--format` value, `400`/`422` from the API |
 | `3` | `EXIT_UNAUTHENTICATED` | Unauthorized (`401`) | Token missing, malformed, or revoked |
-| `4` | `EXIT_FORBIDDEN` | Forbidden (`403`) | Valid token, but the note or team isn't yours |
+| `4` | `EXIT_FORBIDDEN` | Forbidden (`403`) | Valid token, but you can't do that to this note or workspace |
 | `5` | `EXIT_NOT_FOUND` | Not found (`404`) | No such note, including a ref that matches nothing |
 | `6` | `EXIT_CONFLICT` | Conflict (`409`) | `--if-updated-at` was stale — the note changed under you |
 

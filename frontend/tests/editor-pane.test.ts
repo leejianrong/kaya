@@ -46,7 +46,7 @@ function note(overrides: Partial<Note> = {}): Note {
     path: 'journal/2026/08/weekly-review.md',
     created_at: '2026-08-09T09:00:00+00:00',
     updated_at: READ_AT,
-    team_id: null,
+    workspace_id: null,
     ...overrides,
   }
 }
@@ -971,28 +971,28 @@ describe('the path field (KAN-1043, BREADBOARD.md A3)', () => {
   })
 })
 
-describe("the team badge (ADR 0011, R16.7)", () => {
-  function teamBadge(): HTMLElement | null {
-    return host.querySelector('[data-testid="team-badge"]')
+describe("the workspace badge (ADR 0017)", () => {
+  function workspaceBadge(): HTMLElement | null {
+    return host.querySelector('[data-testid="workspace-badge"]')
   }
 
   it('is absent for a personal note', async () => {
     await open(note())
-    expect(teamBadge()).toBeNull()
+    expect(workspaceBadge()).toBeNull()
   })
 
-  it('shows the team id for a team-shared note', async () => {
-    await open(note({ team_id: 501 }))
-    expect(teamBadge()!.textContent).toContain('501')
+  it('shows the workspace id for a workspace note', async () => {
+    await open(note({ workspace_id: 501 }))
+    expect(workspaceBadge()!.textContent).toContain('501')
   })
 
   it('updates when a different note opens', async () => {
-    const { opened } = await open(note({ team_id: 501 }))
+    const { opened } = await open(note({ workspace_id: 501 }))
 
-    opened.value = note({ ref: 'NOTE-7', title: 'Architecture notes', team_id: null })
+    opened.value = note({ ref: 'NOTE-7', title: 'Architecture notes', workspace_id: null })
     flushSync()
     await editorArrived(host)
 
-    expect(teamBadge()).toBeNull()
+    expect(workspaceBadge()).toBeNull()
   })
 })

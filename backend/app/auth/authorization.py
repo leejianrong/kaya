@@ -9,11 +9,11 @@ owner is exactly the wrong shape here: it would come back empty for somebody els
 caller would be told `404`, which is a different promise from the one ADR 0002 §"The resolver",
 PLAN §Authorization and SLICES §V1 all make.
 
-``notes_owned_by`` decides about **many**, and does the opposite. The scoping is a ``WHERE`` on the
-statement, so another user's note is never loaded in the first place. SLICES §V1 is specific that
+``notes_visible_to`` decides about **many**, and does the opposite. The scoping is a ``WHERE`` on
+the statement, so a note the caller may not read is never loaded in the first place. SLICES §V1 says
 `GET /api/v1/notes` must *omit* another user's note "rather than returning an empty list for a
 scoped query", and a post-filter over rows Postgres already returned reaches the same JSON by
-accident rather than by construction — it would still page wrongly (ten rows fetched, three of them
+accident rather than by construction: it would still page wrongly (ten rows fetched, three of them
 someone else's, seven returned for a page of ten) and it would still have pulled the prose across
 the wire. ``notes_matching`` (KAN-558) is the first thing to take that composition up — a search is
 where an unscoped list query looks most convincing, and it is in this module rather than in
@@ -42,17 +42,18 @@ Nothing here touches FastAPI's dependency machinery, for the same reason ``resol
 the whole HTTP contract below is then assertable by the no-infrastructure test layer.
 """
 
-import uuid
 from collections.abc import Iterable
+from enum import IntEnum
 
 from fastapi import HTTPException, status
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import ColumnElement, Select, and_, func, or_, select
 from sqlalchemy.orm import load_only
 
 from app.auth.errors import error_body
 from app.auth.principal import Principal
-from app.models import Note
+from app.models import Note, WorkspaceMember
 from app.models.note_link import TARGET_KIND_NOTE, NoteLink
+from app.models.workspace import ROLE_EDITOR, ROLE_OWNER, ROLE_VIEWER
 
 
 def note_addressed_as_ref(ref: str) -> Select[tuple[Note]]:
@@ -63,7 +64,7 @@ def note_addressed_as_ref(ref: str) -> Select[tuple[Note]]:
 
     ``ref`` is unique, so this returns at most one row. It is *not* an entry point for a list:
     adding an ``.order_by()`` and dropping the ``where`` turns it into the exact leak
-    ``notes_owned_by`` exists to prevent. If you want many notes, start from ``notes_owned_by``.
+    ``notes_visible_to`` exists to prevent. If you want many notes, start from ``notes_visible_to``.
     """
     return select(Note).where(Note.ref == ref)
 
@@ -81,109 +82,174 @@ def note_addressed_as_id(note_id: int) -> Select[tuple[Note]]:
     return select(Note).where(Note.id == note_id)
 
 
+class Access(IntEnum):
+    """What an action needs, and what a caller has, on one note (ADR 0017). Ordered so that a ``>=``
+    comparison *is* the authorization check, as in pandan's ADR 0013 ladder.
+
+    - ``READ``: read, search, list, history, backlinks, download an attachment.
+    - ``WRITE``: create, edit, move within a container, format, delete, upload an attachment.
+    - ``MANAGE``: a workspace's own settings and membership. A *note* never needs more than
+      ``WRITE``; this exists so the ladder is one enum for notes and workspaces alike.
+    """
+
+    READ = 1
+    WRITE = 2
+    MANAGE = 3
+
+
+ROLE_ACCESS: dict[str, Access] = {
+    ROLE_VIEWER: Access.READ,
+    ROLE_EDITOR: Access.WRITE,
+    ROLE_OWNER: Access.MANAGE,
+}
+"""One mapping from a workspace role to what it allows. An unknown role (the column is
+CHECK-constrained, so never in practice) maps to nothing."""
+
+
+def workspace_role_of(principal: Principal, workspace_id: int) -> Select[tuple[str]]:
+    """The caller's role in one workspace: zero rows when they are not a member.
+
+    ``resolve_note`` runs this only for a note that is actually in a workspace, so a personal note
+    costs no extra query. It lives here rather than in ``app/api/`` with the other membership
+    statements so the one decision, "what may this caller do to this note", reads in one file."""
+    return select(WorkspaceMember.role).where(
+        WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.user_id == principal.id
+    )
+
+
+def visible_workspace_ids(principal: Principal) -> Select[tuple[int]]:
+    """Every workspace the caller belongs to, as a subquery. Under every note list."""
+    return select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == principal.id)
+
+
+def writable_workspace_ids(principal: Principal) -> Select[tuple[int]]:
+    """Every workspace the caller may write in: ``editor`` or ``owner``."""
+    return select(WorkspaceMember.workspace_id).where(
+        WorkspaceMember.user_id == principal.id,
+        WorkspaceMember.role.in_([ROLE_EDITOR, ROLE_OWNER]),
+    )
+
+
+def note_access(principal: Principal, note: Note, workspace_role: str | None) -> Access | None:
+    """What ``principal`` may do to ``note``, or ``None`` for nothing at all. **Pure.**
+
+    A personal note (``workspace_id IS NULL``) is its owner's and nobody else's. A workspace note is
+    reached through the caller's role in that workspace and **only** through it: ``owner_id``
+    records who created the note and grants nothing, so removing a member removes their access to
+    what they wrote (ADR 0017). ``workspace_role`` is the caller's role in ``note.workspace_id``,
+    looked up by
+    ``resolve_note`` and ignored for a personal note.
+    """
+    if note.workspace_id is None:
+        return Access.MANAGE if note.owner_id == principal.id else None
+    if workspace_role is None:
+        return None
+    return ROLE_ACCESS.get(workspace_role)
+
+
 def authorize_note(
-    principal: Principal, note: Note | None, team_ids: frozenset[int] = frozenset()
+    principal: Principal,
+    note: Note | None,
+    require: Access = Access.READ,
+    workspace_role: str | None = None,
 ) -> Note:
     """The whole authorization contract for a single note, with none of FastAPI's plumbing.
 
-    Sibling of ``principal_from_bearer``: an ordinary function over ordinary objects. It **returns
-    the note it was given**, so a call site reads ``note = authorize_note(principal, found)`` and
-    comes away with a ``Note`` rather than a ``Note | None``. That is the point of the return value
-    — the check sits on the path to the value instead of beside it, and a route that forgot to call
-    it is left holding an optional it has to explain.
+    An ordinary function over ordinary objects. It **returns the note it was given**, so a call site
+    reads ``note = authorize_note(principal, found, Access.WRITE, role)`` and comes away with a
+    ``Note`` rather than a ``Note | None``: the check sits on the path to the value instead of
+    beside it, and a route that forgot to call it is left holding an optional it has to explain.
 
-    ``team_ids`` (ADR 0011, R16.3) is the caller's own team memberships, resolved by
-    ``TeamAccessResolver`` — a **plain value**, never a live resolver or a bearer, because this
-    function stays what its docstring already promised: no framework, no network, no session, so
-    the whole contract (this rung included) is assertable in the no-infrastructure test layer
-    against nothing more than a `frozenset[int]` a test built by hand. Defaults to ``frozenset()``,
-    which reproduces every existing call site's behaviour byte-for-byte — a caller that never
-    learned about teams is a caller for whom this rung is never reached.
+    ``require`` defaults to ``READ``, which reproduces every call site that predates the ladder.
+    ``workspace_role`` is a **plain value** looked up by the caller, never a session or a resolver,
+    so the whole contract is assertable in the no-infrastructure test layer against a string.
+
+    ``404`` for a missing note, with no identifier in the message, which is what keeps ``NOTE-9999``
+    and ``9999`` byte-identical rather than merely same-coded (ADR 0008). ``403`` otherwise, and
+    deliberately a ``403`` rather than a ``404``: it tells the caller the note exists. That is a
+    decision (Q40), not an oversight: refs come from one global sequence and already leak a rough
+    note count across all users (ADR 0008 §Consequences), and in exchange someone who mistyped a ref
+    learns what happened. Per-note sharing is the change that would make this worth revisiting.
     """
     if note is None:
-        # No identifier in the message, and none available to put there. That is what keeps
-        # `NOTE-9999` and `9999` byte-identical rather than merely same-coded (ADR 0008).
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=error_body("note_not_found", "no such note"),
         )
 
-    if note.owner_id == principal.id:
-        return note
+    access = note_access(principal, note, workspace_role)
+    if access is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=error_body("note_forbidden", "you do not have access to this note"),
+        )
+    if access < require:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=error_body(
+                "note_forbidden",
+                "your role in this workspace does not allow that; ask a workspace owner",
+            ),
+        )
+    return note
 
-    if note.team_id is not None and note.team_id in team_ids:
-        # ADR 0011's second rung: team-default access. Kaya has no per-note explicit share to slot
-        # in between owner and team-default the way pandan's board check does (Q8: owner-only) — so
-        # this is a two-step check, not pandan's four, and it grants exactly the access an owner
-        # has. Kaya's note model has never distinguished read from write access below "owner or
-        # not"; a team-default grant does not invent a narrower tier that does not exist anywhere
-        # else in this schema.
-        #
-        # KAN-1085 mutation-tested this exact clause: flipping `in team_ids` to `not in team_ids` —
-        # a one-token change — simultaneously turns a non-member's read into a `200` (the leak) and
-        # a genuine team member's read into a `403` (a false negative), so both directions of this
-        # rung fail loudly the moment the membership check is wrong. Caught by both
-        # `tests/integration/test_team_default_access_api.py` (over real HTTP) and the pure-function
-        # suite `tests/unit/test_note_authorization.py`. Full before/after transcript lives in that
-        # card's PR description, per this repo's `[mutate]` convention (CLAUDE.md).
-        return note
 
-    # `403` rather than `404`, which tells the caller the note exists. That is a decision, not
-    # an oversight: the card, ADR 0002 §"The resolver", PLAN §Authorization and SLICES §V1's
-    # end-to-end list all name `403` explicitly. The existence bit is cheap to give up here —
-    # refs come from one global sequence and already leak a rough note count across all users
-    # (ADR 0008 §Consequences) — and in exchange someone who mistyped a ref learns what actually
-    # happened instead of hunting a note that is sitting right there. Per-note sharing (Q8) is
-    # the change that would make this line worth revisiting; hardening it to a blanket `404`
-    # unilaterally is not. A team note a caller cannot reach (no membership, or team-membership
-    # unknown because pandan could not be asked — ADR 0011's soft-fail) gets this same `403`,
-    # unchanged: it is exactly the "somebody else's note" case, whatever the reason.
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail=error_body("note_forbidden", "this note belongs to another user"),
+def notes_visible_to(principal: Principal) -> Select[tuple[Note]]:
+    """Every list of notes starts here: the notes the caller may read, and no others.
+
+    Two kinds, both decided in SQL: **personal** notes the caller owns
+    (``workspace_id IS NULL AND owner_id = :caller``), and notes **in any workspace the caller is a
+    member of** (``workspace_id IN (their memberships)``). A workspace note the caller created and
+    then left is not theirs any more, by design (ADR 0017).
+
+    Handed back as a ``Select`` rather than as rows so a route composes onto it (``.where()`` for a
+    search term, ``.order_by()``, ``.limit()``) and cannot lose the scoping while doing so, because
+    there is no clause you can add to a statement that removes one already on it.
+
+    The membership subquery replaces ADR 0011's plain set of team ids: kaya holds workspace
+    membership in its own table now, so the statement can join against it, and no list ever calls
+    pandan. ``tests/unit/test_no_unscoped_note_query.py`` accepts exactly this shape and nothing
+    wider. ``Note`` still reaches a ``select()`` in this module and nowhere else under ``app/``.
+    """
+    return select(Note).where(
+        or_(
+            and_(Note.workspace_id.is_(None), Note.owner_id == principal.id),
+            Note.workspace_id.in_(visible_workspace_ids(principal)),
+        )
     )
 
 
-def notes_owned_by(
-    principal: Principal, team_ids: frozenset[int] = frozenset()
-) -> Select[tuple[Note]]:
-    """Every list of notes starts here: ``WHERE owner_id = :caller``, before anything else — or,
-    since ADR 0011 (R16.3), ``owner_id = :caller OR team_id IN (:team_ids)``.
+def in_container(note: Note) -> ColumnElement[bool]:
+    """Notes in the same container as ``note``: its workspace, or its owner's personal space.
 
-    Handed back as a ``Select`` rather than as rows so a route composes onto it — ``.where()`` for a
-    search term, ``.order_by()``, ``.limit()`` for a page — and cannot lose the scoping while doing
-    so, because there is no clause you can add to a statement that removes one already on it. The
-    tempting alternative, a helper that runs the query and returns a list, forces every future
-    filter either into this signature or into a Python loop over rows that were fetched anyway.
-
-    ``team_ids`` is a **plain, caller-supplied set of integers**, never a subquery — kaya's team
-    membership lives in pandan, resolved over HTTP by ``TeamAccessResolver`` (ADR 0011), so there is
-    no local ``team_member`` table this statement could join against the way pandan's own
-    ``visible_board_ids`` joins one. Defaulting to ``frozenset()`` reproduces the pre-R16 statement
-    exactly: SQLAlchemy renders an empty ``.in_()`` as a static falsehood rather than ``IN ()``
-    (invalid SQL), so the extra clause contributes nothing for the overwhelming majority of callers
-    who belong to no team, and every existing caller of this function needs no change at all.
-
-    ``tests/unit/test_no_unscoped_note_query.py``'s rule 2 has an explicit, written argument for
-    this exact shape (see that file's ``owner_predicates``/`` SAMPLE_ARGUMENTS``) — the guard does
-    not merely tolerate the widening, it names it as the transaction this file exists to force
-    before an ``IN`` form is added. ``Note`` still reaches a ``select()`` in this module and nowhere
-    else under ``app/`` (rule 1), so an unscoped list query still fails the suite rather than
-    depending on a reviewer noticing.
+    A wikilink resolves within the *source* note's container and no further (ADR 0017), so that
+    resolving ``[[Title]]`` can never reveal that a note of that title exists somewhere the reader
+    cannot open. Keyed on the note, not a principal, for the reason ``notes_titled`` gives: the
+    caller here is reconciling the links of a note that has already passed ``authorize_note``.
     """
-    return select(Note).where(or_(Note.owner_id == principal.id, Note.team_id.in_(team_ids)))
+    if note.workspace_id is None:
+        return and_(Note.workspace_id.is_(None), Note.owner_id == note.owner_id)
+    return Note.workspace_id == note.workspace_id
 
 
-def notes_with_paths(
-    principal: Principal, team_ids: frozenset[int] = frozenset()
-) -> Select[tuple[Note]]:
-    """The caller's notes with only ``id`` and ``path`` loaded, for a folder move (KAN-2000).
+def notes_with_paths(principal: Principal, workspace_id: int | None) -> Select[tuple[Note]]:
+    """The notes of one container the caller may **write**, with only ``id`` and ``path`` loaded,
+    for a folder move (KAN-2000).
 
-    ``notes_owned_by`` with the prose left on the shelf: a bulk path rewrite reads every path and
-    never a body, and ``load_only`` keeps it that way. Scoping is inherited from
-    ``notes_owned_by``, so a move cannot reach another user's note.
+    ``workspace_id=None`` is the caller's personal space; otherwise the named workspace, and only
+    when the caller is an ``editor`` or ``owner`` there. A ``viewer`` or a non-member gets no rows,
+    so the route's explicit role check is the friendly refusal and this is the backstop that cannot
+    be forgotten. ``load_only`` keeps the prose on the shelf: a bulk rewrite reads every path and
+    never a body.
     """
-    return notes_owned_by(principal, team_ids).options(load_only(Note.id, Note.path))
+    if workspace_id is None:
+        scope = and_(Note.workspace_id.is_(None), Note.owner_id == principal.id)
+    else:
+        scope = and_(
+            Note.workspace_id == workspace_id,
+            Note.workspace_id.in_(writable_workspace_ids(principal)),
+        )
+    return select(Note).where(scope).options(load_only(Note.id, Note.path))
 
 
 SEARCH_CONFIG = "english"
@@ -203,17 +269,15 @@ psycopg 3, both spellings return ``'foo' & 'bar'`` for ``foo bar`` (KAN-558's ex
 constant in this file either way, so nothing user-supplied is ever near the position."""
 
 
-def notes_matching(
-    principal: Principal, term: str, team_ids: frozenset[int] = frozenset()
-) -> Select[tuple[Note]]:
+def notes_matching(principal: Principal, term: str) -> Select[tuple[Note]]:
     """The caller's notes matching ``term``, best match first, in a **deterministic** order.
 
-    KAN-558, SLICES §V4. Composed onto ``notes_owned_by``, so "another user's matching note must
+    KAN-558, SLICES §V4. Composed onto ``notes_visible_to``, so "another user's matching note must
     never appear" is the ``WHERE owner_id = :caller`` that is already on the statement — a clause
     cannot be composed away, and there is no point at which a row of somebody else's prose is
-    fetched and then dropped. ``team_ids`` passes straight through to ``notes_owned_by`` (ADR
-    0011): a team-shared note is exactly as findable by search as it is by the plain list, rather
-    than the two commands disagreeing about what "the caller's notes" means.
+    fetched and then dropped. A note in a workspace the caller belongs to is exactly as findable by
+    search as it is by the plain list, rather than the two commands disagreeing about what "the
+    caller's notes" means.
 
     **``websearch_to_tsquery`` rather than the other two, because the input is a human's.** Measured
     against Postgres 17 on this card: ``to_tsquery('english', '&|!()')`` and ``to_tsquery('english',
@@ -256,44 +320,42 @@ def notes_matching(
     """
     tsquery = func.websearch_to_tsquery(SEARCH_CONFIG, term)
     return (
-        notes_owned_by(principal, team_ids)
+        notes_visible_to(principal)
         .where(Note.search_vector.bool_op("@@")(tsquery))
         .order_by(func.ts_rank(Note.search_vector, tsquery).desc(), Note.id.desc())
     )
 
 
-def notes_titled(owner_id: uuid.UUID, titles: Iterable[str]) -> Select[tuple[str, int]]:
-    """``owner_id``'s own notes, projected to ``(title, id)`` and filtered to `titles` — KAN-563's
-    forward-resolution lookup. ``app/note_links.py``'s ``_notes_by_title`` calls this to find out
-    which of a save's brand-new ``[[Some Title]]`` links already name a note that exists, so that
-    module never has to build its own ``select(Note, ...)`` and trip this file's own guard.
+def notes_titled(source: Note, titles: Iterable[str]) -> Select[tuple[str, int]]:
+    """The notes in ``source``'s container, projected to ``(title, id)`` and filtered to ``titles``:
+    KAN-563's forward-resolution lookup. ``app/note_links.py``'s ``_notes_by_title`` calls this to
+    find out which of a save's brand-new ``[[Some Title]]`` links already name a note that exists,
+    so that module never has to build its own ``select(Note, ...)`` and trip this file's own guard.
 
-    Keyed on a raw ``owner_id`` rather than on a ``Principal`` like ``notes_owned_by`` is: the
-    caller here is reconciling *some* note's links, and by the time that runs the note has already
-    passed `authorize_note` (or was just created for the current principal), so its `owner_id` is
-    always the request's own principal — but the value in hand is the column, not the object, and
-    manufacturing a `Principal` just to satisfy a different function's signature would be the
-    tail wagging the dog. The scoping is the same clause either way, and it stays in this module
-    either way.
+    Scoped by ``in_container(source)``: a workspace note resolves among that workspace's notes, a
+    personal note among its owner's personal notes (ADR 0017). Keyed on the source note rather than
+    a ``Principal`` because the note being reconciled has already passed ``authorize_note``, and
+    manufacturing a ``Principal`` to satisfy a signature would be the tail wagging the dog.
     """
-    return select(Note.title, Note.id).where(Note.owner_id == owner_id, Note.title.in_(titles))
+    return select(Note.title, Note.id).where(in_container(source), Note.title.in_(titles))
 
 
-def note_ids_owned_by(owner_id: uuid.UUID) -> Select[tuple[int]]:
-    """``owner_id``'s own note ids, and nothing else about them — KAN-563's backward-resolution
-    pass. ``app/note_links.py``'s ``resolve_pending_note_links`` uses this as a subquery, so that a
-    title landing on one owner's note can only ever resolve a ``note_link`` row whose *source* note
-    belongs to that same owner: a resolution crossing an owner boundary would let one person's save
-    reveal, indirectly, that another person has a note by some particular title.
+def note_ids_in_container(source: Note) -> Select[tuple[int]]:
+    """The ids of the notes in ``source``'s container, and nothing else about them: KAN-563's
+    backward-resolution pass. ``app/note_links.py``'s ``resolve_pending_note_links`` uses this as a
+    subquery, so that a title landing on one note can only ever resolve a ``note_link`` row whose
+    *source* note shares its container. A resolution crossing a container boundary would let one
+    person's save reveal, indirectly, that a note by some particular title exists where they cannot
+    read it.
     """
-    return select(Note.id).where(Note.owner_id == owner_id)
+    return select(Note.id).where(in_container(source))
 
 
 def notes_linking_to(principal: Principal, note_id: int) -> Select[tuple[Note]]:
     """The caller's own notes whose body links to note ``note_id`` — KAN-566's `/backlinks`.
 
-    Composed onto ``notes_owned_by``, so "another user's note never appears in my backlinks" is the
-    ``WHERE owner_id = :caller`` already on the statement. That clause is doing more work here than
+    Composed onto ``notes_visible_to``, so "a note I cannot read never appears in my backlinks" is
+    the visibility clause already on the statement. That clause is doing more work here than
     it does for a plain list: a `note_link` row carries no owner of its own (see
     ``app/models/note_link.py``), so the *only* thing scoping this query is the join to a table that
     does. A backlinks query written the obvious way — start from ``note_link``, collect
@@ -336,7 +398,7 @@ def notes_linking_to(principal: Principal, note_id: int) -> Select[tuple[Note]]:
     was searched for — so this is the list order, not ``notes_matching``'s.
     """
     return (
-        notes_owned_by(principal)
+        notes_visible_to(principal)
         .join(NoteLink, NoteLink.source_note_id == Note.id)
         .where(NoteLink.target_kind == TARGET_KIND_NOTE, NoteLink.resolved_id == note_id)
         .order_by(Note.updated_at.desc(), Note.id.desc())
@@ -349,7 +411,7 @@ def notes_graph_edges(principal: Principal) -> Select[tuple[int, int]]:
 
     ``notes_linking_to``'s sibling rather than a copy of it: same join, same two-column filter, but
     with the single-note ``resolved_id == note_id`` clause dropped, because a graph needs every edge
-    at once rather than the edges pointing at one note. Composed onto ``notes_owned_by`` for the
+    at once rather than the edges pointing at one note. Composed onto ``notes_visible_to`` for the
     identical reason that function is: ``note_link`` has no owner column of its own, so the join to
     an owner-scoped ``note`` is the only thing that keeps one caller's edges out of another's graph.
 
@@ -372,42 +434,30 @@ def notes_graph_edges(principal: Principal) -> Select[tuple[int, int]]:
 
     No ``ORDER BY``: the route builds a node lookup keyed on id and reads it as a dict, so an edge's
     position in this result carries no meaning of its own. The **nodes** list — a plain
-    ``notes_owned_by`` composed with an ``order_by`` at the route, the same shape ``list_notes``
+    ``notes_visible_to`` composed with an ``order_by`` at the route, the same shape ``list_notes``
     already uses — is what supplies a deterministic order to the response.
     """
     return (
-        notes_owned_by(principal)
+        notes_visible_to(principal)
         .join(NoteLink, NoteLink.source_note_id == Note.id)
         .where(NoteLink.target_kind == TARGET_KIND_NOTE, NoteLink.resolved_id.is_not(None))
         .with_only_columns(NoteLink.source_note_id, NoteLink.resolved_id)
     )
 
 
-def notes_named_by_id(owner_id: uuid.UUID, note_ids: Iterable[int]) -> Select[tuple[int, str, str]]:
-    """``owner_id``'s own notes among ``note_ids``, projected to ``(id, ref, title)`` — KAN-566's
-    `/links` reading the *other* end of a resolved NOTE-kind edge.
+def notes_named_by_id(source: Note, note_ids: Iterable[int]) -> Select[tuple[int, str, str]]:
+    """The notes in ``source``'s container among ``note_ids``, projected to ``(id, ref, title)``:
+    KAN-566's `/links` reading the *other* end of a resolved NOTE-kind edge.
 
     ``note_link.resolved_id`` is an internal id and must not reach the wire (``app/api/links.py``
     pins the payload's keys), so `/links` has to turn it into the two things a caller can act on:
     ADR 0008's ``ref``, and the target's **current** title. Current rather than stored, which is the
-    visible half of the rename criterion — a link typed as ``[[Old Name]]`` after the rename shows
-    ``target_ref: "Old Name"`` beside ``title: "New Name"``, so the payload says what happened
-    instead of quietly disagreeing with itself.
+    visible half of the rename criterion.
 
-    Owner-scoped like everything else in this module, and here that is a real filter rather than a
-    formality: ``resolved_id`` is not a ``ForeignKey`` and nothing in the schema stops a row from
-    naming a note somebody else owns. ``app/note_links.py`` never writes one that does — both of its
-    resolution passes are scoped — but a query that only *inherits* that property from another
-    module's care is one edit away from leaking a stranger's title. A row this statement declines to
-    answer for renders as an unresolved link, which is also the correct answer for the case that
-    genuinely happens: ``resolved_id`` pointing at a note that has since been **deleted**. Nothing
-    cleans those up, because ``ondelete="CASCADE"`` covers a deleted *source* and there is no
-    constraint to cover a deleted target, so a dangling id has to degrade rather than raise.
-
-    Keyed on a raw ``owner_id`` for the same reason ``notes_titled`` is: the caller already holds
-    the column, and manufacturing a ``Principal`` to satisfy a signature would be the tail wagging
-    the dog.
+    Scoped to the source note's container, and here that is a real filter rather than a formality:
+    ``resolved_id`` is not a ``ForeignKey`` and nothing in the schema stops a row from naming a note
+    in another container, which can happen legitimately once a note moves between them. A row this
+    statement declines to answer for renders as an unresolved link, which is also the right answer
+    for a ``resolved_id`` pointing at a note that has since been **deleted**.
     """
-    return select(Note.id, Note.ref, Note.title).where(
-        Note.owner_id == owner_id, Note.id.in_(note_ids)
-    )
+    return select(Note.id, Note.ref, Note.title).where(in_container(source), Note.id.in_(note_ids))
