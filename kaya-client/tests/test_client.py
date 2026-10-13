@@ -16,6 +16,7 @@ from conftest import GROCERIES, NOTE_LIST_BODY
 
 from kaya_client import ApiError, KayaClient, Kind, TransportError, render
 from kaya_client.client import DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT, DEFAULT_TIMEOUT
+from kaya_client.errors import error_payload
 
 BASE_URL = "https://kaya.example"
 TOKEN = "kanban_pat_notarealtokenatall"
@@ -29,12 +30,18 @@ def client_over(handler: object) -> KayaClient:
     return KayaClient(BASE_URL, TOKEN, client=httpx.Client(transport=transport))
 
 
-def responder(status: int, json_body: object = None, *, text: str | None = None):
+def responder(
+    status: int,
+    json_body: object = None,
+    *,
+    text: str | None = None,
+    headers: dict[str, str] | None = None,
+):
     def handle(request: httpx.Request) -> httpx.Response:
         handle.seen = request  # type: ignore[attr-defined]
         if text is not None:
-            return httpx.Response(status, text=text)
-        return httpx.Response(status, json=json_body)
+            return httpx.Response(status, text=text, headers=headers)
+        return httpx.Response(status, json=json_body, headers=headers)
 
     return handle
 
@@ -374,3 +381,38 @@ def test_the_client_feeds_render_directly() -> None:
             "\n2 notes\n"
             "\nhelp: kaya note get <ref>\nhelp: kaya note create <title>"
         )
+
+
+def test_a_429_carries_retry_after_seconds_on_the_error_object() -> None:
+    """KAY-177: the header is lifted into the error object; `arg` stays empty."""
+    body = {"error": {"code": "rate_limited", "message": "rate limit exceeded; retry later"}}
+    client = client_over(responder(429, body, headers={"Retry-After": "17"}))
+
+    with pytest.raises(ApiError) as caught:
+        client.list_notes()
+
+    assert caught.value.payload["error"]["retry_after"] == 17
+    assert error_payload(caught.value)["error"]["retry_after"] == 17
+    assert error_payload(caught.value)["error"]["arg"] == ""
+
+
+@pytest.mark.parametrize("header", [None, "soon", "Wed, 21 Oct 2026 07:28:00 GMT", "-3"])
+def test_a_429_without_a_usable_retry_after_adds_nothing(header: str | None) -> None:
+    body = {"error": {"code": "rate_limited", "message": "slow down"}}
+    headers = {} if header is None else {"Retry-After": header}
+    client = client_over(responder(429, body, headers=headers))
+
+    with pytest.raises(ApiError) as caught:
+        client.list_notes()
+
+    assert "retry_after" not in caught.value.payload["error"]
+
+
+def test_retry_after_on_another_status_is_left_alone() -> None:
+    body = {"error": {"code": "upstream_unavailable", "message": "down"}}
+    client = client_over(responder(503, body, headers={"Retry-After": "5"}))
+
+    with pytest.raises(ApiError) as caught:
+        client.list_notes()
+
+    assert "retry_after" not in caught.value.payload["error"]
