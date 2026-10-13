@@ -27,7 +27,8 @@ The web app has Read, Edit and Split modes and also works on a phone, and everyt
 - **Agent-friendly output.** The CLI and the MCP server share one client that projects fields and
   truncates long bodies, so an agent reads a note without paying for all of it.
 - **Its own accounts.** Sign in with GitHub in the browser, and mint personal access tokens or use
-  a device-flow login for the CLI. kaya does not call pandan to authenticate anyone.
+  a device-flow login for the CLI. Access tokens are short-lived and renew with a refresh token.
+  kaya does not call pandan to authenticate anyone.
 - **Export and import.** `kaya export-all` writes an Obsidian-compatible directory, and
   `kaya import-all` reads one.
 

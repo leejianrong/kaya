@@ -17,8 +17,9 @@ transport on the same origin (ADR 0014 argues why).
 onward, `docs/PLAN.md` §Beyond the MVP, shaped in
 [`docs/roadmap/BREADBOARD.md`](docs/roadmap/BREADBOARD.md)) has shipped a graph view, board embeds,
 export/import, version history, attachments, a Fly.io deploy, a Settings page with format-on-save,
-standalone identity (EPIC-283), device-flow login and a hosted remote MCP endpoint (EPIC-284; its docs pass, KAN-1745 with KAN-1825, shipped), and a mobile-first shell with a Read/Edit/Split mode switch (EPIC-305). Open: the
-rate limiting (shipped), short-lived tokens (ADR 0016) and workspaces (ADR 0017, EPIC-326: the data model and access ladder shipped; the REST/CLI/MCP/SPA surface, KAY-175, has not), brand and landing page (EPIC-306), and Fly DNS/TLS (needs-human).
+standalone identity (EPIC-283), device-flow login and a hosted remote MCP endpoint (EPIC-284; its docs pass, KAN-1745 with KAN-1825, shipped), and a mobile-first shell with a Read/Edit/Split mode switch (EPIC-305). Also shipped: rate limiting, short-lived access tokens with rotating refresh tokens (ADR 0016) and the
+workspace data model with its access ladder (ADR 0017, EPIC-326, KAY-174). Open: the workspace
+REST/CLI/MCP/SPA surface (KAY-175: no workspace or member endpoints exist yet), brand and landing page (EPIC-306), and Fly DNS/TLS (needs-human).
 Pandan board 18 ("kaya - Notes") is the source of truth for what is in flight; read it before
 trusting this paragraph.
 **The published binary lags `main`**: check `gh release list --repo leejianrong/kaya` and each
