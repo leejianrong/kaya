@@ -90,9 +90,9 @@ from kaya_cli.parsing import (
     PATH_FLAG,
     PRECONDITION_FLAG,
     QUERY_FLAG,
-    TEAM_FLAG,
     TITLE_FLAG,
     TOKEN_FLAG,
+    WORKSPACE_FLAG,
     ParserExit,
     StructuredParser,
     output_flags,
@@ -297,13 +297,14 @@ def _add_note_verbs(note_commands, flags: argparse.ArgumentParser) -> None:
     _add_body_flags(create)
     create.add_argument(PATH_FLAG, default=None, help="where the note filed, e.g. home/notes.md")
     create.add_argument(
-        TEAM_FLAG,
+        WORKSPACE_FLAG,
         type=int,
         default=None,
         metavar="ID",
         help=(
-            "share this note with a team by default (ADR 0011); a plain numeric id, since a team "
-            "has no ref of its own. 403 if you are not a member. `pandan team list` finds the id"
+            "create the note in this workspace (ADR 0017) rather than your personal space; a plain "
+            "numeric id, since a workspace has no ref of its own. 403 unless you are an editor "
+            "or owner there"
         ),
     )
 

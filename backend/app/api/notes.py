@@ -10,7 +10,7 @@ Four things to notice, because all four are load-bearing:
 - **No route parses an identifier.** ``NoteFromRef`` resolves it, checks it and hands back a
   ``Note``. That is ADR 0008's "resolve centrally, not per call site" made unavoidable rather than
   merely recommended: there is no identifier in scope to get wrong.
-- **No route builds a note query.** A list composes onto ``notes_owned_by``, which already carries
+- **No route builds a note query.** A list composes onto ``notes_visible_to``, which already carries
   ``WHERE owner_id = :caller``; ``tests/unit/test_no_unscoped_note_query.py`` fails the build if
   this file ever names ``Note`` inside a ``select()``. Search (KAN-558) is ``notes_matching``, which
   is that same statement with two clauses added, so it is one ``WHERE`` and not two.
@@ -43,7 +43,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.concurrency import enforce_precondition
-from app.api.refs import NoteFromRef
+from app.api.refs import NoteFromRef, WritableNoteFromRef
 from app.api.schemas import (
     FolderMove,
     FolderMoved,
@@ -57,20 +57,19 @@ from app.api.schemas import (
 )
 from app.api.search import SearchTerm
 from app.auth import (
+    ROLE_ACCESS,
+    Access,
     Principal,
-    TeamAccessResolver,
-    ensure_team_mirrored,
     error_body,
     get_principal,
-    get_team_access_resolver,
     notes_matching,
-    notes_owned_by,
+    notes_visible_to,
     notes_with_paths,
+    workspace_role_of,
 )
 from app.db import get_session
 from app.folders import FolderMoveError, plan_move, rewrite
 from app.identity.models import KayaAccount
-from app.integrations.dependencies import PandanBearer
 from app.markdown_format import format_markdown
 from app.models import Note
 from app.note_links import reconcile_note_links, resolve_pending_note_links
@@ -80,7 +79,6 @@ router = APIRouter(prefix="/api/v1", tags=["notes"])
 
 CurrentPrincipal = Annotated[Principal, Depends(get_principal)]
 DbSession = Annotated[Session, Depends(get_session)]
-CurrentTeamResolver = Annotated[TeamAccessResolver, Depends(get_team_access_resolver)]
 
 
 @router.post(
@@ -93,10 +91,8 @@ def create_note(
     principal: CurrentPrincipal,
     session: DbSession,
     response: Response,
-    bearer: PandanBearer,
-    team_resolver: CurrentTeamResolver,
 ) -> NoteRead:
-    """Create a note owned by the caller.
+    """Create a note: personal, or in a workspace the caller may write in.
 
     The ``ref``, the ``id`` and both timestamps are allocated by Postgres inside the INSERT and read
     back afterwards, never assembled here — ADR 0008 §Decision, and the reason two concurrent
@@ -105,15 +101,12 @@ def create_note(
     The owner is the resolved principal and is not a request field. There is no route by which a
     caller can file a note against somebody else's UUID.
 
-    **``team_id`` (ADR 0011, R16.5) is validated before anything is written.** The creating
-    principal must be a member of that team — checked live, before this session has touched the
-    database, the same "nothing has queried yet, so nothing to release" reasoning ``list_notes``
-    uses — mirroring how pandan validates `POST /api/v1/boards`' own `team_id`. A caller who is not
-    a member gets `403`, never a silent drop of the field: `NoteCreate`'s `extra="forbid"` already
-    means a field this route *doesn't* validate is a caller mistake worth surfacing, and this one is
-    no different. Once confirmed, ``ensure_team_mirrored`` makes the id addressable — the `team`
-    mirror row this note's foreign key needs might not exist yet, the same bootstrap problem
-    ``app/auth/mirror.py``'s user mirror solves for `owner_id`.
+    **``workspace_id`` (ADR 0017) is validated before anything is written.** The caller must be an
+    ``editor`` or ``owner`` of that workspace, else `403`, never a silent drop of the field. A
+    workspace that does not exist answers the same `403` as one the caller is not in, so this is not
+    a way to probe which ids exist. Omitted, the note is personal, exactly as every note was before
+    workspaces. ``owner_id`` is still the creator, but in a workspace it grants nothing: access is
+    the membership.
 
     KAN-562: the body's ``[[KAN-n]]`` / ``[[EPIC-n]]`` wikilinks are recorded in ``note_link`` in
     the same transaction as the note itself, via ``reconcile_note_links``. The explicit ``flush()``
@@ -132,15 +125,16 @@ def create_note(
     edit. Every note gets one, even ``NoteCreate``'s default empty body — "on every body write, no
     heuristic" (BREADBOARD.md's R13) draws no exception for a body that happens to be ``""``.
     """
-    if payload.team_id is not None:
-        pandan_pat = bearer()
-        team_ids = team_resolver.member_of(pandan_pat) if pandan_pat is not None else frozenset()
-        if payload.team_id not in team_ids:
+    if payload.workspace_id is not None:
+        role = session.scalars(workspace_role_of(principal, payload.workspace_id)).one_or_none()
+        if ROLE_ACCESS.get(role or "", Access.READ) < Access.WRITE:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=error_body("team_forbidden", "you are not a member of this team"),
+                detail=error_body(
+                    "workspace_forbidden",
+                    "you cannot create notes in that workspace; it needs an editor or owner role",
+                ),
             )
-        ensure_team_mirrored(session, payload.team_id)
 
     note = Note(owner_id=principal.id, **payload.model_dump())
     session.add(note)
@@ -161,22 +155,17 @@ def list_notes(
     principal: CurrentPrincipal,
     session: DbSession,
     term: SearchTerm,
-    bearer: PandanBearer,
-    team_resolver: CurrentTeamResolver,
 ) -> NoteList:
-    """Every note the caller owns, newest first — or, with ``?q=``, the ones that match it.
+    """Every note the caller may read, newest first — or, with ``?q=``, the ones that match it.
 
-    Scoped in SQL by ``notes_owned_by``, not filtered afterwards: SLICES §V1 asks for another user's
-    note to be *omitted* rather than fetched and hidden, and only the ``WHERE`` can say which
+    Scoped in SQL by ``notes_visible_to``, not filtered afterwards: SLICES §V1 asks for another
+    user's note to be *omitted* rather than fetched and hidden, and only the ``WHERE`` can say which
     happened. Composing here cannot lose that clause (KAN-535), and ``notes_matching`` composes onto
     the very same statement, so KAN-558's "another user's matching note must never appear" is that
     one clause rather than a second implementation of it.
 
-    **Team membership is resolved before this session has run a single query** (ADR 0011, R16.3) —
-    unlike the single-note path in ``app/api/refs.py``, there is no owner check to fail first and
-    defer on, since a list has to know every team it should widen for before it can build the
-    ``WHERE``. No connection is held across the call for the same reason it never is in
-    ``resolve_note``: nothing here has queried yet, so there is nothing to release.
+    "The caller's notes" means every note they may read: their personal notes and every note in each
+    workspace they belong to (ADR 0017). Both halves are in the one SQL clause.
 
     **Two orders, because they answer two different questions, and each one is deterministic.**
 
@@ -200,12 +189,10 @@ def list_notes(
     when one does. It is deliberately not added *with* search either — a `limit` would need a
     documented interaction with ranking, and that is a second undiscussed contract.
     """
-    pandan_pat = bearer()
-    team_ids = team_resolver.member_of(pandan_pat) if pandan_pat is not None else frozenset()
     statement = (
-        notes_owned_by(principal, team_ids).order_by(Note.updated_at.desc(), Note.id.desc())
+        notes_visible_to(principal).order_by(Note.updated_at.desc(), Note.id.desc())
         if term is None
-        else notes_matching(principal, term, team_ids)
+        else notes_matching(principal, term)
     )
     return NoteList(notes=[NoteRead.of(note) for note in session.scalars(statement)])
 
@@ -261,23 +248,38 @@ def list_note_versions(
 def move_folder(
     payload: FolderMove, principal: CurrentPrincipal, session: DbSession
 ) -> FolderMoved:
-    """Rewrite the leading path prefix ``from`` to ``to`` on every one of the caller's notes under
-    it, in one transaction (KAN-2000, ADR 0008 amendment). Returns ``{"moved": n}``.
+    """Rewrite the leading path prefix ``from`` to ``to`` on every note under it **in one
+    container**, in one transaction (KAN-2000, ADR 0008 amendment). Returns ``{"moved": n}``.
 
     A folder is only a view of ``note.path``; there is no folder table to rename, so this is the
     bulk form of ``PATCH {"path": ...}`` and behaves the same per note: ``path`` is the one column
     that changes, ``updated_at`` is restamped by the column's ``onupdate``, no body is touched so
     no version is cut and no link is rewritten (identity is ``NOTE-n``). ``from == to`` (after
     normalising slashes) is a no-op returning ``0``. A note whose path is exactly ``from`` is a leaf
-    named like the folder and is left alone. Scoped to the caller in SQL by ``notes_with_paths``.
-    Unguarded by ``if_updated_at``, like any metadata-only write (ADR 0009).
+    named like the folder and is left alone. Unguarded by ``if_updated_at``, like any metadata-only
+    write (ADR 0009).
+
+    **A path is relative to its container (ADR 0017)**, so the same folder name in a personal space
+    and in a workspace are different folders. ``workspace_id`` names the container: omitted is the
+    caller's personal space, and a workspace needs an ``editor`` or ``owner`` role, else `403`.
+    ``notes_with_paths`` repeats that check in SQL, so a forgotten check here still moves nothing.
     """
+    if payload.workspace_id is not None:
+        role = session.scalars(workspace_role_of(principal, payload.workspace_id)).one_or_none()
+        if ROLE_ACCESS.get(role or "", Access.READ) < Access.WRITE:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=error_body(
+                    "workspace_forbidden",
+                    "you cannot move folders in that workspace; it needs an editor or owner role",
+                ),
+            )
     try:
         origin, destination = plan_move(payload.source, payload.target)
         if origin == destination:
             return FolderMoved(moved=0)
         changes: dict[Note, str] = {}
-        for note in session.scalars(notes_with_paths(principal)):
+        for note in session.scalars(notes_with_paths(principal, payload.workspace_id)):
             moved_path = rewrite(note.path, origin, destination)
             if moved_path is not None:
                 changes[note] = moved_path
@@ -294,7 +296,7 @@ def move_folder(
 
 @router.patch("/notes/{ref}", summary="Edit a note, or move it")
 def update_note(
-    note: NoteFromRef,
+    note: WritableNoteFromRef,
     payload: NoteUpdate,
     session: DbSession,
     response: Response,
@@ -392,7 +394,7 @@ def check_format(note: NoteFromRef) -> FormatCheck:
     response_class=Response,
     summary="Delete a note",
 )
-def delete_note(note: NoteFromRef, session: DbSession) -> Response:
+def delete_note(note: WritableNoteFromRef, session: DbSession) -> Response:
     """Delete the note. `204`, no body — there is nothing left to describe.
 
     The ref is **not** returned to the sequence. Refs are never reused (ADR 0008), so a later

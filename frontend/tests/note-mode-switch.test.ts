@@ -26,7 +26,7 @@ const NOTE: Note = {
   path: 'journal/review.md',
   created_at: '2026-08-09T10:00:00+00:00',
   updated_at: '2026-08-09T10:00:00.123456+00:00',
-  team_id: null,
+  workspace_id: null,
 }
 
 const CREATED: Note = { ...NOTE, ref: 'NOTE-99', id: 99, title: 'A fresh note', body: '', path: '' }

@@ -59,12 +59,12 @@
 </script>
 
 <div class="right-rail" {id}>
-  {#if note?.team_id != null}
-    <!-- ADR 0011, R16.7: sits above the tab strip rather than inside either tab's pane, since it
+  {#if note?.workspace_id != null}
+    <!-- ADR 0017: sits above the tab strip rather than inside either tab's pane, since it
          is a fact about the note itself — not about its backlinks or its history — and stays
          visible whichever tab is open. -->
-    <p class="team-note" data-testid="rail-team-badge">
-      Shared by default with team {note.team_id}
+    <p class="workspace-note" data-testid="rail-workspace-badge">
+      In workspace {note.workspace_id}
     </p>
   {/if}
   <div class="tabs" role="tablist" aria-label="Note details">
@@ -116,7 +116,7 @@
     border-left: 1px solid var(--outline-variant);
   }
 
-  .team-note {
+  .workspace-note {
     flex: none;
     margin: 0.75rem 0.5rem 0;
     color: var(--on-surface-variant);

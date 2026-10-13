@@ -144,25 +144,23 @@ class Note(Base):
     """Owner. Every read is scoped by this (`authorize_note`, KAN-535); Postgres does not index
     the referencing side of a foreign key on its own, hence `index=True`."""
 
-    team_id: Mapped[int | None] = mapped_column(
+    workspace_id: Mapped[int | None] = mapped_column(
         BigInteger,
-        # RESTRICT, matching `owner_id`'s own reasoning exactly: a locally mirrored `team` row
-        # (app/models/team.py) is not the authority on whether a note's team association should
-        # end, so a future cleanup job that prunes stale team mirrors fails loudly instead of
-        # silently turning a team-shared note into a personal one.
-        ForeignKey("team.id", ondelete="RESTRICT"),
+        # RESTRICT, not SET NULL as pandan uses for a board (ADR 0017): unclaiming a workspace's
+        # notes would hand each one back to its creator as a personal note, a silent change of who
+        # can read it. A workspace that still holds notes cannot be deleted.
+        ForeignKey("workspace.id", ondelete="RESTRICT"),
         nullable=True,
         index=True,
     )
-    """Optional team-default access (ADR 0011, R16). `NULL` is every note's current, unchanged
-    meaning — a personal note. `index=True` because Postgres does not index the referencing side of
-    a foreign key on its own, and the team-default authorization rung (R16.3) scopes a note *list*
-    by `owner_id = caller OR team_id IN (caller's teams)`, the same shape `owner_id`'s own index
-    exists to serve.
+    """The workspace this note belongs to (ADR 0017), or `NULL` for a personal note, which is every
+    note that existed before workspaces. **Access to a workspace note comes only from membership**:
+    `owner_id` then records who created it and grants nothing. `index=True` because Postgres does
+    not index the referencing side of a foreign key on its own, and every note list filters on it.
 
-    Deliberately absent from `NoteRead` for now (`tests/unit/test_note_payload_keys.py`'s
-    `NOT_ON_THE_WIRE`) — this card is schema-only, and R16.5 (`KAN-1086`) is what puts it on the
-    wire, once note creation can actually set it to something other than `NULL`."""
+    A note's `path` is relative to this container (ADR 0017, amending ADR 0008): the same folder
+    names can exist in a personal space and in each workspace without meaning anything across
+    them."""
 
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     """Display, and the key wikilinks resolve against (ADR 0008 / Q19). Not unique — two notes in
@@ -212,7 +210,7 @@ class Note(Base):
         Computed(SEARCH_VECTOR_EXPRESSION, persisted=True),
         nullable=False,
         # `deferred`, and it is load-bearing rather than tidy. Every list read in the product is
-        # `notes_owned_by(principal)`, i.e. `select(Note)`, so without this the tsvector for every
+        # `notes_visible_to(principal)`, i.e. `select(Note)`, so without this the tsvector for every
         # note on the page crosses the wire from Postgres on every read — roughly body-sized, for
         # a value no reader of a note has any use for. It also means the search path (KAN-558) can
         # name the column in a `WHERE`/`ts_rank` and still never load it into a row.
