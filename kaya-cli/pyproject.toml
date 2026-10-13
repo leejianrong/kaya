@@ -152,7 +152,9 @@ name = "kaya-notes"
 # 0.28.0 — KAY-172 (ADR 0016): `auth login` stores the refresh token the server issues beside the
 # access token, and `auth logout` removes both. The renewal itself is `kaya-client` 0.20.0's. Needs
 # that version, hence the bump; a login against a server that issues no refresh token is unchanged.
-version = "0.28.0"
+# 0.29.0 — KAY-174 (ADR 0017): `note create --workspace ID` replaces `--team ID`. A script passing
+# `--team` now gets a usage error. Needs `kaya-client` 0.21.0.
+version = "0.29.0"
 description = "kaya — the notes CLI"
 readme = "README.md"
 license = "Apache-2.0"

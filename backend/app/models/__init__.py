@@ -24,7 +24,7 @@ from app.models.note import (
 )
 from app.models.note_link import NoteLink
 from app.models.note_version import NoteVersion
-from app.models.team import Team
+from app.models.workspace import Workspace, WorkspaceMember
 
 __all__ = [
     "NOTE_REF_PREFIX",
@@ -35,5 +35,6 @@ __all__ = [
     "Note",
     "NoteLink",
     "NoteVersion",
-    "Team",
+    "Workspace",
+    "WorkspaceMember",
 ]

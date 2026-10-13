@@ -42,7 +42,7 @@ no notes
 
 ```console
 $ kaya note get NOTE-12 --format json
-{"ref":"NOTE-12","id":12,"title":"Groceries","body":"milk\neggs","path":"home/groceries.md","created_at":"2026-09-05T04:12:03+00:00","updated_at":"2026-09-05T04:12:03+00:00","team_id":null}
+{"ref":"NOTE-12","id":12,"title":"Groceries","body":"milk\neggs","path":"home/groceries.md","created_at":"2026-09-05T04:12:03+00:00","updated_at":"2026-09-05T04:12:03+00:00","workspace_id":null}
 ```
 
 Compact — no `indent=2` — because `json` is the format a script or an agent reads, and pretty-
@@ -54,7 +54,7 @@ A list is an envelope, not a bare array — and every record here is complete, t
 
 ```console
 $ kaya note list --format json
-{"notes":[{"ref":"NOTE-12","id":12,"title":"Groceries","body":"milk\neggs","path":"home/groceries.md","created_at":"2026-09-05T04:12:03+00:00","updated_at":"2026-09-05T04:12:03+00:00","team_id":null},{"ref":"NOTE-3","id":3,"title":"A reading list","body":"","path":"","created_at":"2026-09-05T03:58:11+00:00","updated_at":"2026-09-05T03:58:11+00:00","team_id":null}],"summary":{"count":2}}
+{"notes":[{"ref":"NOTE-12","id":12,"title":"Groceries","body":"milk\neggs","path":"home/groceries.md","created_at":"2026-09-05T04:12:03+00:00","updated_at":"2026-09-05T04:12:03+00:00","workspace_id":null},{"ref":"NOTE-3","id":3,"title":"A reading list","body":"","path":"","created_at":"2026-09-05T03:58:11+00:00","updated_at":"2026-09-05T03:58:11+00:00","workspace_id":null}],"summary":{"count":2}}
 ```
 
 ```bash
@@ -70,7 +70,7 @@ row — cheaper than JSON on a list, without giving up structure:
 
 ```console
 $ kaya note list --format toon
-notes[2]{ref,id,title,body,path,created_at,updated_at,team_id}:
+notes[2]{ref,id,title,body,path,created_at,updated_at,workspace_id}:
   NOTE-12,12,Groceries,"milk\neggs",home/groceries.md,2026-09-05T04:12:03+00:00,2026-09-05T04:12:03+00:00,null
   NOTE-3,3,A reading list,"","",2026-09-05T03:58:11+00:00,2026-09-05T03:58:11+00:00,null
 summary:
@@ -109,7 +109,7 @@ A name the payload doesn't have is a usage error naming what's available:
 
 ```console
 $ kaya note list --fields ref,nope
-error	usage	unknown field 'nope' — a note has ref, id, title, body, path, created_at, updated_at, team_id	nope
+error	usage	unknown field 'nope' — a note has ref, id, title, body, path, created_at, updated_at, workspace_id	nope
 $ echo $?
 2
 ```

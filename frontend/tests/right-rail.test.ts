@@ -22,7 +22,7 @@ const NOTE: Note = {
   path: '',
   created_at: '2026-08-09T10:00:00+00:00',
   updated_at: '2026-08-09T10:00:00.123456+00:00',
-  team_id: null,
+  workspace_id: null,
 }
 
 let host: HTMLDivElement
@@ -126,19 +126,19 @@ describe('RightRail', () => {
     })
   })
 
-  describe('the team badge (ADR 0011, R16.7)', () => {
+  describe('the workspace badge (ADR 0017)', () => {
     it('is absent for a personal note', () => {
       render()
-      expect(host.querySelector('[data-testid="rail-team-badge"]')).toBeNull()
+      expect(host.querySelector('[data-testid="rail-workspace-badge"]')).toBeNull()
     })
 
-    it('shows the team id, above the tab strip, whichever tab is open', () => {
-      render({ ...NOTE, team_id: 501 })
-      const badge = host.querySelector('[data-testid="rail-team-badge"]')!
+    it('shows the workspace id, above the tab strip, whichever tab is open', () => {
+      render({ ...NOTE, workspace_id: 501 })
+      const badge = host.querySelector('[data-testid="rail-workspace-badge"]')!
       expect(badge.textContent).toContain('501')
 
       click('rail-tab-history')
-      expect(host.querySelector('[data-testid="rail-team-badge"]')!.textContent).toContain('501')
+      expect(host.querySelector('[data-testid="rail-workspace-badge"]')!.textContent).toContain('501')
     })
   })
 })

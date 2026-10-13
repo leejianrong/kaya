@@ -128,10 +128,9 @@ TITLE_FLAG = "--title"
 PATH_FLAG = "--path"
 PRECONDITION_FLAG = "--if-updated-at"
 CHECK_FLAG = "--check"
-TEAM_FLAG = "--team"
-"""ADR 0011/R16.6. `note create` alone — `note edit` gains no way to move a note into or out of a
-team after the fact, matching `kaya-client`'s own `create_note`-only field (see that package's
-changelog entry for why)."""
+WORKSPACE_FLAG = "--workspace"
+"""ADR 0017. `note create` alone, matching `kaya-client`'s own `create_note`-only field. It replaced
+ADR 0011's `--team`."""
 API_URL_FLAG = "--api-url"
 TOKEN_FLAG = "--token"
 QUERY_FLAG = "--q"

@@ -36,49 +36,11 @@ class Settings(BaseSettings):
         default="https://simple-kanban-jian.fly.dev",
         validation_alias="KAYA_PANDAN_URL",
     )
-    """Origin of the pandan deployment kaya still calls for everything that isn't identity:
-    team-default access (`TeamAccessResolver`), wikilink resolution (`CardEpicResolver`), and the
-    embedded board preview. Before ADR 0012's cutover (KAN-1740) this also built the
-    `GET /api/v1/me` URL `app.auth` resolved every caller through — that use is gone now, kaya
-    mints and verifies its own credentials. It is configuration, not a secret — it appears verbatim
-    in a `503` body naming a specific unreachable upstream, e.g. `TeamAccessResolver`'s soft-fail
-    path never surfacing it, but `card_resolution`'s deadline-exceeded case does."""
-
-    team_access_connect_timeout_seconds: float = Field(
-        default=3.0,
-        validation_alias="KAYA_TEAM_ACCESS_CONNECT_TIMEOUT_SECONDS",
-    )
-    """Per-request connect budget for `TeamAccessResolver`'s `GET /api/v1/teams` call (R16.2, ADR
-    0011). Team-default access is a soft dependency ADR 0011 deliberately makes it — a note's owner
-    is never gated on this call, and a teammate's access degrading to "not found" during a slow
-    pandan is the accepted outcome, not a failure worth waiting out. Same reasoning as
-    `card_resolution_connect_timeout_seconds`/`board_embed_connect_timeout_seconds`, its own field
-    rather than reusing either: this protects a third, distinct call shape."""
-
-    team_access_read_timeout_seconds: float = Field(
-        default=3.0,
-        validation_alias="KAYA_TEAM_ACCESS_READ_TIMEOUT_SECONDS",
-    )
-    """Per-request read budget for the same call — a separate, short knob from
-    `card_resolution_read_timeout_seconds`/`board_embed_read_timeout_seconds`, protecting its own
-    distinct call shape."""
-
-    team_access_cache_ttl_seconds: float = Field(
-        default=60.0,
-        validation_alias="KAYA_TEAM_ACCESS_CACHE_TTL_SECONDS",
-    )
-    """How long a resolved team-membership set is trusted before `TeamAccessResolver` asks pandan
-    again — its own field with its own default, so a future change to some other cache's TTL can't
-    silently move this one."""
-
-    team_access_negative_cache_ttl_seconds: float = Field(
-        default=10.0,
-        validation_alias="KAYA_TEAM_ACCESS_NEGATIVE_CACHE_TTL_SECONDS",
-    )
-    """How long "pandan could not be asked" is remembered before `TeamAccessResolver` tries again —
-    a load-shedding TTL, short on purpose: this cache's negative entry remembers "unknown, so
-    treated as no memberships" (ADR 0011's soft-fail decision), which is exactly as safe to keep
-    serving for a few seconds as it is to compute fresh."""
+    """Origin of the pandan deployment kaya still calls, and only for cross-linking: wikilink
+    resolution (`CardEpicResolver`) and the embedded board preview. It no longer decides anything
+    about identity (ADR 0012) or access (ADR 0017: workspaces are kaya's own tables). It is
+    configuration, not a secret — it appears verbatim in a `503` body naming a specific unreachable
+    upstream, as `card_resolution`'s deadline-exceeded case does."""
 
     card_resolution_connect_timeout_seconds: float = Field(
         default=3.0,

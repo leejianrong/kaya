@@ -251,7 +251,7 @@ they are named here rather than written inline at three call sites."""
 CONTENT_FIELDS = (TITLE_FIELD, BODY_FIELD, PATH_FIELD)
 """The three columns a `PATCH` may write, in the order a refusal lists them."""
 
-TEAM_ID_FIELD = "team_id"
+WORKSPACE_ID_FIELD = "workspace_id"
 
 FORMAT_FIELD = "format"
 """KAN-1816 (contract of KAN-1814): the optional boolean on `PATCH /notes/{ref}`. True makes the
@@ -262,9 +262,8 @@ FORMAT_CHECK_SEGMENT = "/format-check"
 FORMAT_CHECK_NOUN = "format check"
 FORMAT_CHECK_ENVELOPE = "format_checks"
 FORMAT_CHECK_COLUMNS = ("changed", "changed_lines")
-"""ADR 0011/R16.6's one new request field, on `create_note` alone — `NoteUpdate` gains no way to
-move a note into or out of a team after the fact, because nothing has asked for that yet and
-`NoteCreate`'s own field is the only one `backend/app/api/schemas.py` defines."""
+"""ADR 0017's request field, on `create_note` alone (it replaced ADR 0011's `team_id`).
+`NoteUpdate` gains no way to move a note between containers: that is a later card's own verb."""
 
 EXPORT_NOUN = "export"
 EXPORT_ENVELOPE = "exports"
@@ -401,7 +400,7 @@ class KayaClient:
         *,
         body: str | None = None,
         path: str | None = None,
-        team_id: int | None = None,
+        workspace_id: int | None = None,
         format_hint: bool = False,
     ) -> Payload:
         """``POST /api/v1/notes``. The note comes back whole, with the ref Postgres allocated.
@@ -412,12 +411,12 @@ class KayaClient:
         database say what an unset field is, and it keeps this method's request byte-identical to
         the minimal ``{"title": "…"}`` that `test_migration_0001` says is a complete creation.
 
-        ``team_id`` (ADR 0011, R16.6) follows the identical omit-rather-than-null rule — ``None``
-        means "a personal note", the same meaning the column's own default carries, so a caller who
-        never mentions a team sends the exact request they always sent. The API is the one place
-        membership is checked (`403` for a team the caller does not belong to); this method does not
-        pre-validate, the same "the schema shapes, it does not authorize" line `NoteCreate`'s own
-        docstring draws.
+        ``workspace_id`` (ADR 0017) follows the identical omit-rather-than-null rule: ``None`` means
+        "a personal note", the same meaning the column's own default carries, so a caller who never
+        mentions a workspace sends the exact request they always sent. The API is the one place
+        membership and role are checked (`403` for a workspace the caller cannot write in); this
+        method does not pre-validate, the same "the schema shapes, it does not authorize" line
+        `NoteCreate`'s own docstring draws.
 
         The response is a `201` carrying the full note plus a ``Location`` header. The header is
         ignored on purpose: it holds ``/api/v1/notes/NOTE-12``, which is the ``ref`` the body
@@ -425,8 +424,8 @@ class KayaClient:
         learn a note's name (ADR 0008 allows one).
         """
         content = self._content(title, body, path)
-        if team_id is not None:
-            content[TEAM_ID_FIELD] = team_id
+        if workspace_id is not None:
+            content[WORKSPACE_ID_FIELD] = workspace_id
         saved = self._note(self._request("POST", NOTES_PATH, content))
         return self._with_format_hint(saved, enabled=format_hint and bool(body))
 

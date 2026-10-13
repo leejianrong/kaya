@@ -53,7 +53,6 @@ would read as an exception in that one.
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Annotated
-from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -65,6 +64,7 @@ from app.auth import Principal, get_principal, notes_linking_to, notes_named_by_
 from app.db import get_session
 from app.integrations.card_resolution import ResolvedTicket, classify_ref
 from app.integrations.dependencies import CardResolutionBearer, CardResolver
+from app.models import Note
 from app.models.note_link import TARGET_KIND_NOTE, NoteLink
 
 router = APIRouter(prefix="/api/v1", tags=["links"])
@@ -136,18 +136,19 @@ def outbound_edges(session: Session, note_id: int) -> tuple[Edge, ...]:
     )
 
 
-def note_targets(session: Session, owner_id: UUID, edges: Iterable[Edge]) -> dict[int, NoteTarget]:
+def note_targets(session: Session, source: Note, edges: Iterable[Edge]) -> dict[int, NoteTarget]:
     """``id -> (ref, title)`` for the notes this note's resolved NOTE-kind edges point at.
 
     One batched query rather than one per edge, the same trade ``app/note_links.py``'s
     ``_notes_by_title`` makes and for the same reason: a note rarely links to more than a handful of
-    others, and there is still no reason to pay a round trip each when they all scope to one owner.
+    others, and there is still no reason to pay a round trip each when they all scope to one
+    container.
     Returns ``{}`` for a note with no resolved NOTE edges, without asking Postgres anything.
 
     An id the statement does not answer for is simply absent, and ``link_records`` renders that edge
     unresolved. That covers the case the schema permits and nothing prevents: a target note that has
     since been **deleted**. ``resolved_id`` is not a ``ForeignKey``, so nothing cascaded and nothing
-    nulled it — see ``notes_named_by_id``, which owns that argument and the owner-scoping one.
+    nulled it — see ``notes_named_by_id``, which owns that argument and the container-scoping one.
     """
     wanted = {
         edge.resolved_id
@@ -156,7 +157,7 @@ def note_targets(session: Session, owner_id: UUID, edges: Iterable[Edge]) -> dic
     }
     if not wanted:
         return {}
-    rows = session.execute(notes_named_by_id(owner_id, wanted)).all()
+    rows = session.execute(notes_named_by_id(source, wanted)).all()
     return {note_id: NoteTarget(ref=ref, title=title) for note_id, ref, title in rows}
 
 
@@ -281,7 +282,7 @@ def note_links(
     account, which is not a reason to fail a read of their own note's local edges.
     """
     edges = outbound_edges(session, note.id)
-    targets = note_targets(session, note.owner_id, edges)
+    targets = note_targets(session, note, edges)
     refs = ticket_refs(edges)
 
     _release_the_connection(session)

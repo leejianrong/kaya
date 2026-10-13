@@ -18,7 +18,7 @@ onward, `docs/PLAN.md` §Beyond the MVP, shaped in
 [`docs/roadmap/BREADBOARD.md`](docs/roadmap/BREADBOARD.md)) has shipped a graph view, board embeds,
 export/import, version history, attachments, a Fly.io deploy, a Settings page with format-on-save,
 standalone identity (EPIC-283), device-flow login and a hosted remote MCP endpoint (EPIC-284; its docs pass, KAN-1745 with KAN-1825, shipped), and a mobile-first shell with a Read/Edit/Split mode switch (EPIC-305). Open: the
-org/team model (R16, ADR 0011), brand and landing page (EPIC-306), and Fly DNS/TLS (needs-human).
+rate limiting (shipped), short-lived tokens (ADR 0016) and workspaces (ADR 0017, EPIC-326: the data model and access ladder shipped; the REST/CLI/MCP/SPA surface, KAY-175, has not), brand and landing page (EPIC-306), and Fly DNS/TLS (needs-human).
 Pandan board 18 ("kaya - Notes") is the source of truth for what is in flight; read it before
 trusting this paragraph.
 **The published binary lags `main`**: check `gh release list --repo leejianrong/kaya` and each
@@ -60,8 +60,8 @@ from the planning docs. Read `PLAN.md` before anything substantial.
    another answer (e.g. `Payload.limited_to()` applied at the call site).
 4. **Nothing in kaya may block on pandan** ([ADR 0003](docs/adr/0003-cross-linking-one-way-soft.md)).
    A note saves, renders and appears in search with pandan down; wikilink resolution degrades to
-   unresolved; team-default access (ADR 0011) soft-fails the same way. Kaya never calls pandan to
-   authenticate anyone.
+   unresolved. Kaya never calls pandan to authenticate anyone or to decide who may read a note:
+   workspace membership is kaya's own table (ADR 0017, which superseded ADR 0011's pandan teams).
 5. **A note's identity is its `NOTE-n` ref, never its path or title** ([ADR 0008](docs/adr/0008-note-identity.md)).
    `path` is mutable metadata; moving a note is a `PATCH` to one column, no link rewriting.
 
@@ -157,9 +157,14 @@ These have tests; you will meet them as a failing build otherwise. Full accounts
   hosted `/mcp` tools call the REST API with the caller's bearer, so they inherit it.
 - **A linked pandan PAT is encrypted at rest, never hashed** (`app/identity/pandan_link.py`, Fernet
   keyed from `KAYA_AUTH_SECRET`): it must be handed back to pandan raw. Wikilink resolution
-  (`app/integrations/card_resolution.py`) and team-default access (`GET /api/v1/workspaces`, ADR 0011)
-  use the same linked credential, and a caller who never linked one degrades to "unresolved" or "no
-  team memberships" (ADR 0003).
+  (`app/integrations/card_resolution.py`) and the board embed use the same linked credential, and a
+  caller who never linked one degrades to "unresolved" (ADR 0003). Nothing about access uses it.
+- **Access is the `Access` ladder `READ < WRITE < MANAGE` (ADR 0017)**, decided in
+  `app/auth/authorization.py` and reached through `NoteFromRef` (read) or `WritableNoteFromRef`
+  (write), never inline. A personal note (`workspace_id IS NULL`) is its owner's; a workspace note is
+  reachable **only** through a `workspace_member` role, and `note.owner_id` there is provenance that
+  grants nothing. A `path` is relative to its container, a wikilink resolves only inside its source
+  note's container (`in_container`), and a note list is `notes_visible_to` and nothing else.
 - **A `PATCH` is guarded only if `if_updated_at` is sent, and only over `body`** (ADR 0009). The CLI's
   only guard flag is `--if-updated-at`; there is no `--force`, and the client never fetches the
   precondition itself.

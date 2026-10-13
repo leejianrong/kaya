@@ -47,7 +47,7 @@ curl -H "Authorization: Bearer $KAYA_TOKEN" \
 ```
 
 `401` means the token is missing, revoked or not one kaya issued; `403` means it resolved but doesn't
-own (or share a team with) the note in question; `404` means no such note exists at all. The exact shape of
+own the note, or belong to its workspace with a role that allows the request; `404` means no such note exists at all. The exact shape of
 every error body — `{"error": {"code", "message", …}}`, everywhere, including a route the framework
 itself returns a bare 404/405 for — is worth relying on precisely because it's uniform; see a running
 instance's `/openapi.json` for the schema behind it rather than this page's word for it.

@@ -2,7 +2,7 @@
 
 Both functions are pure, so this whole file runs with no database and no framework. That is not an
 accident of the implementation — it is why ``authorize_note`` takes a ``Note`` instead of a session
-and an identifier, and why ``notes_owned_by`` returns a statement instead of rows.
+and an identifier, and why ``notes_visible_to`` returns a statement instead of rows.
 
 The scoping assertions are made against the **compiled statement**, because that is where the claim
 lives. "Returns only my notes" is satisfied by a Python filter over everything, and SLICES §V1 asks
@@ -18,7 +18,7 @@ from fakes import ALICE, BOB
 from fastapi import HTTPException
 from sqlalchemy import Select
 
-from app.auth.authorization import authorize_note, notes_owned_by
+from app.auth.authorization import Access, authorize_note, notes_visible_to
 from app.auth.principal import Principal
 from app.models import Note
 
@@ -112,74 +112,116 @@ def test_ownership_is_the_uuid_and_nothing_else() -> None:
     assert authorize_note(renamed, mine) is mine
 
 
-# --- ADR 0011/R16.3: the team-default rung -------------------------------------------------------
+# --- ADR 0017: workspaces and the READ < WRITE < MANAGE ladder -----------------------------------
 
-PLATFORM_TEAM_ID = 501
-DESIGN_TEAM_ID = 502
+WORKSPACE_ID = 501
 
 
-def team_note(*, title: str = "a team note") -> Note:
-    """A detached note owned by Bob and shared with the Platform team."""
-    note = note_owned_by(BOB, title=title)
-    note.team_id = PLATFORM_TEAM_ID
+def workspace_note(*, creator: Principal = BOB, title: str = "a workspace note") -> Note:
+    """A detached note in a workspace, created by `creator`. `owner_id` records the creator only."""
+    note = note_owned_by(creator, title=title)
+    note.workspace_id = WORKSPACE_ID
     return note
 
 
-def test_a_team_member_reaches_a_teammates_team_shared_note() -> None:
-    shared = team_note()
-
-    assert authorize_note(ALICE, shared, frozenset({PLATFORM_TEAM_ID})) is shared
-
-
-def test_the_owner_still_gets_their_own_team_note_back_with_no_team_ids_at_all() -> None:
-    """The owner check runs first and never needs team_ids — the default `frozenset()` is enough
-    for the note's own owner, exactly as it always was."""
-    shared = team_note()
-
-    assert authorize_note(BOB, shared) is shared
-
-
-def test_no_team_ids_on_a_team_note_is_still_a_403() -> None:
-    """The default (`frozenset()`) reproduces pre-R16 behaviour exactly: a caller who is not the
-    owner and supplies no team_ids is refused, whether that's because they belong to no team or
-    because ADR 0011's soft-fail decided pandan couldn't say."""
-    shared = team_note()
-
-    with pytest.raises(HTTPException) as raised:
-        authorize_note(ALICE, shared)
-
-    assert raised.value.status_code == 403
+@pytest.mark.parametrize(
+    ("role", "reads", "writes", "manages"),
+    [
+        ("viewer", True, False, False),
+        ("editor", True, True, False),
+        ("owner", True, True, True),
+    ],
+)
+def test_a_role_maps_to_exactly_its_level_of_the_ladder(
+    role: str, reads: bool, writes: bool, manages: bool
+) -> None:
+    shared = workspace_note()
+    for level, allowed in ((Access.READ, reads), (Access.WRITE, writes), (Access.MANAGE, manages)):
+        if allowed:
+            assert authorize_note(ALICE, shared, level, role) is shared
+        else:
+            with pytest.raises(HTTPException) as raised:
+                authorize_note(ALICE, shared, level, role)
+            assert raised.value.status_code == 403
 
 
-def test_membership_in_a_different_team_grants_nothing() -> None:
-    shared = team_note()
-
-    with pytest.raises(HTTPException) as raised:
-        authorize_note(ALICE, shared, frozenset({DESIGN_TEAM_ID}))
-
-    assert raised.value.status_code == 403
+def test_the_ladder_is_ordered() -> None:
+    assert Access.READ < Access.WRITE < Access.MANAGE
 
 
-def test_a_personal_note_is_unaffected_by_team_ids() -> None:
-    """`note.team_id is None` short-circuits the team rung entirely — team_ids naming every team
-    in existence still would not grant access to a note that was never shared."""
-    personal = note_owned_by(BOB)
+def test_the_default_requirement_is_read() -> None:
+    """Every call site that predates the ladder passes no `require` and must mean READ."""
+    shared = workspace_note()
+
+    assert authorize_note(ALICE, shared, workspace_role="viewer") is shared
+
+
+def test_a_non_member_is_refused_whatever_they_ask_for() -> None:
+    shared = workspace_note()
 
     with pytest.raises(HTTPException) as raised:
-        authorize_note(ALICE, personal, frozenset({PLATFORM_TEAM_ID, DESIGN_TEAM_ID}))
+        authorize_note(ALICE, shared, Access.READ, None)
 
     assert raised.value.status_code == 403
+    assert raised.value.detail["error"]["code"] == "note_forbidden"
 
 
-def test_team_default_access_is_never_a_404() -> None:
-    """A team note a caller cannot reach is exactly the "somebody else's note" case — `403`, the
-    existence-revealing refusal ADR 0002/PLAN §Authorization already chose, never a `404`."""
-    shared = team_note()
+def test_a_workspace_note_is_never_a_404_to_someone_who_cannot_reach_it() -> None:
+    """Same existence-revealing `403` as any other note (Q40), not a `404`."""
+    shared = workspace_note()
 
     with pytest.raises(HTTPException) as raised:
         authorize_note(ALICE, shared)
 
     assert raised.value.status_code != 404
+
+
+def test_the_creator_of_a_workspace_note_keeps_nothing_by_authorship() -> None:
+    """ADR 0017: in a workspace `owner_id` grants nothing. Remove the member and they lose the notes
+    they wrote there, because access is the membership and only the membership."""
+    mine_once = workspace_note(creator=ALICE)
+
+    with pytest.raises(HTTPException) as raised:
+        authorize_note(ALICE, mine_once, Access.READ, None)
+
+    assert raised.value.status_code == 403
+
+
+def test_a_role_grants_access_only_to_notes_in_that_workspace() -> None:
+    """`workspace_role` is the caller's role in `note.workspace_id`; a personal note never consults
+    it, so a stray role cannot open somebody's personal note."""
+    personal = note_owned_by(BOB)
+
+    with pytest.raises(HTTPException) as raised:
+        authorize_note(ALICE, personal, Access.READ, "owner")
+
+    assert raised.value.status_code == 403
+
+
+def test_a_personal_note_gives_its_owner_everything() -> None:
+    mine = note_owned_by(ALICE)
+
+    for level in Access:
+        assert authorize_note(ALICE, mine, level) is mine
+
+
+def test_the_insufficient_role_refusal_says_what_to_do() -> None:
+    shared = workspace_note()
+
+    with pytest.raises(HTTPException) as raised:
+        authorize_note(ALICE, shared, Access.WRITE, "viewer")
+
+    message = raised.value.detail["error"]["message"]
+    assert "role" in message and "owner" in message
+
+
+def test_an_unknown_role_grants_nothing() -> None:
+    """The column is CHECK-constrained, so this never happens; if it ever did, no access is safer
+    than guessing."""
+    shared = workspace_note()
+
+    with pytest.raises(HTTPException):
+        authorize_note(ALICE, shared, Access.READ, "superuser")
 
 
 # --- Many notes: the WHERE ----------------------------------------------------------------------
@@ -191,16 +233,18 @@ def compiled(statement: Select[tuple[Note]]) -> tuple[str, dict[str, object]]:
 
 
 def test_a_list_query_is_scoped_in_sql_rather_than_after_the_fact() -> None:
-    sql, params = compiled(notes_owned_by(ALICE))
+    sql, params = compiled(notes_visible_to(ALICE))
 
-    assert "WHERE note.owner_id = " in sql
+    assert "note.owner_id = " in sql
+    assert "note.workspace_id IS NULL" in sql, "a moved note stops being its creator's personal one"
+    assert "workspace_member.user_id = " in sql, "the workspace half is the caller's memberships"
     assert ALICE.id in params.values(), "the caller's UUID is the bound value, not a literal"
 
 
 def test_two_callers_get_two_different_statements() -> None:
     """Cheap, and it catches the copy-paste where the scoping binds a fixture instead of the arg."""
-    _, alice = compiled(notes_owned_by(ALICE))
-    _, bob = compiled(notes_owned_by(BOB))
+    _, alice = compiled(notes_visible_to(ALICE))
+    _, bob = compiled(notes_visible_to(BOB))
 
     assert ALICE.id in alice.values()
     assert BOB.id in bob.values()
@@ -216,7 +260,7 @@ def test_composing_onto_the_statement_cannot_lose_the_scoping() -> None:
     ``WHERE`` immediately preceding it — the same property, tolerant of the wrapping.
     """
     paged = (
-        notes_owned_by(ALICE)
+        notes_visible_to(ALICE)
         .where(Note.title.ilike("%meeting%"))
         .order_by(Note.updated_at.desc())
         .limit(50)
@@ -233,6 +277,6 @@ def test_the_scoping_does_not_depend_on_the_principal_being_mirrored_yet() -> No
     """A ``Principal`` is whatever pandan said (ADR 0002); no local row is consulted to scope."""
     stranger = Principal(id=uuid.uuid4(), email="never-seen@example.com")
 
-    _, params = compiled(notes_owned_by(stranger))
+    _, params = compiled(notes_visible_to(stranger))
 
     assert stranger.id in params.values()

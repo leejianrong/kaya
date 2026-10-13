@@ -47,7 +47,7 @@ not only by the maintainer.
 | Frontend | Svelte, built to static files the same container serves. Not a separate deployment. |
 | Identity | Part of the application. A GitHub OAuth App you register (`KAYA_GITHUB_OAUTH_CLIENT_ID` and `KAYA_GITHUB_OAUTH_CLIENT_SECRET`) handles browser sign-in, and `KAYA_AUTH_SECRET` signs sessions and hashes tokens. |
 | Remote MCP | Served by the same container at `/mcp`, authorised with kaya's own tokens ([agents and MCP](../agents/mcp-setup.md)). |
-| pandan | Optional. Board embeds, `[[KAN-n]]` wikilink resolution and team-default access call a pandan instance, and each degrades quietly when it is missing or down. |
+| pandan | Optional. Board embeds and `[[KAN-n]]` wikilink resolution call a pandan instance, and each degrades quietly when it is missing or down. |
 
 The single-origin arrangement is load-bearing, not incidental: because the SPA and the API share an
 origin, there's no cross-origin request to get wrong, and no second TLS certificate to keep in step
