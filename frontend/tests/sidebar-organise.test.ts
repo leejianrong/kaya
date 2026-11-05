@@ -195,7 +195,7 @@ describe('inline rename', () => {
 })
 
 describe('new folder', () => {
-  it('adds an editable row; Enter hands a validated path up and says it is tab-only', async () => {
+  it('the button always makes a top-level folder, whichever folder is current; Enter says it is tab-only', async () => {
     const callbacks = render({ contextFolder: 'journal' })
     host.querySelector<HTMLElement>('[data-testid="new-folder-button"]')!.click()
     await flush()
@@ -203,7 +203,7 @@ describe('new folder', () => {
     input.value = 'drafts'
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     await flush()
-    expect(callbacks.onnewfolder).toHaveBeenCalledWith('journal/drafts')
+    expect(callbacks.onnewfolder).toHaveBeenCalledWith('drafts')
     expect(host.querySelector('[data-testid="tree-toast"]')?.textContent).toContain('stays until a note')
   })
 
@@ -250,6 +250,37 @@ describe('drag', () => {
     fire(target, 'drop')
     await flush()
     expect(callbacks.onmove).toHaveBeenCalledWith(NOTES[0], 'design')
+  })
+
+  it('dragstart leaves the DOM alone, because Chrome cancels a drag whose source mutates in dragstart', async () => {
+    const callbacks = render()
+    const row = host.querySelector<HTMLElement>('[data-row="note"][data-id="NOTE-1"]')!
+    const transfer = { setData: () => {}, dropEffect: '', effectAllowed: '' }
+    const fire = (el: Element, type: string): void => {
+      const event = new Event(type, { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'dataTransfer', { value: transfer })
+      el.dispatchEvent(event)
+    }
+    fire(row, 'dragstart')
+    flushSync()
+    expect(host.querySelector('[data-testid="root-drop"]')).toBeNull()
+    expect(row.closest('li')!.classList.contains('dragging')).toBe(false)
+
+    // A drop that arrives before the visuals settle still counts: the handlers do not wait for them.
+    fire(host.querySelector('[data-row="folder"][data-id="design"]')!, 'drop')
+    await flush()
+    expect(callbacks.onmove).toHaveBeenCalledWith(NOTES[0], 'design')
+  })
+
+  it('the top-level dock and the faded row appear one tick after dragstart', async () => {
+    render()
+    const row = host.querySelector<HTMLElement>('[data-row="note"][data-id="NOTE-1"]')!
+    const event = new Event('dragstart', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'dataTransfer', { value: { setData: () => {}, effectAllowed: '' } })
+    row.dispatchEvent(event)
+    await flush()
+    expect(host.querySelector('[data-testid="root-drop"]')).not.toBeNull()
+    expect(row.closest('li')!.classList.contains('dragging')).toBe(true)
   })
 
   it('a search renders the flat list with no drag, and New folder is disabled', () => {
