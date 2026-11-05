@@ -122,33 +122,33 @@ test('a new folder is a placeholder until a note lands in it, and then it is rea
       if (req.method() === 'POST') posts.push(req.url())
     })
 
-    // The current folder is the open note's, so the placeholder is made inside it.
+    // The button always makes a top-level folder, even with a note open inside another folder.
     await page.getByTestId('new-folder-button').click()
     const field = page.getByRole('textbox', { name: 'New folder name' })
     await expect(field).toBeFocused()
-    await field.fill('ideas')
+    await field.fill(`${root}-ideas`)
     await field.press('Enter')
 
-    await expect(folderRow(page, `${root}/src/ideas`)).toBeVisible()
+    await expect(folderRow(page, `${root}-ideas`)).toBeVisible()
     await expect(page.getByText('Empty. Drag a note here, or create one.')).toBeVisible()
     await expect(page.getByTestId('tree-toast')).toContainText('stays until a note is placed in it')
     expect(posts).toEqual([]) // nothing was sent to the server
 
     // Move a note into it: the folder is real now.
-    await noteRow(page, note.ref).dragTo(folderRow(page, `${root}/src/ideas`))
+    await noteRow(page, note.ref).dragTo(folderRow(page, `${root}-ideas`))
     await expect(page.getByText('Empty. Drag a note here, or create one.')).toHaveCount(0)
     await page.reload()
-    await expect(folderRow(page, `${root}/src/ideas`)).toBeVisible()
-    expect((await listPaths(page))[note.ref]).toBe(`${root}/src/ideas/filler-1.md`)
+    await expect(folderRow(page, `${root}-ideas`)).toBeVisible()
+    expect((await listPaths(page))[note.ref]).toBe(`${root}-ideas/filler-1.md`)
 
     // An empty placeholder does not survive a reload.
     await page.getByTestId('new-folder-button').click()
-    await page.getByRole('textbox', { name: 'New folder name' }).fill('ephemeral')
+    await page.getByRole('textbox', { name: 'New folder name' }).fill(`${root}-ephemeral`)
     await page.keyboard.press('Enter')
-    await expect(folderRow(page, `${root}/src/ideas/ephemeral`)).toBeVisible()
+    await expect(folderRow(page, `${root}-ephemeral`)).toBeVisible()
     await page.reload()
-    await expect(folderRow(page, `${root}/src/ideas`)).toBeVisible()
-    await expect(folderRow(page, `${root}/src/ideas/ephemeral`)).toHaveCount(0)
+    await expect(folderRow(page, `${root}-ideas`)).toBeVisible()
+    await expect(folderRow(page, `${root}-ephemeral`)).toHaveCount(0)
   } finally {
     await apiDeleteNote(request, note.ref)
   }
