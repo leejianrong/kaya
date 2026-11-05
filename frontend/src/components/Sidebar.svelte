@@ -384,12 +384,22 @@
     }
   }
 
+  /** What the drag handlers read: plain, so setting it in `dragstart` changes nothing on screen. */
+  let dragging: string | null = null
+  /** The same ref, for the dock and the faded row. Set a tick later: Chrome cancels a real drag
+   *  whose source or surroundings mutate during `dragstart` (Playwright's synthetic drag cannot
+   *  show this, which is why the e2e passed while the browser did not). */
   let dragRef: string | null = $state(null)
   /** The folder key being dragged over; `''` is the top level; `null` is none. */
   let dropKey: string | null = $state(null)
 
   function dragStart(event: DragEvent, note: Note): void {
-    dragRef = note.ref
+    dragging = note.ref
+    setTimeout(() => {
+      if (dragging === note.ref) {
+        dragRef = note.ref
+      }
+    }, 0)
     if (event.dataTransfer !== null) {
       event.dataTransfer.effectAllowed = 'move'
       event.dataTransfer.setData('text/plain', note.ref)
@@ -397,13 +407,14 @@
   }
 
   function dragEnd(): void {
+    dragging = null
     dragRef = null
     dropKey = null
     dragNotice = ''
   }
 
   function dragOver(event: DragEvent, folder: string): void {
-    if (dragRef === null) {
+    if (dragging === null) {
       return
     }
     event.preventDefault()
@@ -423,11 +434,11 @@
   }
 
   function drop(event: DragEvent, folder: string): void {
-    if (dragRef === null) {
+    if (dragging === null) {
       return
     }
     event.preventDefault()
-    const target = notes.find((found) => found.ref === dragRef)
+    const target = notes.find((found) => found.ref === dragging)
     dragEnd()
     if (target !== undefined) {
       void runMove(target, folder)
@@ -785,7 +796,7 @@
       aria-label="New folder"
       title="New folder"
       disabled={searching}
-      onclick={() => startCreateFolder(contextFolder)}
+      onclick={() => startCreateFolder('')}
       data-testid="new-folder-button"
     >
       <NavIcon name="new-folder" size={22} />
