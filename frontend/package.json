@@ -43,5 +43,8 @@
     "@codemirror/view": "^6.43.15",
     "@lezer/common": "^1.5.5",
     "@lezer/markdown": "^1.8.1"
+  },
+  "overrides": {
+    "minimatch": "^11.0.1"
   }
 }
